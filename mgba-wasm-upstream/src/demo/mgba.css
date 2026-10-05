@@ -1,0 +1,117 @@
+/*
+ * Game Boy Advance skin for the engine-specs demo template (mGBA-wasm).
+ *
+ * The template is themed entirely through the CSS custom properties declared
+ * in demo.css :root. This file re-declares those tokens with the palette of
+ * the original indigo AGB: the deep violet shell, the magenta/teal of the A
+ * and B buttons. Loaded AFTER demo.css so these values win.
+ */
+
+:root {
+  /* Console body — the indigo GBA shell, darkened to sit behind a screen */
+  --demo-bg-a: #1a1638;
+  --demo-bg-b: #08060f;
+  --demo-bg-radial-1: rgba(90, 74, 200, 0.20); /* indigo shell glow */
+  --demo-bg-radial-2: rgba(199, 62, 122, 0.10); /* A-button magenta glow */
+
+  --demo-text: #eeecf7;
+  --demo-muted: #9a95b8;
+
+  /* Primary accent — the indigo of the shell */
+  --demo-accent: #5a4ac8;
+  --demo-accent-rgb: 90, 74, 200;
+
+  /* Secondary accent — the magenta of the A/B buttons */
+  --demo-accent2: #c73e7a;
+  --demo-accent2-rgb: 199, 62, 122;
+
+  /* Glass panels — smoked indigo with a violet hairline */
+  --demo-panel-bg: rgba(22, 19, 46, 0.84);
+  --demo-panel-border: rgba(90, 74, 200, 0.42);
+  --demo-panel-shadow: inset 0 0 0 1px rgba(90, 74, 200, 0.16);
+  --demo-panel-radius: 10px;
+
+  --demo-subpanel-bg: rgba(33, 29, 62, 0.74);
+  --demo-subpanel-border: rgba(255, 255, 255, 0.08);
+  --demo-subpanel-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --demo-subpanel-radius: 7px;
+
+  /* Drop zone */
+  --demo-drop-bg: rgba(255, 255, 255, 0.03);
+  --demo-drop-border: rgba(90, 74, 200, 0.52);
+  --demo-drop-active-bg: rgba(90, 74, 200, 0.20);
+  --demo-drop-active-border: var(--demo-accent);
+  --demo-drop-active-shadow: inset 0 0 0 1px rgba(90, 74, 200, 0.6);
+
+  /* File picker buttons */
+  --demo-picker-bg: rgba(255, 255, 255, 0.06);
+  --demo-picker-hover-bg: rgba(90, 74, 200, 0.24);
+  --demo-picker-border: rgba(90, 74, 200, 0.46);
+  --demo-picker-hover-border: var(--demo-accent);
+  --demo-picker-text: #eeecf7;
+
+  /* Metadata pills */
+  --demo-pill-bg: rgba(199, 62, 122, 0.14);
+  --demo-pill-border: var(--demo-accent2);
+  --demo-pill-text: #eda0c0;
+  --demo-pill-shadow: inset 0 0 5px rgba(199, 62, 122, 0.25);
+
+  /* ESC menu */
+  --demo-esc-bg: rgba(8, 6, 15, 0.86);
+  --demo-esc-card-bg: rgba(22, 19, 46, 0.94);
+  --demo-esc-text: #eeecf7;
+
+  /* Canvas overlay */
+  --demo-file-info-bg: rgba(10, 8, 20, 0.78);
+  --demo-file-info-border: rgba(90, 74, 200, 0.35);
+
+  /* Type — no cross-origin webfonts (blocked by COEP anyway). */
+  --demo-font-sans: "Helvetica Neue", system-ui, -apple-system, sans-serif;
+  --demo-font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+
+/* demo.css hardcodes `aspect-ratio: 5 / 4` on both .runtime and its canvas —
+   the dummy SDK's shape — and clips with overflow:hidden. No handheld is 5:4:
+   the GBA is 240x160 (3:2), the Game Boy cores are 160x144 (10:9), and a Super
+   Game Boy border makes it 256x224. Both rules have to be undone, or the
+   picture is letterboxed into the wrong box and then cut off by the clip.
+
+   The ratio is not a constant this file can substitute, either — it depends on
+   the core that booted and on options.aspect — so the SDK publishes it as
+   --mgba-aspect and the sizing below is written against that. */
+.runtime {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.runtime canvas {
+  /* The real ratio arrives inline from the SDK; this just clears demo.css. */
+  aspect-ratio: auto;
+  /* Grow to fill whichever axis runs out first. */
+  width: min(100vw, calc(100vh * var(--mgba-aspect, 1.5)));
+  height: auto;
+  max-width: 100vw;
+  max-height: 100vh;
+  display: block;
+  /* Crisp integer-scaled pixels — no blur on upscaled handheld art. */
+  image-rendering: pixelated;
+}
+
+/* The file-info panel (name/size/checksums) belongs to the launcher; keep it
+   off the running game so it never covers the picture. */
+.file-info {
+  display: none !important;
+}
+
+/* demo.css draws a full-viewport CRT scanline overlay (body::after, z-index
+   9999) that sits over EVERYTHING — including the emulator canvas. Scanlines
+   are wrong for a handheld LCD anyway, and doubly so on a 160-line picture, so
+   they stay on the launcher chrome and switch off while a game is running.
+   (demo.js adds `.running` to <main> during play.) */
+body:has(main.running)::after {
+  display: none;
+}

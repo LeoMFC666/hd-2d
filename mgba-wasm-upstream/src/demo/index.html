@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mGBA WASM — Game Boy Advance Demo</title>
+    <link rel="icon" href="data:," />
+
+    <!-- Base theme from the engine-specs demo template, then our GBA skin.
+         mgba.css is loaded last so its :root token overrides win. -->
+    <link rel="stylesheet" href="./demo.css" />
+    <link rel="stylesheet" href="./mgba.css" />
+  </head>
+  <body>
+    <main></main>
+
+    <script type="module">
+      import demo from './demo.js'
+      import sdk, { manifest } from './mgba/mgba.sdk.js'
+      import { toEscMenuGroups } from './mgba/mgba.options.js'
+
+      // Engine options worth trying without editing code, as page query params:
+      // ?system=gb, ?aspect=4:3, ?interframeBlending=true, ?idleOptimization=ignore, ...
+      const params = new URLSearchParams(location.search)
+      const BOOLEAN_KEYS = [
+        'interframeBlending',
+        'skipBios',
+        'allowOpposingDirections',
+        'gamepads',
+        'escMenu',
+      ]
+      const NUMBER_KEYS = ['volume']
+      const overrides = {}
+      for (const key of [
+        'system',
+        'gbModel',
+        'idleOptimization',
+        'renderFilter',
+        'aspect',
+        'logLevel',
+        ...BOOLEAN_KEYS,
+        ...NUMBER_KEYS,
+      ]) {
+        const value = params.get(key)
+        if (value === null) continue
+        if (BOOLEAN_KEYS.includes(key)) overrides[key] = value !== 'false'
+        else if (NUMBER_KEYS.includes(key)) overrides[key] = Number(value)
+        else overrides[key] = value
+      }
+
+      // The shell captures this array once and mutates each row's `value` as
+      // the player changes it, so the same reference is reused below to seed it
+      // with what the engine actually booted with.
+      const optionGroups = toEscMenuGroups()
+
+      let engine = null
+
+      demo
+        .init({
+          manifest,
+          messages: {
+            title: 'mGBA WASM — Game Boy Advance Demo',
+            dropRomPrompt: 'Drop a .gba / .gb / .gbc ROM',
+            launchButton: 'Launch',
+            escMenuTitle: 'mGBA Settings',
+          },
+          // mGBA's high-level BIOS runs virtually everything, so a BIOS image
+          // is offered rather than demanded.
+          bios: 'optional',
+          escMenu: {
+            enabled: true,
+            optionGroups,
+            onOptionChange(key, value) {
+              engine?.config.write(key, value)
+            },
+            onRestoreDefaults() {
+              engine?.config.restoreDefaults()
+              syncMenu()
+            },
+          },
+        })
+        .on('launch', async (e) => {
+          const assets = {}
+          if (demo.hasFile('rom')) assets.rom = await demo.loadToMEMFS('rom')
+          if (demo.hasFile('bios')) assets.bios = await demo.loadToMEMFS('bios')
+
+          engine = await sdk.load({
+            attachTo: e.attachTo,
+            assets,
+            options: overrides,
+            persist: 'opfs',
+            // Per-game SRAM and per-game menu tweaks, keyed by the file the
+            // player dropped.
+            storageNamespace: (e.fileName || 'default').replace(/\.[^.]+$/, ''),
+            onEvent(event) {
+              if (event.type === 'error') console.error(event.error)
+            },
+          })
+
+          syncMenu()
+          engine.start()
+          return engine
+        })
+
+      /** Copies the engine's live values into the rows the shell is holding. */
+      function syncMenu() {
+        if (!engine) return
+        const current = engine.escMenuGroups()
+        for (const group of optionGroups) {
+          const fresh = current.find((g) => g.id === group.id)
+          for (const option of group.options) {
+            const match = fresh?.options.find((o) => o.key === option.key)
+            if (match) option.value = match.value
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
