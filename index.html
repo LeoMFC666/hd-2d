@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GEN 3 Faithful 2.5D</title>
+    <meta
+      name="description"
+      content="Minimal static browser harness for a user-provided GBA ROM running through mGBA WebAssembly."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">GEN 3 FAITHFUL 2.5D</p>
+          <h1>Phase 1 — mGBA Boot Harness</h1>
+        </div>
+      </header>
+
+      <main class="content">
+        <div class="emulator-panel">
+          <canvas id="emulator" aria-label="GBA emulator output"></canvas>
+        </div>
+
+        <div id="sceneContainer" aria-label="Three.js player preview"></div>
+
+        <div class="status-row">
+          <span id="status">Ready. Select a ROM to boot the emulator.</span>
+        </div>
+      </main>
+
+      <footer class="toolbar">
+        <input id="romInput" type="file" accept=".gba,.gb,.gbc,.zip" hidden />
+        <input id="saveInput" type="file" accept=".sav" hidden />
+        <button id="loadRom" type="button">ROM</button>
+        <button id="importSave" type="button">Import Save</button>
+        <button id="exportSave" type="button">Export Save</button>
+        <button id="pauseToggle" type="button">Pause</button>
+        <button id="resetGame" type="button">Reset</button>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

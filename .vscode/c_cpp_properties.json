@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Emscripten",
+            "compilerPath": "C:/emsdk/upstream/emscripten/emcc.exe",
+            "intelliSenseMode": "windows-clang-x64",
+            "includePath": [
+                "${workspaceFolder}/mgba-wasm-upstream/.tmp/mgba-build/include",
+                "${workspaceFolder}/mgba-wasm-upstream/.tmp/mgba-build",
+                "C:/emsdk/upstream/emscripten/system/include"
+            ],
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}

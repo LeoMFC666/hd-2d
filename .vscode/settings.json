@@ -1,0 +1,9 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^powershell -NoProfile -ExecutionPolicy Bypass -File \"c:\\\\Users\\\\Apenazz\\\\Desktop\\\\pkmn 2\\.5d\\\\mgba-wasm-upstream\\\\build_mgba\\.ps1\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    },
+    "cmake.sourceDirectory": "C:/Users/Apenazz/Desktop/pkmn 2.5d/mgba-upstream"
+}
