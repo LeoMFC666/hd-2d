@@ -16,6 +16,13 @@ export interface MapDefinition {
   mapNumber: number;
   mapLayoutId: number;
 
+  mapHeaderAddress: number;
+  mapLayoutAddress: number;
+  mapDataAddress: number;
+
+  primaryTilesetAddress: number;
+  secondaryTilesetAddress: number;
+
   width: number;
   height: number;
 

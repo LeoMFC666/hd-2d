@@ -7,13 +7,26 @@ import {
   MapCatalog,
 } from './MapCatalog';
 
+export interface WorldMapPosition {
+  x: number;
+  y: number;
+}
+
 export class MapWorld {
-  private readonly catalog: MapCatalog;
+  private readonly catalog:
+    MapCatalog;
+
+  private readonly positions =
+    new Map<
+      string,
+      WorldMapPosition
+    >();
 
   constructor(
     catalog: MapCatalog,
   ) {
-    this.catalog = catalog;
+    this.catalog =
+      catalog;
   }
 
   getCatalog(): MapCatalog {
@@ -33,102 +46,51 @@ export class MapWorld {
   getWorldPosition(
     mapGroup: number,
     mapNumber: number,
-  ): { x: number; y: number } | null {
-    const map =
-      this.catalog.get(
-        mapGroup,
-        mapNumber,
-      );
-
-    if (!map) {
-      return null;
-    }
-
-    return {
-      x: map.worldX,
-      y: map.worldY,
-    };
-  }
-
-  resolveConnection(
-    source: MapDefinition,
-    connection: MapConnection,
-  ): MapDefinition | null {
-    return this.catalog.get(
-      connection.mapGroup,
-      connection.mapNumber,
+  ): WorldMapPosition | null {
+    return (
+      this.positions.get(
+        this.createKey(
+          mapGroup,
+          mapNumber,
+        ),
+      ) ?? null
     );
   }
 
-  connectMap(
-    source: MapDefinition,
-    connection: MapConnection,
-  ): MapDefinition | null {
-    const target =
-      this.resolveConnection(
-        source,
-        connection,
-      );
+  getPositionedMaps():
+    MapDefinition[] {
+    const result:
+      MapDefinition[] = [];
 
-    if (!target) {
-      return null;
-    }
-
-    switch (
-      connection.direction
+    for (
+      const map of
+        this.catalog.getAll()
     ) {
-      case 'NORTH':
-        target.worldX =
-          source.worldX +
-          connection.offset;
-
-        target.worldY =
-          source.worldY -
-          target.height;
-
-        break;
-
-      case 'SOUTH':
-        target.worldX =
-          source.worldX +
-          connection.offset;
-
-        target.worldY =
-          source.worldY +
-          source.height;
-
-        break;
-
-      case 'WEST':
-        target.worldX =
-          source.worldX -
-          target.width;
-
-        target.worldY =
-          source.worldY +
-          connection.offset;
-
-        break;
-
-      case 'EAST':
-        target.worldX =
-          source.worldX +
-          source.width;
-
-        target.worldY =
-          source.worldY +
-          connection.offset;
-
-        break;
+      if (
+        this.positions.has(
+          this.createKey(
+            map.mapGroup,
+            map.mapNumber,
+          ),
+        )
+      ) {
+        result.push(
+          map,
+        );
+      }
     }
 
-    return target;
+    return result;
+  }
+
+  clearPositions(): void {
+    this.positions.clear();
   }
 
   buildFrom(
     startMapGroup: number,
     startMapNumber: number,
-  ): void {
+  ): number {
     const start =
       this.catalog.get(
         startMapGroup,
@@ -136,15 +98,30 @@ export class MapWorld {
       );
 
     if (!start) {
-      return;
+      return 0;
     }
 
-    const queue: MapDefinition[] = [
-      start,
-    ];
+    this.positions.set(
+      this.createKey(
+        start.mapGroup,
+        start.mapNumber,
+      ),
+      {
+        x: 0,
+        y: 0,
+      },
+    );
+
+    const queue:
+      MapDefinition[] = [
+        start,
+      ];
 
     const visited =
       new Set<string>();
+
+    let count =
+      0;
 
     while (
       queue.length > 0
@@ -157,10 +134,15 @@ export class MapWorld {
       }
 
       const currentKey =
-        `${current.mapGroup}:${current.mapNumber}`;
+        this.createKey(
+          current.mapGroup,
+          current.mapNumber,
+        );
 
       if (
-        visited.has(currentKey)
+        visited.has(
+          currentKey,
+        )
       ) {
         continue;
       }
@@ -169,14 +151,25 @@ export class MapWorld {
         currentKey,
       );
 
+      const sourcePosition =
+        this.positions.get(
+          currentKey,
+        );
+
+      if (!sourcePosition) {
+        continue;
+      }
+
+      count++;
+
       for (
         const connection of
           current.connections
       ) {
         const target =
-          this.connectMap(
-            current,
-            connection,
+          this.catalog.get(
+            connection.mapGroup,
+            connection.mapNumber,
           );
 
         if (!target) {
@@ -184,85 +177,102 @@ export class MapWorld {
         }
 
         const targetKey =
-          `${target.mapGroup}:${target.mapNumber}`;
+          this.createKey(
+            target.mapGroup,
+            target.mapNumber,
+          );
 
         if (
-          !visited.has(targetKey)
+          !this.positions.has(
+            targetKey,
+          )
         ) {
-          queue.push(target);
+          this.positions.set(
+            targetKey,
+            this.calculatePosition(
+              current,
+              sourcePosition,
+              target,
+              connection,
+            ),
+          );
+        }
+
+        if (
+          !visited.has(
+            targetKey,
+          )
+        ) {
+          queue.push(
+            target,
+          );
         }
       }
     }
+
+    return count;
   }
 
-  getBounds(): {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-    width: number;
-    height: number;
-  } | null {
-    const maps =
-      this.catalog.getAll();
-
-    if (
-      maps.length === 0
+  private calculatePosition(
+    source: MapDefinition,
+    sourcePosition:
+      WorldMapPosition,
+    target: MapDefinition,
+    connection: MapConnection,
+  ): WorldMapPosition {
+    switch (
+      connection.direction
     ) {
-      return null;
+      case 'NORTH':
+        return {
+          x:
+            sourcePosition.x +
+            connection.offset,
+
+          y:
+            sourcePosition.y -
+            target.height,
+        };
+
+      case 'SOUTH':
+        return {
+          x:
+            sourcePosition.x +
+            connection.offset,
+
+          y:
+            sourcePosition.y +
+            source.height,
+        };
+
+      case 'WEST':
+        return {
+          x:
+            sourcePosition.x -
+            target.width,
+
+          y:
+            sourcePosition.y +
+            connection.offset,
+        };
+
+      case 'EAST':
+        return {
+          x:
+            sourcePosition.x +
+            source.width,
+
+          y:
+            sourcePosition.y +
+            connection.offset,
+        };
     }
+  }
 
-    let minX =
-      Number.POSITIVE_INFINITY;
-
-    let minY =
-      Number.POSITIVE_INFINITY;
-
-    let maxX =
-      Number.NEGATIVE_INFINITY;
-
-    let maxY =
-      Number.NEGATIVE_INFINITY;
-
-    for (
-      const map of maps
-    ) {
-      minX =
-        Math.min(
-          minX,
-          map.worldX,
-        );
-
-      minY =
-        Math.min(
-          minY,
-          map.worldY,
-        );
-
-      maxX =
-        Math.max(
-          maxX,
-          map.worldX +
-            map.width,
-        );
-
-      maxY =
-        Math.max(
-          maxY,
-          map.worldY +
-            map.height,
-        );
-    }
-
-    return {
-      minX,
-      minY,
-      maxX,
-      maxY,
-      width:
-        maxX - minX,
-      height:
-        maxY - minY,
-    };
+  private createKey(
+    mapGroup: number,
+    mapNumber: number,
+  ): string {
+    return `${mapGroup}:${mapNumber}`;
   }
 }

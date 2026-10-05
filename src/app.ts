@@ -1,217 +1,413 @@
-import type { EmulatorAdapter } from './emulator/EmulatorAdapter';
-import { MgbaEmulatorAdapter } from './emulator/Emulator';
-import { Gen3StateAdapter } from './gen3/Gen3StateAdapter';
-import { PlayerRenderer } from './render/PlayerRenderer';
+import type {
+  EmulatorAdapter,
+} from './emulator/EmulatorAdapter';
+
+import {
+  MgbaEmulatorAdapter,
+} from './emulator/Emulator';
+
+import {
+  Gen3StateAdapter,
+} from './gen3/Gen3StateAdapter';
+
+import {
+  PlayerRenderer,
+} from './render/PlayerRenderer';
 
 export function setupApp(): void {
-const canvas = document.querySelector<HTMLCanvasElement>('#emulator');
-const sceneContainer = document.querySelector<HTMLElement>('#sceneContainer');
-const romInput = document.querySelector<HTMLInputElement>('#romInput');
-const saveInput = document.querySelector<HTMLInputElement>('#saveInput');
-const loadRomButton = document.querySelector<HTMLButtonElement>('#loadRom');
-const importSaveButton = document.querySelector<HTMLButtonElement>('#importSave');
-const exportSaveButton = document.querySelector<HTMLButtonElement>('#exportSave');
-const pauseToggle = document.querySelector<HTMLButtonElement>('#pauseToggle');
-const resetButton = document.querySelector<HTMLButtonElement>('#resetGame');
-const statusEl = document.querySelector<HTMLElement>('#status');
-
-if (
-!canvas ||
-!sceneContainer ||
-!romInput ||
-!saveInput ||
-!loadRomButton ||
-!importSaveButton ||
-!exportSaveButton ||
-!pauseToggle ||
-!resetButton ||
-!statusEl
-) {
-throw new Error('Missing required app elements.');
-}
-
-const emulator: EmulatorAdapter = new MgbaEmulatorAdapter(canvas);
-
-let scene: PlayerRenderer | null = null;
-
-const updateStatus = (message: string): void => {
-statusEl.textContent = message;
-};
-
-const readRomFile = async (file: File): Promise<void> => {
-const extension = file.name.split('.').pop()?.toLowerCase();
-
-if (!extension || !['gba', 'gb', 'gbc', 'zip'].includes(extension)) {
-  updateStatus(
-    'Unsupported ROM format. Please select a .gba or compatible cartridge image.',
-  );
-  return;
-}
-
-updateStatus(`Loading ${file.name}...`);
-
-try {
-  const buffer = await file.arrayBuffer();
-  const romBytes = new Uint8Array(buffer);
-
-  await emulator.loadRom(romBytes);
-
-  scene?.destroy();
-
-  const memoryReader = emulator.getMemoryReader();
-  const stateAdapter = new Gen3StateAdapter(
-    memoryReader,
-    romBytes,
-  );
-
-  scene = new PlayerRenderer(
-    sceneContainer,
-    stateAdapter,
-  );
-
-  updateStatus(`ROM loaded: ${file.name}`);
-} catch (error) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : 'Unknown ROM load error.';
-
-  updateStatus(`ROM failed to load: ${message}`);
-}
-
-};
-
-const readSaveFile = async (file: File): Promise<void> => {
-const extension = file.name.split('.').pop()?.toLowerCase();
-
-if (!extension || !['sav'].includes(extension)) {
-  updateStatus(
-    'Unsupported save format. Please select a .sav file.',
-  );
-  return;
-}
-
-updateStatus(`Loading save ${file.name}...`);
-
-try {
-  const buffer = await file.arrayBuffer();
-
-  await emulator.importSave(buffer);
-
-  updateStatus(`Save loaded: ${file.name}`);
-} catch (error) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : 'Unknown save load error.';
-
-  updateStatus(`Save failed to load: ${message}`);
-}
-
-};
-
-const downloadSave = async (): Promise<void> => {
-try {
-const bytes = await emulator.exportSave();
-
-  if (!bytes.length) {
-    updateStatus(
-      'No save data is available to export yet.',
+  const canvas =
+    document.querySelector<HTMLCanvasElement>(
+      '#emulator',
     );
-    return;
+
+  const sceneContainer =
+    document.querySelector<HTMLElement>(
+      '#sceneContainer',
+    );
+
+  const romInput =
+    document.querySelector<HTMLInputElement>(
+      '#romInput',
+    );
+
+  const saveInput =
+    document.querySelector<HTMLInputElement>(
+      '#saveInput',
+    );
+
+  const loadRomButton =
+    document.querySelector<HTMLButtonElement>(
+      '#loadRom',
+    );
+
+  const importSaveButton =
+    document.querySelector<HTMLButtonElement>(
+      '#importSave',
+    );
+
+  const exportSaveButton =
+    document.querySelector<HTMLButtonElement>(
+      '#exportSave',
+    );
+
+  const pauseToggle =
+    document.querySelector<HTMLButtonElement>(
+      '#pauseToggle',
+    );
+
+  const resetButton =
+    document.querySelector<HTMLButtonElement>(
+      '#resetGame',
+    );
+
+  const statusEl =
+    document.querySelector<HTMLElement>(
+      '#status',
+    );
+
+  if (
+    !canvas ||
+    !sceneContainer ||
+    !romInput ||
+    !saveInput ||
+    !loadRomButton ||
+    !importSaveButton ||
+    !exportSaveButton ||
+    !pauseToggle ||
+    !resetButton ||
+    !statusEl
+  ) {
+    throw new Error(
+      'Missing required app elements.',
+    );
   }
 
-  const saveBuffer = new ArrayBuffer(bytes.length);
+  const emulator:
+    EmulatorAdapter =
+    new MgbaEmulatorAdapter(
+      canvas,
+    );
 
-  new Uint8Array(saveBuffer).set(bytes);
+  let scene:
+    PlayerRenderer | null =
+    null;
 
-  const blob = new Blob(
-    [saveBuffer],
-    { type: 'application/octet-stream' },
+  const updateStatus =
+    (
+      message: string,
+    ): void => {
+      statusEl.textContent =
+        message;
+    };
+
+  const readRomFile =
+    async (
+      file: File,
+    ): Promise<void> => {
+      const extension =
+        file.name
+          .split('.')
+          .pop()
+          ?.toLowerCase();
+
+      if (
+        !extension ||
+        ![
+          'gba',
+          'gb',
+          'gbc',
+          'zip',
+        ].includes(extension)
+      ) {
+        updateStatus(
+          'Unsupported ROM format. Please select a .gba or compatible cartridge image.',
+        );
+
+        return;
+      }
+
+      updateStatus(
+        `Loading ${file.name}...`,
+      );
+
+      try {
+        const buffer =
+          await file.arrayBuffer();
+
+        const romBytes =
+          new Uint8Array(
+            buffer,
+          );
+
+        await emulator.loadRom(
+          romBytes,
+        );
+
+        scene?.destroy();
+
+        const memoryReader =
+          emulator.getMemoryReader();
+
+        const stateAdapter =
+          new Gen3StateAdapter(
+            memoryReader,
+            romBytes,
+          );
+
+        scene =
+          new PlayerRenderer(
+            sceneContainer,
+            stateAdapter,
+            romBytes,
+          );
+
+        updateStatus(
+          `ROM loaded: ${file.name}`,
+        );
+      } catch (
+        error
+      ) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown ROM load error.';
+
+        updateStatus(
+          `ROM failed to load: ${message}`,
+        );
+      }
+    };
+
+  const readSaveFile =
+    async (
+      file: File,
+    ): Promise<void> => {
+      const extension =
+        file.name
+          .split('.')
+          .pop()
+          ?.toLowerCase();
+
+      if (
+        !extension ||
+        !['sav'].includes(
+          extension,
+        )
+      ) {
+        updateStatus(
+          'Unsupported save format. Please select a .sav file.',
+        );
+
+        return;
+      }
+
+      updateStatus(
+        `Loading save ${file.name}...`,
+      );
+
+      try {
+        const buffer =
+          await file.arrayBuffer();
+
+        await emulator.importSave(
+          buffer,
+        );
+
+        updateStatus(
+          `Save loaded: ${file.name}`,
+        );
+      } catch (
+        error
+      ) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown save load error.';
+
+        updateStatus(
+          `Save failed to load: ${message}`,
+        );
+      }
+    };
+
+  const downloadSave =
+    async (): Promise<void> => {
+      try {
+        const bytes =
+          await emulator.exportSave();
+
+        if (
+          !bytes.length
+        ) {
+          updateStatus(
+            'No save data is available to export yet.',
+          );
+
+          return;
+        }
+
+        const saveBuffer =
+          new ArrayBuffer(
+            bytes.length,
+          );
+
+        new Uint8Array(
+          saveBuffer,
+        ).set(bytes);
+
+        const blob =
+          new Blob(
+            [saveBuffer],
+            {
+              type:
+                'application/octet-stream',
+            },
+          );
+
+        const url =
+          URL.createObjectURL(
+            blob,
+          );
+
+        const link =
+          document.createElement(
+            'a',
+          );
+
+        link.href =
+          url;
+
+        link.download =
+          'save.sav';
+
+        link.click();
+
+        URL.revokeObjectURL(
+          url,
+        );
+
+        updateStatus(
+          'Save exported as save.sav',
+        );
+      } catch (
+        error
+      ) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown save export error.';
+
+        updateStatus(
+          `Save failed to export: ${message}`,
+        );
+      }
+    };
+
+  loadRomButton.addEventListener(
+    'click',
+    () => {
+      romInput.click();
+    },
   );
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-
-  link.href = url;
-  link.download = 'save.sav';
-  link.click();
-
-  URL.revokeObjectURL(url);
-
-  updateStatus('Save exported as save.sav');
-} catch (error) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : 'Unknown save export error.';
-
-  updateStatus(
-    `Save failed to export: ${message}`,
+  importSaveButton.addEventListener(
+    'click',
+    () => {
+      saveInput.click();
+    },
   );
-}
 
-};
+  exportSaveButton.addEventListener(
+    'click',
+    () => {
+      void downloadSave();
+    },
+  );
 
-loadRomButton.addEventListener('click', () => {
-romInput.click();
-});
+  romInput.addEventListener(
+    'change',
+    async () => {
+      const file =
+        romInput.files?.[0];
 
-importSaveButton.addEventListener('click', () => {
-saveInput.click();
-});
+      if (!file) {
+        return;
+      }
 
-exportSaveButton.addEventListener('click', () => {
-void downloadSave();
-});
+      await readRomFile(
+        file,
+      );
 
-romInput.addEventListener('change', async () => {
-const file = romInput.files?.[0];
+      romInput.value =
+        '';
+    },
+  );
 
-if (!file) {
-  return;
-}
+  saveInput.addEventListener(
+    'change',
+    async () => {
+      const file =
+        saveInput.files?.[0];
 
-await readRomFile(file);
+      if (!file) {
+        return;
+      }
 
-romInput.value = '';
+      await readSaveFile(
+        file,
+      );
 
-});
+      saveInput.value =
+        '';
+    },
+  );
 
-saveInput.addEventListener('change', async () => {
-const file = saveInput.files?.[0];
+  pauseToggle.addEventListener(
+    'click',
+    () => {
+      if (
+        pauseToggle.textContent ===
+        'Pause'
+      ) {
+        emulator.pause();
 
-if (!file) {
-  return;
-}
+        pauseToggle.textContent =
+          'Resume';
 
-await readSaveFile(file);
+        updateStatus(
+          'Emulator paused.',
+        );
 
-saveInput.value = '';
+        return;
+      }
 
-});
+      emulator.resume();
 
-pauseToggle.addEventListener('click', () => {
-if (pauseToggle.textContent === 'Pause') {
-emulator.pause();
-pauseToggle.textContent = 'Resume';
-updateStatus('Emulator paused.');
-return;
-}
+      pauseToggle.textContent =
+        'Pause';
 
-emulator.resume();
-pauseToggle.textContent = 'Pause';
-updateStatus('Emulator resumed.');
+      updateStatus(
+        'Emulator resumed.',
+      );
+    },
+  );
 
-});
+  resetButton.addEventListener(
+    'click',
+    () => {
+      emulator.reset();
 
-resetButton.addEventListener('click', () => {
-emulator.reset();
-updateStatus('Emulator reset.');
-});
+      updateStatus(
+        'Emulator reset.',
+      );
+    },
+  );
 
-window.addEventListener('beforeunload', () => {
-scene?.destroy();
-emulator.destroy();
-});
+  window.addEventListener(
+    'beforeunload',
+    () => {
+      scene?.destroy();
+      emulator.destroy();
+    },
+  );
 }

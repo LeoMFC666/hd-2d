@@ -899,9 +899,130 @@ export class Gen3StateAdapter {
     }
   }
 
+    getMapRenderData(
+    mapDataAddress: number,
+    width: number,
+    height: number,
+    primaryTilesetAddress: number,
+    secondaryTilesetAddress: number,
+  ): {
+    blocks: MapBlockState[];
+    graphics: Map<
+      number,
+      Gen3MetatileGraphics | null
+    >;
+  } | null {
+    if (
+      width <= 0 ||
+      height <= 0
+    ) {
+      return null;
+    }
+
+    const previousPrimary =
+      this.currentPrimaryTileset;
+
+    const previousSecondary =
+      this.currentSecondaryTileset;
+
+    const previousCache =
+      new Map(
+        this.metatileGraphicsCache,
+      );
+
+    try {
+      const primaryTileset =
+        this.readTileset(
+          primaryTilesetAddress,
+        );
+
+      const secondaryTileset =
+        this.readTileset(
+          secondaryTilesetAddress,
+        );
+
+      if (
+        primaryTileset.address === 0 ||
+        secondaryTileset.address === 0
+      ) {
+        return null;
+      }
+
+      this.currentPrimaryTileset =
+        primaryTileset;
+
+      this.currentSecondaryTileset =
+        secondaryTileset;
+
+      this.metatileGraphicsCache.clear();
+
+      const blocks =
+        this.readMapBlocks(
+          mapDataAddress,
+          width,
+          height,
+        );
+
+      const usedMetatiles =
+        new Set<number>();
+
+      for (
+        const block of blocks
+      ) {
+        usedMetatiles.add(
+          block.metatileId,
+        );
+      }
+
+      const graphics =
+        new Map<
+          number,
+          Gen3MetatileGraphics | null
+        >();
+
+      for (
+        const metatileId of
+          usedMetatiles
+      ) {
+        graphics.set(
+          metatileId,
+          this.getMetatileGraphics(
+            metatileId,
+          ),
+        );
+      }
+
+      return {
+        blocks,
+        graphics,
+      };
+    } finally {
+      this.currentPrimaryTileset =
+        previousPrimary;
+
+      this.currentSecondaryTileset =
+        previousSecondary;
+
+      this.metatileGraphicsCache.clear();
+
+      for (
+        const [
+          key,
+          value,
+        ] of previousCache
+      ) {
+        this.metatileGraphicsCache.set(
+          key,
+          value,
+        );
+      }
+    }
+  }
+  
   getMapBlocks(): readonly MapBlockState[] {
     return this.mapBlocks;
   }
+
 
   getMetatileGraphics(
     metatileId: number,
