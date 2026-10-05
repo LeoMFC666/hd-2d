@@ -8,19 +8,25 @@ const GBA_ROM_BASE =
   0x08000000;
 
 const GAME_CODE_OFFSET =
-  0xAC;
+  0xac;
 
 const REVISION_OFFSET =
-  0xBC;
+  0xbc;
+
+const MAP_HEADER_SIZE =
+  0x1c;
 
 const MAP_HEADER_LAYOUT_OFFSET =
   0x00;
 
 const MAP_HEADER_CONNECTIONS_OFFSET =
-  0x0C;
+  0x0c;
 
 const MAP_HEADER_LAYOUT_ID_OFFSET =
   0x12;
+
+const MAP_LAYOUT_SIZE =
+  0x18;
 
 const MAP_LAYOUT_WIDTH_OFFSET =
   0x00;
@@ -29,13 +35,16 @@ const MAP_LAYOUT_HEIGHT_OFFSET =
   0x04;
 
 const MAP_LAYOUT_MAP_OFFSET =
-  0x0C;
+  0x0c;
 
 const MAP_LAYOUT_PRIMARY_TILESET_OFFSET =
   0x10;
 
 const MAP_LAYOUT_SECONDARY_TILESET_OFFSET =
   0x14;
+
+const MAP_CONNECTIONS_SIZE =
+  0x08;
 
 const MAP_CONNECTIONS_COUNT_OFFSET =
   0x00;
@@ -44,13 +53,7 @@ const MAP_CONNECTIONS_DATA_OFFSET =
   0x04;
 
 const MAP_CONNECTION_SIZE =
-  0x0C;
-
-const EMERALD_GAME_CODE =
-  'BPEE';
-
-const EMERALD_REVISION =
-  0;
+  0x0c;
 
 const MAX_MAP_DIMENSION =
   512;
@@ -58,61 +61,240 @@ const MAX_MAP_DIMENSION =
 const MAX_CONNECTION_COUNT =
   64;
 
-const EMERALD_MAP_GROUP_LENGTHS:
-  readonly number[] = [
-    57,
-    5,
-    5,
-    6,
-    7,
-    8,
-    9,
-    7,
-    7,
-    14,
-    8,
-    17,
-    10,
-    23,
-    13,
-    15,
-    15,
-    2,
-    2,
-    2,
-    3,
-    1,
-    1,
-    1,
-    108,
-    61,
-    89,
-    2,
-    1,
-    13,
-    1,
-    1,
-    1,
-    1,
-  ];
-
-const EMERALD_MAP_GROUP_COUNT =
-  EMERALD_MAP_GROUP_LENGTHS.length;
-
 const MAP_DIRECTION_BY_VALUE:
   Record<
     number,
     MapConnectionDirection | null
   > = {
-    1: 'SOUTH',
-    2: 'NORTH',
-    3: 'WEST',
-    4: 'EAST',
-    5: null,
-    6: null,
+    1:
+      'SOUTH',
+
+    2:
+      'NORTH',
+
+    3:
+      'WEST',
+
+    4:
+      'EAST',
+
+    5:
+      null,
+
+    6:
+      null,
   };
 
-export interface EmeraldMapCatalogAnchor {
+const MAP_GROUP_LENGTHS:
+  Record<
+    string,
+    readonly number[]
+  > = {
+    BPEE: [
+      57,
+      5,
+      5,
+      6,
+      7,
+      8,
+      9,
+      7,
+      7,
+      14,
+      8,
+      17,
+      10,
+      23,
+      13,
+      15,
+      15,
+      2,
+      2,
+      2,
+      3,
+      1,
+      1,
+      1,
+      108,
+      61,
+      89,
+      2,
+      1,
+      13,
+      1,
+      1,
+      1,
+      1,
+    ],
+
+    BPRE: [
+      5,
+      123,
+      60,
+      66,
+      4,
+      6,
+      8,
+      10,
+      6,
+      8,
+      20,
+      10,
+      8,
+      2,
+      10,
+      4,
+      2,
+      2,
+      2,
+      1,
+      1,
+      2,
+      2,
+      3,
+      2,
+      3,
+      2,
+      1,
+      1,
+      1,
+      1,
+      7,
+      5,
+      5,
+      8,
+      8,
+      5,
+      5,
+      1,
+      1,
+      1,
+      2,
+      1,
+    ],
+
+    BPGE: [
+      5,
+      123,
+      60,
+      66,
+      4,
+      6,
+      8,
+      10,
+      6,
+      8,
+      20,
+      10,
+      8,
+      2,
+      10,
+      4,
+      2,
+      2,
+      2,
+      1,
+      1,
+      2,
+      2,
+      3,
+      2,
+      3,
+      2,
+      1,
+      1,
+      1,
+      1,
+      7,
+      5,
+      5,
+      8,
+      8,
+      5,
+      5,
+      1,
+      1,
+      1,
+      2,
+      1,
+    ],
+
+    AXVE: [
+      54,
+      5,
+      5,
+      6,
+      7,
+      7,
+      8,
+      7,
+      7,
+      13,
+      8,
+      17,
+      10,
+      24,
+      13,
+      13,
+      14,
+      2,
+      2,
+      2,
+      3,
+      1,
+      1,
+      1,
+      86,
+      44,
+      12,
+      2,
+      1,
+      13,
+      1,
+      1,
+      3,
+      1,
+    ],
+
+    AXPE: [
+      54,
+      5,
+      5,
+      6,
+      7,
+      7,
+      8,
+      7,
+      7,
+      13,
+      8,
+      17,
+      10,
+      24,
+      13,
+      13,
+      14,
+      2,
+      2,
+      2,
+      3,
+      1,
+      1,
+      1,
+      86,
+      44,
+      12,
+      2,
+      1,
+      13,
+      1,
+      1,
+      3,
+      1,
+    ],
+  };
+
+export interface Gen3MapCatalogAnchor {
   mapGroup: number;
   mapNumber: number;
   mapLayoutId: number;
@@ -174,16 +356,33 @@ export class MapCatalog {
     this.maps.clear();
   }
 
-  buildEmeraldFromRom(
+  buildGen3FromRom(
     romBytes: Uint8Array,
-    anchor: EmeraldMapCatalogAnchor,
+    anchor: Gen3MapCatalogAnchor,
   ): number {
     this.clear();
 
-    if (
-      !this.isEmeraldRom(
+    const gameCode =
+      this.readAscii(
         romBytes,
-      )
+        GAME_CODE_OFFSET,
+        4,
+      );
+
+    const revision =
+      this.readU8(
+        romBytes,
+        REVISION_OFFSET,
+      );
+
+    const groupLengths =
+      MAP_GROUP_LENGTHS[
+        gameCode
+      ];
+
+    if (
+      revision !== 0 ||
+      !groupLengths
     ) {
       return 0;
     }
@@ -191,43 +390,71 @@ export class MapCatalog {
     if (
       anchor.mapGroup < 0 ||
       anchor.mapGroup >=
-        EMERALD_MAP_GROUP_COUNT
+        groupLengths.length
     ) {
       return 0;
     }
 
-    const groupLength =
-      EMERALD_MAP_GROUP_LENGTHS[
+    const anchorGroupLength =
+      groupLengths[
         anchor.mapGroup
       ];
 
     if (
       anchor.mapNumber < 0 ||
       anchor.mapNumber >=
-        groupLength
+        anchorGroupLength
     ) {
       return 0;
     }
 
-    const staticHeader =
-      this.findStaticMapHeader(
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        anchor.mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return 0;
+    }
+
+    const staticHeaders =
+      this.findStaticMapHeaders(
         romBytes,
         anchor,
       );
 
     if (
-      staticHeader === 0
+      staticHeaders.length === 0
     ) {
       return 0;
     }
 
-    const mapGroupsAddress =
-      this.findMapGroupsAddress(
-        romBytes,
-        staticHeader,
-        anchor.mapGroup,
-        anchor.mapNumber,
-      );
+    let mapGroupsAddress =
+      0;
+
+    for (
+      const staticHeader of
+        staticHeaders
+    ) {
+      const candidate =
+        this.findMapGroupsAddress(
+          romBytes,
+          staticHeader,
+          anchor.mapGroup,
+          anchor.mapNumber,
+          groupLengths,
+        );
+
+      if (
+        candidate !== 0
+      ) {
+        mapGroupsAddress =
+          candidate;
+
+        break;
+      }
+    }
 
     if (
       mapGroupsAddress === 0
@@ -241,11 +468,11 @@ export class MapCatalog {
     for (
       let mapGroup = 0;
       mapGroup <
-        EMERALD_MAP_GROUP_COUNT;
+        groupLengths.length;
       mapGroup++
     ) {
       const groupLength =
-        EMERALD_MAP_GROUP_LENGTHS[
+        groupLengths[
           mapGroup
         ];
 
@@ -281,14 +508,14 @@ export class MapCatalog {
               groupAddress -
               GBA_ROM_BASE
             ) +
-            mapNumber * 4,
+              mapNumber * 4,
           );
 
         if (
           !this.isValidRomPointer(
             romBytes,
             mapHeaderAddress,
-            0x1C,
+            MAP_HEADER_SIZE,
           )
         ) {
           continue;
@@ -302,14 +529,14 @@ export class MapCatalog {
           this.readU32(
             romBytes,
             headerOffset +
-            MAP_HEADER_LAYOUT_OFFSET,
+              MAP_HEADER_LAYOUT_OFFSET,
           );
 
         if (
           !this.isValidRomPointer(
             romBytes,
             mapLayoutAddress,
-            0x18,
+            MAP_LAYOUT_SIZE,
           )
         ) {
           continue;
@@ -323,14 +550,14 @@ export class MapCatalog {
           this.readU32(
             romBytes,
             layoutOffset +
-            MAP_LAYOUT_WIDTH_OFFSET,
+              MAP_LAYOUT_WIDTH_OFFSET,
           );
 
         const height =
           this.readU32(
             romBytes,
             layoutOffset +
-            MAP_LAYOUT_HEIGHT_OFFSET,
+              MAP_LAYOUT_HEIGHT_OFFSET,
           );
 
         if (
@@ -348,21 +575,21 @@ export class MapCatalog {
           this.readU32(
             romBytes,
             layoutOffset +
-            MAP_LAYOUT_MAP_OFFSET,
+              MAP_LAYOUT_MAP_OFFSET,
           );
 
         const primaryTilesetAddress =
           this.readU32(
             romBytes,
             layoutOffset +
-            MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+              MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
           );
 
         const secondaryTilesetAddress =
           this.readU32(
             romBytes,
             layoutOffset +
-            MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+              MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
           );
 
         if (
@@ -370,8 +597,23 @@ export class MapCatalog {
             romBytes,
             mapDataAddress,
             width *
-            height *
-            2,
+              height *
+              2,
+          )
+        ) {
+          continue;
+        }
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            primaryTilesetAddress,
+            0x04,
+          ) ||
+          !this.isValidRomPointer(
+            romBytes,
+            secondaryTilesetAddress,
+            0x04,
           )
         ) {
           continue;
@@ -381,13 +623,14 @@ export class MapCatalog {
           this.readU16(
             romBytes,
             headerOffset +
-            MAP_HEADER_LAYOUT_ID_OFFSET,
+              MAP_HEADER_LAYOUT_ID_OFFSET,
           );
 
         const connections =
           this.readConnections(
             romBytes,
             mapHeaderAddress,
+            groupLengths,
           );
 
         this.register({
@@ -405,8 +648,11 @@ export class MapCatalog {
           width,
           height,
 
-          worldX: 0,
-          worldY: 0,
+          worldX:
+            0,
+
+          worldY:
+            0,
 
           connections,
         });
@@ -418,21 +664,25 @@ export class MapCatalog {
     return count;
   }
 
-  private findStaticMapHeader(
+  private findStaticMapHeaders(
     romBytes: Uint8Array,
-    anchor: EmeraldMapCatalogAnchor,
-  ): number {
+    anchor: Gen3MapCatalogAnchor,
+  ): number[] {
+    const result:
+      number[] = [];
+
     for (
       let offset = 0;
       offset <=
-        romBytes.length - 0x1C;
+        romBytes.length -
+          MAP_HEADER_SIZE;
       offset += 4
     ) {
       const layoutAddress =
         this.readU32(
           romBytes,
           offset +
-          MAP_HEADER_LAYOUT_OFFSET,
+            MAP_HEADER_LAYOUT_OFFSET,
         );
 
       if (
@@ -446,7 +696,7 @@ export class MapCatalog {
         this.readU16(
           romBytes,
           offset +
-          MAP_HEADER_LAYOUT_ID_OFFSET,
+            MAP_HEADER_LAYOUT_ID_OFFSET,
         );
 
       if (
@@ -456,13 +706,31 @@ export class MapCatalog {
         continue;
       }
 
-      return (
+      const connectionsAddress =
+        this.readU32(
+          romBytes,
+          offset +
+            MAP_HEADER_CONNECTIONS_OFFSET,
+        );
+
+      if (
+        connectionsAddress !== 0 &&
+        !this.isValidRomPointer(
+          romBytes,
+          connectionsAddress,
+          MAP_CONNECTIONS_SIZE,
+        )
+      ) {
+        continue;
+      }
+
+      result.push(
         GBA_ROM_BASE +
-        offset
+          offset,
       );
     }
 
-    return 0;
+    return result;
   }
 
   private findMapGroupsAddress(
@@ -470,11 +738,13 @@ export class MapCatalog {
     staticHeaderAddress: number,
     mapGroup: number,
     mapNumber: number,
+    groupLengths:
+      readonly number[],
   ): number {
     for (
       let offset = 0;
-      offset <=
-        romBytes.length - 4;
+      offset + 4 <=
+        romBytes.length;
       offset += 4
     ) {
       const value =
@@ -501,6 +771,7 @@ export class MapCatalog {
           groupAddress,
           mapGroup,
           mapNumber,
+          groupLengths,
         )
       ) {
         continue;
@@ -510,15 +781,17 @@ export class MapCatalog {
         let tableOffset = 0;
         tableOffset <=
           romBytes.length -
-          EMERALD_MAP_GROUP_COUNT *
-          4;
+            groupLengths.length * 4;
         tableOffset += 4
       ) {
-        if (
+        const firstGroup =
           this.readU32(
             romBytes,
             tableOffset,
-          ) !==
+          );
+
+        if (
+          firstGroup !==
           groupAddress
         ) {
           continue;
@@ -533,6 +806,7 @@ export class MapCatalog {
           this.validateMapGroupsTable(
             romBytes,
             tableAddress,
+            groupLengths,
           )
         ) {
           return tableAddress;
@@ -548,11 +822,20 @@ export class MapCatalog {
     groupAddress: number,
     mapGroup: number,
     mapNumber: number,
+    groupLengths:
+      readonly number[],
   ): boolean {
     const groupLength =
-      EMERALD_MAP_GROUP_LENGTHS[
+      groupLengths[
         mapGroup
       ];
+
+    if (
+      groupLength ===
+      undefined
+    ) {
+      return false;
+    }
 
     if (
       !this.isValidRomPointer(
@@ -571,31 +854,27 @@ export class MapCatalog {
           groupAddress -
           GBA_ROM_BASE
         ) +
-        mapNumber * 4,
+          mapNumber * 4,
       );
 
-    if (
-      !this.isValidRomPointer(
-        romBytes,
-        targetHeader,
-        0x1C,
-      )
-    ) {
-      return false;
-    }
-
-    return true;
+    return this.isValidRomPointer(
+      romBytes,
+      targetHeader,
+      MAP_HEADER_SIZE,
+    );
   }
 
   private validateMapGroupsTable(
     romBytes: Uint8Array,
     tableAddress: number,
+    groupLengths:
+      readonly number[],
   ): boolean {
     if (
       !this.isValidRomPointer(
         romBytes,
         tableAddress,
-        EMERALD_MAP_GROUP_COUNT * 4,
+        groupLengths.length * 4,
       )
     ) {
       return false;
@@ -604,7 +883,7 @@ export class MapCatalog {
     for (
       let mapGroup = 0;
       mapGroup <
-        EMERALD_MAP_GROUP_COUNT;
+        groupLengths.length;
       mapGroup++
     ) {
       const groupAddress =
@@ -614,11 +893,11 @@ export class MapCatalog {
             tableAddress -
             GBA_ROM_BASE
           ) +
-          mapGroup * 4,
+            mapGroup * 4,
         );
 
       const groupLength =
-        EMERALD_MAP_GROUP_LENGTHS[
+        groupLengths[
           mapGroup
         ];
 
@@ -639,6 +918,8 @@ export class MapCatalog {
   private readConnections(
     romBytes: Uint8Array,
     mapHeaderAddress: number,
+    groupLengths:
+      readonly number[],
   ): MapConnection[] {
     const headerOffset =
       mapHeaderAddress -
@@ -648,7 +929,7 @@ export class MapCatalog {
       this.readU32(
         romBytes,
         headerOffset +
-        MAP_HEADER_CONNECTIONS_OFFSET,
+          MAP_HEADER_CONNECTIONS_OFFSET,
       );
 
     if (
@@ -661,7 +942,7 @@ export class MapCatalog {
       !this.isValidRomPointer(
         romBytes,
         connectionsAddress,
-        8,
+        MAP_CONNECTIONS_SIZE,
       )
     ) {
       return [];
@@ -675,7 +956,7 @@ export class MapCatalog {
       this.readI32(
         romBytes,
         connectionsOffset +
-        MAP_CONNECTIONS_COUNT_OFFSET,
+          MAP_CONNECTIONS_COUNT_OFFSET,
       );
 
     if (
@@ -690,7 +971,7 @@ export class MapCatalog {
       this.readU32(
         romBytes,
         connectionsOffset +
-        MAP_CONNECTIONS_DATA_OFFSET,
+          MAP_CONNECTIONS_DATA_OFFSET,
       );
 
     if (
@@ -698,7 +979,7 @@ export class MapCatalog {
         romBytes,
         dataAddress,
         count *
-        MAP_CONNECTION_SIZE,
+          MAP_CONNECTION_SIZE,
       )
     ) {
       return [];
@@ -716,15 +997,15 @@ export class MapCatalog {
       index < count;
       index++
     ) {
-      const offset =
+      const connectionOffset =
         dataOffset +
         index *
-        MAP_CONNECTION_SIZE;
+          MAP_CONNECTION_SIZE;
 
       const directionValue =
         this.readU8(
           romBytes,
-          offset,
+          connectionOffset,
         );
 
       const direction =
@@ -732,40 +1013,47 @@ export class MapCatalog {
           directionValue
         ];
 
-      if (!direction) {
+      if (
+        !direction
+      ) {
         continue;
       }
 
-      const connectionOffset =
+      const connectionOffsetValue =
         this.readI32(
           romBytes,
-          offset + 4,
+          connectionOffset +
+            4,
         );
 
       const mapGroup =
         this.readU8(
           romBytes,
-          offset + 8,
+          connectionOffset +
+            8,
         );
 
       const mapNumber =
         this.readU8(
           romBytes,
-          offset + 9,
+          connectionOffset +
+            9,
         );
 
       if (
+        mapGroup < 0 ||
         mapGroup >=
-        EMERALD_MAP_GROUP_COUNT
+          groupLengths.length
       ) {
         continue;
       }
 
       if (
+        mapNumber < 0 ||
         mapNumber >=
-        EMERALD_MAP_GROUP_LENGTHS[
-          mapGroup
-        ]
+          groupLengths[
+            mapGroup
+          ]
       ) {
         continue;
       }
@@ -775,29 +1063,11 @@ export class MapCatalog {
         mapGroup,
         mapNumber,
         offset:
-          connectionOffset,
+          connectionOffsetValue,
       });
     }
 
     return result;
-  }
-
-  private isEmeraldRom(
-    romBytes: Uint8Array,
-  ): boolean {
-    return (
-      this.readAscii(
-        romBytes,
-        GAME_CODE_OFFSET,
-        4,
-      ) ===
-        EMERALD_GAME_CODE &&
-      this.readU8(
-        romBytes,
-        REVISION_OFFSET,
-      ) ===
-        EMERALD_REVISION
-    );
   }
 
   private isValidMapDimension(
@@ -863,7 +1133,8 @@ export class MapCatalog {
         this.readU8(
           romBytes,
           offset + 1,
-        ) << 8
+        ) <<
+        8
       )
     );
   }
@@ -883,13 +1154,15 @@ export class MapCatalog {
         this.readU8(
           romBytes,
           offset + 1,
-        ) << 8
+        ) <<
+        8
       ) |
       (
         this.readU8(
           romBytes,
           offset + 2,
-        ) << 16
+        ) <<
+        16
       ) |
       (
         this.readU8(
@@ -930,7 +1203,8 @@ export class MapCatalog {
         String.fromCharCode(
           this.readU8(
             romBytes,
-            offset + index,
+            offset +
+              index,
           ),
         );
     }

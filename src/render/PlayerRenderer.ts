@@ -84,6 +84,9 @@ export class PlayerRenderer {
   private worldCatalogBuilt =
     false;
 
+  private worldCatalogBuildAttempted =
+    false;
+
   private activeMapKey =
     '';
 
@@ -288,7 +291,8 @@ export class PlayerRenderer {
     state: GameState,
   ): void {
     if (
-      this.worldCatalogBuilt
+      this.worldCatalogBuilt ||
+      this.worldCatalogBuildAttempted
     ) {
       return;
     }
@@ -300,9 +304,12 @@ export class PlayerRenderer {
       return;
     }
 
+    this.worldCatalogBuildAttempted =
+      true;
+
     const count =
       this.mapCatalog
-        .buildEmeraldFromRom(
+        .buildGen3FromRom(
           this.romBytes,
           {
             mapGroup:
@@ -320,21 +327,21 @@ export class PlayerRenderer {
           },
         );
 
-    this.worldCatalogBuilt =
-      true;
-
     if (
       count <= 0
     ) {
       console.warn(
-        'Unable to build Emerald map catalog.',
+        'Unable to build Gen 3 map catalog.',
       );
 
       return;
     }
 
+    this.worldCatalogBuilt =
+      true;
+
     console.log(
-      'Emerald Map Catalog:',
+      'Gen 3 Map Catalog:',
       count,
       'maps',
     );
@@ -359,22 +366,43 @@ export class PlayerRenderer {
     this.activeMapKey =
       mapKey;
 
-    this.buildQueue.length =
-      0;
-
-    this.queuedMaps.clear();
-
-    this.mapWorld.clearPositions();
-
-    const positioned =
-      this.mapWorld.buildFrom(
+    const alreadyPositioned =
+      this.mapWorld.hasPosition(
         state.map.mapGroup,
         state.map.mapNumber,
       );
 
+    if (
+      !alreadyPositioned
+    ) {
+      this.buildQueue.length =
+        0;
+
+      this.queuedMaps.clear();
+
+      this.mapWorld.clearPositions();
+
+      this.mapWorld.buildFrom(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+    }
+
     const maps =
       this.mapWorld
         .getPositionedMaps();
+
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    if (activeMap) {
+      this.queueMapBuild(
+        activeMap,
+      );
+    }
 
     for (
       const map of maps
@@ -384,38 +412,25 @@ export class PlayerRenderer {
       );
     }
 
-    for (
-      const [
-        key,
-        visual,
-      ] of this.mapVisuals
-    ) {
-      visual.baseMesh.visible =
-        false;
+    this.syncMapVisualPositions(
+      maps,
+    );
 
-      visual.overlayMesh.visible =
-        false;
-
-      if (
-        key ===
-        mapKey
-      ) {
-        visual.baseMesh.visible =
-          true;
-
-        visual.overlayMesh.visible =
-          true;
-      }
-    }
+    this.updateWorldVisibility(
+      maps,
+    );
 
     console.log(
       'Active World:',
       {
         maps:
-          positioned,
+          maps.length,
 
         current:
           mapKey,
+
+        rebuilt:
+          !alreadyPositioned,
       },
     );
   }
@@ -484,6 +499,93 @@ export class PlayerRenderer {
     this.buildMapVisual(
       map,
     );
+  }
+
+  private syncMapVisualPositions(
+    maps: MapDefinition[],
+  ): void {
+    for (
+      const map of maps
+    ) {
+      const visual =
+        this.mapVisuals.get(
+          this.createMapKey(
+            map.mapGroup,
+            map.mapNumber,
+          ),
+        );
+
+      if (!visual) {
+        continue;
+      }
+
+      const position =
+        this.mapWorld
+          .getWorldPosition(
+            map.mapGroup,
+            map.mapNumber,
+          );
+
+      if (!position) {
+        continue;
+      }
+
+      const centerX =
+        position.x +
+        map.width / 2;
+
+      const centerZ =
+        position.y +
+        map.height / 2;
+
+      visual.baseMesh.position.set(
+        centerX,
+        0,
+        centerZ,
+      );
+
+      visual.overlayMesh.position.set(
+        centerX,
+        0.002,
+        centerZ,
+      );
+    }
+  }
+
+  private updateWorldVisibility(
+    maps: MapDefinition[],
+  ): void {
+    const positionedKeys =
+      new Set<string>();
+
+    for (
+      const map of maps
+    ) {
+      positionedKeys.add(
+        this.createMapKey(
+          map.mapGroup,
+          map.mapNumber,
+        ),
+      );
+    }
+
+    for (
+      const [
+        key,
+        visual,
+      ] of this.mapVisuals
+    ) {
+      const visible =
+        positionedKeys.has(
+          key,
+        );
+
+      visual.baseMesh.visible =
+        visible;
+
+      visual.overlayMesh.visible =
+        visible;
+    }
   }
 
   private buildMapVisual(
@@ -757,24 +859,29 @@ export class PlayerRenderer {
       overlayTexture.dispose();
       baseMaterial.dispose();
       overlayMaterial.dispose();
+      overlayMesh.geometry.dispose();
 
       return;
     }
 
-    baseMesh.position.set(
+    const centerX =
       position.x +
-        map.width / 2,
-      0,
+      map.width / 2;
+
+    const centerZ =
       position.y +
-        map.height / 2,
+      map.height / 2;
+
+    baseMesh.position.set(
+      centerX,
+      0,
+      centerZ,
     );
 
     overlayMesh.position.set(
-      position.x +
-        map.width / 2,
+      centerX,
       0.002,
-      position.y +
-        map.height / 2,
+      centerZ,
     );
 
     overlayMesh.renderOrder =
@@ -808,13 +915,17 @@ export class PlayerRenderer {
       visual,
     );
 
+    const visible =
+      this.mapWorld.hasPosition(
+        map.mapGroup,
+        map.mapNumber,
+      );
+
     baseMesh.visible =
-      mapKey ===
-      this.activeMapKey;
+      visible;
 
     overlayMesh.visible =
-      mapKey ===
-      this.activeMapKey;
+      visible;
   }
 
   private createMapTexture(
@@ -1126,6 +1237,10 @@ export class PlayerRenderer {
       visual.baseTexture.dispose();
       visual.overlayTexture.dispose();
       visual.geometry.dispose();
+
+      visual.overlayMesh
+        .geometry
+        .dispose();
 
       const baseMaterial =
         visual.baseMesh.material;

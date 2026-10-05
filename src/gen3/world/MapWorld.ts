@@ -43,6 +43,18 @@ export class MapWorld {
     );
   }
 
+  hasPosition(
+    mapGroup: number,
+    mapNumber: number,
+  ): boolean {
+    return this.positions.has(
+      this.createKey(
+        mapGroup,
+        mapNumber,
+      ),
+    );
+  }
+
   getWorldPosition(
     mapGroup: number,
     mapNumber: number,
@@ -101,16 +113,25 @@ export class MapWorld {
       return 0;
     }
 
-    this.positions.set(
+    const startKey =
       this.createKey(
         start.mapGroup,
         start.mapNumber,
-      ),
-      {
-        x: 0,
-        y: 0,
-      },
-    );
+      );
+
+    if (
+      !this.positions.has(
+        startKey,
+      )
+    ) {
+      this.positions.set(
+        startKey,
+        {
+          x: 0,
+          y: 0,
+        },
+      );
+    }
 
     const queue:
       MapDefinition[] = [
