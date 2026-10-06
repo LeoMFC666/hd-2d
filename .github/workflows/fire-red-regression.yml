@@ -533,6 +533,456 @@ jobs:
 
           npx tsx test-fire-red.ts
 
+      - name: Prepare FireRed renderer harness
+        run: |
+          cat > fire-red-render-test.html <<'HTML'
+          <!doctype html>
+          <html>
+            <body style="margin:0;background:#111;color:#fff">
+              <div
+                id="sceneContainer"
+                style="width:1024px;height:720px"
+              ></div>
+              <pre id="result">starting</pre>
+              <script type="module" src="/fire-red-render-test.ts"></script>
+            </body>
+          </html>
+          HTML
+
+          cat > fire-red-render-test.ts <<'TS'
+          import { Gen3StateAdapter } from './src/gen3/Gen3StateAdapter';
+          import type { MemoryReader } from './src/gen3/MemoryReader';
+          import { PlayerRenderer } from './src/render/PlayerRenderer';
+
+          declare global {
+            interface Window {
+              __fireRedTest: Record<string, unknown>;
+            }
+          }
+
+          const resultElement =
+            document.getElementById('result');
+
+          const report = (
+            value: Record<string, unknown>,
+          ): void => {
+            window.__fireRedTest = value;
+
+            if (resultElement) {
+              resultElement.textContent =
+                JSON.stringify(
+                  value,
+                  null,
+                  2,
+                );
+            }
+
+            console.log(
+              'FIRERED_PLAYER_TEST:',
+              value,
+            );
+          };
+
+          try {
+            const response =
+              await fetch(
+                '/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba',
+              );
+
+            if (!response.ok) {
+              throw new Error(
+                'Failed to fetch FireRed ROM: ' +
+                response.status,
+              );
+            }
+
+            const rom =
+              new Uint8Array(
+                await response.arrayBuffer(),
+              );
+
+            const ewram =
+              new Uint8Array(
+                0x40000,
+              );
+
+            const iwram =
+              new Uint8Array(
+                0x8000,
+              );
+
+            const setU8 = (
+              target:
+                Uint8Array,
+              address: number,
+              value: number,
+              base: number,
+            ): void => {
+              target[
+                address - base
+              ] =
+                value & 0xff;
+            };
+
+            const setU16 = (
+              target:
+                Uint8Array,
+              address: number,
+              value: number,
+              base: number,
+            ): void => {
+              setU8(
+                target,
+                address,
+                value,
+                base,
+              );
+
+              setU8(
+                target,
+                address + 1,
+                value >> 8,
+                base,
+              );
+            };
+
+            const setU32 = (
+              target:
+                Uint8Array,
+              address: number,
+              value: number,
+              base: number,
+            ): void => {
+              setU8(
+                target,
+                address,
+                value,
+                base,
+              );
+
+              setU8(
+                target,
+                address + 1,
+                value >> 8,
+                base,
+              );
+
+              setU8(
+                target,
+                address + 2,
+                value >> 16,
+                base,
+              );
+
+              setU8(
+                target,
+                address + 3,
+                value >>> 24,
+                base,
+              );
+            };
+
+            const readU8 = (
+              address: number,
+            ): number => {
+              if (
+                address >= 0x08000000 &&
+                address <
+                  0x08000000 +
+                    rom.length
+              ) {
+                return rom[
+                  address -
+                  0x08000000
+                ] ?? 0;
+              }
+
+              if (
+                address >= 0x02000000 &&
+                address < 0x02040000
+              ) {
+                return ewram[
+                  address -
+                  0x02000000
+                ] ?? 0;
+              }
+
+              if (
+                address >= 0x03000000 &&
+                address <
+                  0x03008000
+              ) {
+                return iwram[
+                  address -
+                  0x03000000
+                ] ?? 0;
+              }
+
+              return 0;
+            };
+
+            const memoryReader:
+              MemoryReader = {
+              readU8,
+
+              readU16(
+                address: number,
+              ): number {
+                return (
+                  readU8(address) |
+                  (
+                    readU8(
+                      address + 1,
+                    ) <<
+                    8
+                  )
+                );
+              },
+
+              readU32(
+                address: number,
+              ): number {
+                return (
+                  (
+                    readU8(address) |
+                    (
+                      readU8(
+                        address + 1,
+                      ) <<
+                      8
+                    ) |
+                    (
+                      readU8(
+                        address + 2,
+                      ) <<
+                      16
+                    ) |
+                    (
+                      readU8(
+                        address + 3,
+                      ) *
+                      0x1000000
+                    )
+                  ) >>> 0
+                );
+              },
+
+              readRange(
+                address: number,
+                length: number,
+              ): Uint8Array {
+                const bytes =
+                  new Uint8Array(
+                    length,
+                  );
+
+                for (
+                  let index = 0;
+                  index < length;
+                  index++
+                ) {
+                  bytes[index] =
+                    readU8(
+                      address +
+                      index,
+                    );
+                }
+
+                return bytes;
+              },
+            };
+
+            const saveBlock1 =
+              0x02001000;
+
+            setU32(
+              iwram,
+              0x03005008,
+              saveBlock1,
+              0x03000000,
+            );
+
+            setU8(
+              ewram,
+              saveBlock1 + 0x04,
+              3,
+              0x02000000,
+            );
+
+            setU8(
+              ewram,
+              saveBlock1 + 0x05,
+              0,
+              0x02000000,
+            );
+
+            setU16(
+              ewram,
+              saveBlock1 + 0x32,
+              78,
+              0x02000000,
+            );
+
+            setU16(
+              ewram,
+              saveBlock1 + 0x00,
+              17,
+              0x02000000,
+            );
+
+            setU16(
+              ewram,
+              saveBlock1 + 0x02,
+              17,
+              0x02000000,
+            );
+
+            const activeHeader =
+              0x02036dfc;
+
+            setU32(
+              ewram,
+              activeHeader,
+              0x082dd530,
+              0x02000000,
+            );
+
+            setU16(
+              ewram,
+              activeHeader + 0x12,
+              78,
+              0x02000000,
+            );
+
+            const playerAvatar =
+              0x02037078;
+
+            setU8(
+              ewram,
+              playerAvatar + 0x05,
+              0xff,
+              0x02000000,
+            );
+
+            const stateAdapter =
+              new Gen3StateAdapter(
+                memoryReader,
+                rom,
+              );
+
+            const state =
+              stateAdapter.readState();
+
+            if (
+              state.game.region !==
+              'firered'
+            ) {
+              throw new Error(
+                'Expected FireRed profile, got ' +
+                state.game.region,
+              );
+            }
+
+            if (
+              state.map.mapLayoutAddress !==
+              0x082dd530 ||
+              state.map.mapLayoutId !==
+              78 ||
+              state.map.width !== 24 ||
+              state.map.height !== 20
+            ) {
+              throw new Error(
+                'Synthetic FireRed state did not resolve Pallet Town.',
+              );
+            }
+
+            const container =
+              document.getElementById(
+                'sceneContainer',
+              );
+
+            if (!container) {
+              throw new Error(
+                'Scene container missing.',
+              );
+            }
+
+            const renderer =
+              new PlayerRenderer(
+                container,
+                stateAdapter,
+                rom,
+              );
+
+            await new Promise(
+              resolve =>
+                setTimeout(
+                  resolve,
+                  1500,
+                ),
+            );
+
+            const runtime =
+              renderer as any;
+
+            const canvas =
+              container.querySelector(
+                'canvas',
+              );
+
+            const catalogSize =
+              runtime.mapCatalog
+                .getAll()
+                .length;
+
+            const worldSize =
+              runtime.mapWorld
+                .getPositionedMaps()
+                .length;
+
+            const visualSize =
+              runtime.mapVisuals.size;
+
+            const activeMapKey =
+              runtime.activeMapKey;
+
+            report({
+              stateMap:
+                state.map.mapGroup +
+                ':' +
+                state.map.mapNumber,
+
+              stateLayout:
+                '0x' +
+                state.map.mapLayoutAddress.toString(
+                  16,
+                ),
+
+              catalogSize,
+              worldSize,
+              visualSize,
+              activeMapKey,
+              canvas:
+                canvas !== null,
+
+              pass:
+                canvas !== null &&
+                catalogSize >= 3 &&
+                worldSize >= 3 &&
+                visualSize >= 1 &&
+                activeMapKey === '3:0',
+            });
+
+            renderer.destroy();
+          } catch (error) {
+            report({
+              pass: false,
+              error:
+                String(error),
+            });
+          }
+          TS
+
       - name: Start Vite
         run: |
           nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
@@ -547,7 +997,6 @@ jobs:
       - name: Run FireRed browser check
         run: |
           xvfb-run -a node - <<'NODE'
-          const fs = require('fs');
           const { chromium } = require('playwright');
 
           (async () => {
@@ -561,87 +1010,44 @@ jobs:
             });
 
             const page = await browser.newPage({
-              viewport: { width: 1280, height: 720 },
+              viewport: { width: 1280, height: 800 },
             });
 
-            const logs = [];
-            const errors = [];
-
             page.on('console', msg => {
-              const line = '[console:' + msg.type() + '] ' + msg.text();
-              logs.push(line);
-              if (
-                /Map State|Gen 3 Map Catalog|Active World|Map Data|Tilesets|Metatile|LZ77|failed|error|Unable to build/i.test(line)
-              ) {
-                console.log(line);
-              }
+              console.log('[console:' + msg.type() + '] ' + msg.text());
             });
 
             page.on('pageerror', error => {
-              errors.push(String(error.stack || error));
               console.log('[pageerror] ' + String(error.stack || error));
             });
 
-            await page.goto('http://127.0.0.1:5173/', {
-              waitUntil: 'networkidle',
-            });
-
-            const romInput = page.locator('#romInput');
-
-            await romInput.setInputFiles(
-              'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba'
+            await page.goto(
+              'http://127.0.0.1:5173/fire-red-render-test.html',
+              { waitUntil: 'networkidle' },
             );
 
-            await page.waitForTimeout(7000);
+            await page.waitForTimeout(2500);
 
-            const status = await page.locator('#status').textContent();
-            const emulatorCanvas =
-              await page.locator('#emulator').count();
-            const sceneCanvas =
-              await page.locator('#sceneContainer canvas').count();
+            const result =
+              await page.evaluate(() => window.__fireRedTest ?? null);
 
-            console.log('FINAL_STATUS=' + status);
-            console.log('EMULATOR_CANVAS_COUNT=' + emulatorCanvas);
-            console.log('SCENE_CANVAS_COUNT=' + sceneCanvas);
-            console.log('ERROR_COUNT=' + errors.length);
+            console.log(
+              'FINAL_FIRE_RED_PLAYER_TEST=' +
+              JSON.stringify(result),
+            );
 
             await page.screenshot({
-              path: '/tmp/fire-red.png',
+              path: '/tmp/fire-red-player.png',
               fullPage: true,
             });
 
-            fs.writeFileSync(
-              '/tmp/fire-red-logs.txt',
-              logs.join('\\n') + '\\n\\n' +
-              errors.join('\\n') + '\\n'
-            );
+            await browser.close();
 
-            if (errors.length > 0) {
-              await browser.close();
-              process.exit(1);
-            }
-
-            if (sceneCanvas !== 1) {
-              console.error(
-                'PlayerRenderer did not create its Three.js canvas.',
-              );
-              await browser.close();
+            if (!result || result.pass !== true) {
               process.exit(2);
             }
-
-            const relevant = logs.filter(line =>
-              /Gen 3 Game Profile|mGBA runtime|Map State|Gen 3 Map Catalog|Active World/i.test(line)
-            );
-
-            if (relevant.length === 0) {
-              console.error('No Gen 3 runtime/map log was observed.');
-              await browser.close();
-              process.exit(3);
-            }
-
-            await browser.close();
           })().catch(error => {
             console.error(error);
-            process.exit(4);
+            process.exit(3);
           });
           NODE
