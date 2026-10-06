@@ -29,6 +29,7 @@ jobs:
         run: |
           cat > real-mgba-current.mjs <<'EOF'
           import { chromium } from 'playwright';
+          import { writeFileSync } from 'node:fs';
           const browser = await chromium.launch({
             headless: false,
             args: ['--no-sandbox', '--use-gl=swiftshader', '--autoplay-policy=no-user-gesture-required']
@@ -86,7 +87,7 @@ jobs:
             activeMapLogs: activeLogs.slice(-10),
             worldLogs: worldLogs.slice(-10),
           };
-          require('fs').writeFileSync('/tmp/real-mgba-current.json', JSON.stringify(result,null,2));
+          writeFileSync('/tmp/real-mgba-current.json', JSON.stringify(result,null,2));
           await browser.close();
           EOF
           xvfb-run -a node real-mgba-current.mjs
