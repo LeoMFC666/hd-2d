@@ -1,0 +1,129 @@
+name: FireRed final validation v2
+on:
+  push:
+    branches:
+      - diagnose/fire-red-final-v2
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - name: Validate FireRed global catalog and world
+        run: |
+          cat > fire-red-validation.ts <<'TS'
+          import fs from 'node:fs';
+          import { MapCatalog } from './src/gen3/world/MapCatalog';
+          import { MapWorld } from './src/gen3/world/MapWorld';
+
+          const rom = new Uint8Array(
+            fs.readFileSync(
+              'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba',
+            ),
+          );
+
+          const catalog = new MapCatalog();
+
+          const count =
+            catalog.buildGen3FromRom(
+              rom,
+              {
+                mapGroup: 3,
+                mapNumber: 0,
+                mapLayoutId: 78,
+                mapLayoutAddress: 0x082dd530,
+              },
+            );
+
+          console.log(
+            'FIRERED_GLOBAL_CATALOG_COUNT=' +
+              count,
+          );
+
+          console.log(
+            'FIRERED_CATALOG_HAS_PALLET=' +
+              catalog.has(3, 0),
+          );
+
+          console.log(
+            'FIRERED_CATALOG_HAS_ROUTE1=' +
+              catalog.has(3, 19),
+          );
+
+          console.log(
+            'FIRERED_CATALOG_HAS_CINNABAR=' +
+              catalog.has(3, 8),
+          );
+
+          console.log(
+            'FIRERED_CATALOG_HAS_ROUTE19=' +
+              catalog.has(3, 37),
+          );
+
+          if (
+            count < 400 ||
+            !catalog.has(3, 0) ||
+            !catalog.has(3, 19) ||
+            !catalog.has(3, 8) ||
+            !catalog.has(3, 37)
+          ) {
+            throw new Error(
+              'FireRed global MapCatalog is incomplete.',
+            );
+          }
+
+          const anchors = [
+            [3, 0],
+            [3, 8],
+            [3, 19],
+          ] as const;
+
+          for (
+            const [group, number] of anchors
+          ) {
+            const world =
+              new MapWorld(catalog);
+
+            const worldCount =
+              world.buildFrom(
+                group,
+                number,
+              );
+
+            console.log(
+              'FIRERED_WORLD=' +
+                group +
+                ':' +
+                number +
+                ' count=' +
+                worldCount +
+                ' positioned=' +
+                world.getPositionedMaps().length,
+            );
+
+            if (
+              worldCount <= 1
+            ) {
+              throw new Error(
+                'FireRed world graph did not connect from ' +
+                group +
+                ':' +
+                number,
+              );
+            }
+          }
+
+          console.log(
+            'FIRERED_GLOBAL_CATALOG_WORLD=PASS',
+          );
+          TS
+
+          npx tsx fire-red-validation.ts
