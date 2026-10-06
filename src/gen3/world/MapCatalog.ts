@@ -395,9 +395,28 @@ export class MapCatalog {
       gameCode === 'BPGP' ||
       gameCode === 'BPGJ'
     ) {
-      return this.buildFireRedLeafGreenFromRom(
+      if (
+        revision !== 0 &&
+        revision !== 1
+      ) {
+        return 0;
+      }
+
+      const groupLengths =
+        gameCode === 'BPRE' ||
+        gameCode === 'BPRP' ||
+        gameCode === 'BPRJ'
+          ? MAP_GROUP_LENGTHS.BPRE
+          : MAP_GROUP_LENGTHS.BPGE;
+
+      if (!groupLengths) {
+        return 0;
+      }
+
+      return this.buildFireRedFromGlobalMapGroups(
         romBytes,
         anchor,
+        groupLengths,
       );
     }
 
@@ -664,6 +683,259 @@ export class MapCatalog {
           worldX: 0,
           worldY: 0,
 
+          connections,
+        });
+
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  private buildFireRedFromGlobalMapGroups(
+    romBytes: Uint8Array,
+    anchor: Gen3MapCatalogAnchor,
+    groupLengths: readonly number[],
+  ): number {
+    if (
+      anchor.mapGroup < 0 ||
+      anchor.mapGroup >=
+        groupLengths.length
+    ) {
+      return 0;
+    }
+
+    const groupLength =
+      groupLengths[
+        anchor.mapGroup
+      ];
+
+    if (
+      anchor.mapNumber < 0 ||
+      anchor.mapNumber >=
+        groupLength
+    ) {
+      return 0;
+    }
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        anchor.mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return 0;
+    }
+
+    const staticHeader =
+      this.findStaticMapHeader(
+        romBytes,
+        anchor,
+      );
+
+    if (
+      staticHeader === 0
+    ) {
+      return 0;
+    }
+
+    const mapGroupsAddress =
+      this.findMapGroupsAddress(
+        romBytes,
+        staticHeader,
+        anchor.mapGroup,
+        anchor.mapNumber,
+        groupLengths,
+      );
+
+    if (
+      mapGroupsAddress === 0
+    ) {
+      return 0;
+    }
+
+    let count =
+      0;
+
+    for (
+      let mapGroup = 0;
+      mapGroup <
+        groupLengths.length;
+      mapGroup++
+    ) {
+      const currentGroupLength =
+        groupLengths[
+          mapGroup
+        ];
+
+      const groupAddress =
+        this.readU32(
+          romBytes,
+          (
+            mapGroupsAddress -
+            GBA_ROM_BASE
+          ) +
+          mapGroup * 4,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          groupAddress,
+          currentGroupLength * 4,
+        )
+      ) {
+        continue;
+      }
+
+      for (
+        let mapNumber = 0;
+        mapNumber <
+          currentGroupLength;
+        mapNumber++
+      ) {
+        const mapHeaderAddress =
+          this.readU32(
+            romBytes,
+            (
+              groupAddress -
+              GBA_ROM_BASE
+            ) +
+            mapNumber * 4,
+          );
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            mapHeaderAddress,
+            MAP_HEADER_SIZE,
+          )
+        ) {
+          continue;
+        }
+
+        const headerOffset =
+          mapHeaderAddress -
+          GBA_ROM_BASE;
+
+        const mapLayoutAddress =
+          this.readU32(
+            romBytes,
+            headerOffset +
+              MAP_HEADER_LAYOUT_OFFSET,
+          );
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            mapLayoutAddress,
+            MAP_LAYOUT_SIZE,
+          )
+        ) {
+          continue;
+        }
+
+        const layoutOffset =
+          mapLayoutAddress -
+          GBA_ROM_BASE;
+
+        const width =
+          this.readU32(
+            romBytes,
+            layoutOffset +
+              MAP_LAYOUT_WIDTH_OFFSET,
+          );
+
+        const height =
+          this.readU32(
+            romBytes,
+            layoutOffset +
+              MAP_LAYOUT_HEIGHT_OFFSET,
+          );
+
+        if (
+          !this.isValidMapDimension(
+            width,
+          ) ||
+          !this.isValidMapDimension(
+            height,
+          )
+        ) {
+          continue;
+        }
+
+        const mapDataAddress =
+          this.readU32(
+            romBytes,
+            layoutOffset +
+              MAP_LAYOUT_MAP_OFFSET,
+          );
+
+        const primaryTilesetAddress =
+          this.readU32(
+            romBytes,
+            layoutOffset +
+              MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+          );
+
+        const secondaryTilesetAddress =
+          this.readU32(
+            romBytes,
+            layoutOffset +
+              MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+          );
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            mapDataAddress,
+            width *
+              height *
+              2,
+          ) ||
+          !this.isValidRomPointer(
+            romBytes,
+            primaryTilesetAddress,
+            0x04,
+          ) ||
+          !this.isValidRomPointer(
+            romBytes,
+            secondaryTilesetAddress,
+            0x04,
+          )
+        ) {
+          continue;
+        }
+
+        const mapLayoutId =
+          this.readU16(
+            romBytes,
+            headerOffset +
+              MAP_HEADER_LAYOUT_ID_OFFSET,
+          );
+
+        const connections =
+          this.readConnections(
+            romBytes,
+            mapHeaderAddress,
+            groupLengths,
+          );
+
+        this.register({
+          mapGroup,
+          mapNumber,
+          mapLayoutId,
+          mapHeaderAddress,
+          mapLayoutAddress,
+          mapDataAddress,
+          primaryTilesetAddress,
+          secondaryTilesetAddress,
+          width,
+          height,
+          worldX: 0,
+          worldY: 0,
           connections,
         });
 
