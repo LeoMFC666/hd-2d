@@ -1,0 +1,150 @@
+name: FireRed regression check
+
+on:
+  push:
+    branches:
+      - fix/fire-red-dedicated-world
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript and Vite build
+        run: npm run build
+
+      - name: Install Playwright
+        run: npx playwright@1.55.0 install --with-deps chromium
+
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5173/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:5173/ > /dev/null
+
+      - name: Run FireRed browser check
+        run: |
+          cat > /tmp/check-fire-red.cjs <<'NODE'
+          const { chromium } = require(require.resolve('playwright', { paths: ['/home/runner/.npm/_npx'] }));
+          NODE
+
+          npx -y -p playwright@1.55.0 node - <<'NODE'
+          const fs = require('fs');
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({
+              headless: true,
+              args: [
+                '--use-gl=swiftshader',
+                '--enable-webgl',
+                '--ignore-gpu-blocklist',
+              ],
+            });
+
+            const page = await browser.newPage({
+              viewport: { width: 1280, height: 720 },
+            });
+
+            const logs = [];
+            const errors = [];
+
+            page.on('console', msg => {
+              const line = '[console:' + msg.type() + '] ' + msg.text();
+              logs.push(line);
+              if (
+                /Map State|Gen 3 Map Catalog|Active World|Map Data|Tilesets|Metatile|LZ77|failed|error|Unable to build/i.test(line)
+              ) {
+                console.log(line);
+              }
+            });
+
+            page.on('pageerror', error => {
+              errors.push(String(error.stack || error));
+              console.log('[pageerror] ' + String(error.stack || error));
+            });
+
+            await page.goto('http://127.0.0.1:5173/', {
+              waitUntil: 'networkidle',
+            });
+
+            const romInput = page.locator('#romInput');
+            const saveInput = page.locator('#saveInput');
+
+            await romInput.setInputFiles(
+              'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba'
+            );
+
+            await page.waitForTimeout(2500);
+
+            await saveInput.setInputFiles('firered.sav');
+
+            await page.waitForTimeout(5000);
+
+            const status = await page.locator('#status').textContent();
+            const canvas = await page.locator('#sceneContainer canvas').count();
+
+            console.log('FINAL_STATUS=' + status);
+            console.log('SCENE_CANVAS_COUNT=' + canvas);
+            console.log('ERROR_COUNT=' + errors.length);
+
+            await page.screenshot({
+              path: '/tmp/fire-red.png',
+              fullPage: true,
+            });
+
+            fs.writeFileSync(
+              '/tmp/fire-red-logs.txt',
+              logs.join('\n') + '\n\n' +
+              errors.join('\n') + '\n'
+            );
+
+            await browser.close();
+
+            if (errors.length > 0) {
+              process.exit(1);
+            }
+
+            const relevant = logs.filter(line =>
+              /Gen 3 Map Catalog|Active World/i.test(line)
+            );
+
+            if (relevant.length === 0) {
+              console.error('No catalog/world log was observed.');
+              process.exit(2);
+            }
+
+            const catalog = logs.filter(line =>
+              /Gen 3 Map Catalog/i.test(line)
+            );
+
+            if (
+              catalog.some(line => /0 maps/i.test(line)) ||
+              catalog.length === 0
+            ) {
+              console.error('FireRed catalog was not built with maps.');
+              process.exit(3);
+            }
+          })().catch(error => {
+            console.error(error);
+            process.exit(4);
+          });
+          NODE
