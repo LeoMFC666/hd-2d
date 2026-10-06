@@ -413,9 +413,30 @@ export class MapCatalog {
         return 0;
       }
 
+      let resolvedAnchor =
+        anchor;
+
+      if (
+        anchor.mapGroup === 3 &&
+        anchor.mapNumber === 8
+      ) {
+        const canonicalCinnabar =
+          this.findCanonicalFireRedCinnabarAnchor(
+            romBytes,
+            groupLengths,
+          );
+
+        if (!canonicalCinnabar) {
+          return 0;
+        }
+
+        resolvedAnchor =
+          canonicalCinnabar;
+      }
+
       return this.buildFireRedFromGlobalMapGroups(
         romBytes,
-        anchor,
+        resolvedAnchor,
         groupLengths,
       );
     }
@@ -691,6 +712,73 @@ export class MapCatalog {
     }
 
     return count;
+  }
+
+  private findCanonicalFireRedCinnabarAnchor(
+    romBytes: Uint8Array,
+    groupLengths: readonly number[],
+  ): Gen3MapCatalogAnchor | null {
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          MAP_HEADER_SIZE;
+      offset += 4
+    ) {
+      const candidate =
+        this.readFireRedMapHeaderCandidate(
+          romBytes,
+          GBA_ROM_BASE + offset,
+          groupLengths,
+        );
+
+      if (!candidate) {
+        continue;
+      }
+
+      if (
+        candidate.width !== 24 ||
+        candidate.height !== 20
+      ) {
+        continue;
+      }
+
+      const hasRoute21South =
+        candidate.connections.some(
+          connection =>
+            connection.direction === 'NORTH' &&
+            connection.mapGroup === 3 &&
+            connection.mapNumber === 40 &&
+            connection.offset === 0,
+        );
+
+      const hasRoute20 =
+        candidate.connections.some(
+          connection =>
+            connection.direction === 'EAST' &&
+            connection.mapGroup === 3 &&
+            connection.mapNumber === 38 &&
+            connection.offset === 0,
+        );
+
+      if (
+        !hasRoute21South ||
+        !hasRoute20
+      ) {
+        continue;
+      }
+
+      return {
+        mapGroup: 3,
+        mapNumber: 8,
+        mapLayoutId:
+          candidate.mapLayoutId,
+        mapLayoutAddress:
+          candidate.mapLayoutAddress,
+      };
+    }
+
+    return null;
   }
 
   private buildFireRedFromGlobalMapGroups(
