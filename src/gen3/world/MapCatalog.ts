@@ -367,7 +367,7 @@ export class MapCatalog {
 
   buildGen3FromRom(
     romBytes: Uint8Array,
-    anchor?: Gen3MapCatalogAnchor,
+    anchor: Gen3MapCatalogAnchor,
   ): number {
     this.clear();
 
@@ -400,48 +400,40 @@ export class MapCatalog {
     }
 
     if (
-      anchor &&
-      (
-        anchor.mapGroup < 0 ||
-        anchor.mapGroup >=
-          groupLengths.length
-      )
+      anchor.mapGroup < 0 ||
+      anchor.mapGroup >=
+        groupLengths.length
     ) {
       return 0;
     }
 
-    if (anchor) {
-      const anchorGroupLength =
-        groupLengths[
-          anchor.mapGroup
-        ];
+    const anchorGroupLength =
+      groupLengths[
+        anchor.mapGroup
+      ];
 
-      if (
-        anchorGroupLength ===
-        undefined ||
-        anchor.mapNumber < 0 ||
-        anchor.mapNumber >=
-          anchorGroupLength
-      ) {
-        return 0;
-      }
+    if (
+      anchor.mapNumber < 0 ||
+      anchor.mapNumber >=
+        anchorGroupLength
+    ) {
+      return 0;
+    }
 
-      if (
-        !this.isValidRomPointer(
-          romBytes,
-          anchor.mapLayoutAddress,
-          MAP_LAYOUT_SIZE,
-        )
-      ) {
-        return 0;
-      }
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        anchor.mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return 0;
     }
 
     const mapGroupsAddress =
       this.findMapGroupsAddress(
         romBytes,
         anchor,
-        gameCode,
         groupLengths,
       );
 
@@ -655,39 +647,7 @@ export class MapCatalog {
 
   private findMapGroupsAddress(
     romBytes: Uint8Array,
-    anchor:
-      Gen3MapCatalogAnchor | undefined,
-    gameCode: string,
-    groupLengths:
-      readonly number[],
-  ): number {
-    if (anchor) {
-      const anchoredAddress =
-        this.findMapGroupsAddressFromAnchor(
-          romBytes,
-          anchor,
-          gameCode,
-          groupLengths,
-        );
-
-      if (
-        anchoredAddress !== 0
-      ) {
-        return anchoredAddress;
-      }
-    }
-
-    return this.findMapGroupsAddressFromWorldRoot(
-      romBytes,
-      gameCode,
-      groupLengths,
-    );
-  }
-
-  private findMapGroupsAddressFromAnchor(
-    romBytes: Uint8Array,
     anchor: Gen3MapCatalogAnchor,
-    gameCode: string,
     groupLengths:
       readonly number[],
   ): number {
@@ -751,6 +711,12 @@ export class MapCatalog {
         GBA_ROM_BASE +
           offset,
       );
+    }
+
+    if (
+      staticHeaders.size === 0
+    ) {
+      return 0;
     }
 
     for (
@@ -842,12 +808,6 @@ export class MapCatalog {
           romBytes,
           tableAddress,
           groupLengths,
-        ) &&
-        this.isExpectedWorldRootTable(
-          romBytes,
-          tableAddress,
-          gameCode,
-          groupLengths,
         )
       ) {
         return tableAddress;
@@ -855,244 +815,6 @@ export class MapCatalog {
     }
 
     return 0;
-  }
-
-  private findMapGroupsAddressFromWorldRoot(
-    romBytes: Uint8Array,
-    gameCode: string,
-    groupLengths:
-      readonly number[],
-  ): number {
-    const root =
-      this.getWorldRoot(
-        gameCode,
-      );
-
-    if (!root) {
-      return 0;
-    }
-
-    const rootOffset =
-      root.mapGroup * 4;
-
-    const tableEnd =
-      romBytes.length -
-      groupLengths.length * 4;
-
-    for (
-      let offset = 0;
-      offset <= tableEnd;
-      offset += 4
-    ) {
-      const rootGroupAddress =
-        this.readU32(
-          romBytes,
-          offset +
-            rootOffset,
-        );
-
-      if (
-        !this.isValidRomPointer(
-          romBytes,
-          rootGroupAddress,
-          groupLengths[
-            root.mapGroup
-          ] * 4,
-        )
-      ) {
-        continue;
-      }
-
-      const rootHeaderAddress =
-        this.readU32(
-          romBytes,
-          (
-            rootGroupAddress -
-            GBA_ROM_BASE
-          ) +
-            root.mapNumber * 4,
-        );
-
-      if (
-        !this.isValidMapHeader(
-          romBytes,
-          rootHeaderAddress,
-        )
-      ) {
-        continue;
-      }
-
-      const tableAddress =
-        GBA_ROM_BASE +
-        offset;
-
-      if (
-        !this.validateMapGroupsTable(
-          romBytes,
-          tableAddress,
-          groupLengths,
-        )
-      ) {
-        continue;
-      }
-
-      if (
-        this.isExpectedWorldRootTable(
-          romBytes,
-          tableAddress,
-          gameCode,
-          groupLengths,
-        )
-      ) {
-        return tableAddress;
-      }
-    }
-
-    return 0;
-  }
-
-  private isExpectedWorldRootTable(
-    romBytes: Uint8Array,
-    tableAddress: number,
-    gameCode: string,
-    groupLengths:
-      readonly number[],
-  ): boolean {
-    const root =
-      this.getWorldRoot(
-        gameCode,
-      );
-
-    if (!root) {
-      return false;
-    }
-
-    const groupAddress =
-      this.readU32(
-        romBytes,
-        (
-          tableAddress -
-          GBA_ROM_BASE
-        ) +
-          root.mapGroup * 4,
-      );
-
-    if (
-      !this.isValidRomPointer(
-        romBytes,
-        groupAddress,
-        groupLengths[
-          root.mapGroup
-        ] * 4,
-      )
-    ) {
-      return false;
-    }
-
-    const rootHeaderAddress =
-      this.readU32(
-        romBytes,
-        (
-          groupAddress -
-          GBA_ROM_BASE
-        ) +
-          root.mapNumber * 4,
-      );
-
-    if (
-      !this.isValidMapHeader(
-        romBytes,
-        rootHeaderAddress,
-      )
-    ) {
-      return false;
-    }
-
-    const connections =
-      this.readConnections(
-        romBytes,
-        rootHeaderAddress,
-        groupLengths,
-      );
-
-    for (
-      const expected of
-        root.connections
-    ) {
-      const found =
-        connections.some(
-          (
-            connection,
-          ) =>
-            connection.direction ===
-              expected.direction &&
-            connection.mapGroup ===
-              expected.mapGroup &&
-            connection.mapNumber ===
-              expected.mapNumber &&
-            connection.offset ===
-              expected.offset,
-        );
-
-      if (!found) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  private getWorldRoot(
-    gameCode: string,
-  ): {
-    mapGroup: number;
-    mapNumber: number;
-    connections: MapConnection[];
-  } | null {
-    switch (
-      gameCode
-    ) {
-      case 'BPEE':
-        return {
-          mapGroup: 0,
-          mapNumber: 9,
-          connections: [
-            {
-              direction:
-                'NORTH',
-              mapGroup: 0,
-              mapNumber: 16,
-              offset: 0,
-            },
-          ],
-        };
-
-      case 'BPRE':
-      case 'BPGE':
-        return {
-          mapGroup: 3,
-          mapNumber: 0,
-          connections: [
-            {
-              direction:
-                'NORTH',
-              mapGroup: 3,
-              mapNumber: 19,
-              offset: 0,
-            },
-            {
-              direction:
-                'SOUTH',
-              mapGroup: 3,
-              mapNumber: 38,
-              offset: 0,
-            },
-          ],
-        };
-
-      default:
-        return null;
-    }
   }
 
   private validateMapGroup(
@@ -1304,13 +1026,16 @@ export class MapCatalog {
             mapGroup * 4,
         );
 
+      const groupLength =
+        groupLengths[
+          mapGroup
+        ];
+
       if (
-        !this.validateMapGroup(
+        !this.isValidRomPointer(
           romBytes,
           groupAddress,
-          mapGroup,
-          0,
-          groupLengths,
+          groupLength * 4,
         )
       ) {
         return false;
