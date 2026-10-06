@@ -247,7 +247,7 @@ export class MapWorld {
       case 'NORTH':
         return {
           x:
-            sourcePosition.x +
+            sourcePosition.x -
             connection.offset,
 
           y:
@@ -273,7 +273,7 @@ export class MapWorld {
             target.width,
 
           y:
-            sourcePosition.y +
+            sourcePosition.y -
             connection.offset,
         };
 
@@ -284,7 +284,7 @@ export class MapWorld {
             source.width,
 
           y:
-            sourcePosition.y +
+            sourcePosition.y -
             connection.offset,
         };
     }
