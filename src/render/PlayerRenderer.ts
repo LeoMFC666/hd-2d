@@ -398,9 +398,9 @@ export class PlayerRenderer {
         state.map.secondaryTilesetAddress,
       width: state.map.width,
       height: state.map.height,
-      worldX: existing?.worldX ?? 0,
-      worldY: existing?.worldY ?? 0,
-      connections: existing?.connections ?? [],
+      worldX: 0,
+      worldY: 0,
+      connections: [],
     };
 
     this.mapCatalog.register(
