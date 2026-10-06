@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="UTF-8"><title>Real mGBA Cinnabar current</title>
+<style>html,body{margin:0;background:#111;color:#fff;font-family:monospace}#report{white-space:pre-wrap;padding:12px}#emulator,#sceneContainer{display:block;width:800px;height:480px;margin:8px auto}#sceneContainer{position:relative}</style></head>
+<body><pre id="report">starting...</pre><canvas id="emulator" width="240" height="160"></canvas><div id="sceneContainer"></div>
+<input id="romInput" type="file" hidden><input id="saveInput" type="file" hidden>
+<button id="loadRom" hidden>Load ROM</button><button id="importSave" hidden>Import Save</button><button id="exportSave" hidden>Export Save</button><button id="pauseToggle" hidden>Pause</button><button id="resetGame" hidden>Reset</button><div id="status">Idle</div>
+<script type="module">
+import { setupApp } from '/src/app.ts';
+import { Gen3StateAdapter } from '/src/gen3/Gen3StateAdapter';
+const bad = 0x08338378;
+const original = Gen3StateAdapter.prototype.getMapRenderData;
+Gen3StateAdapter.prototype.getMapRenderData = function(mapDataAddress,width,height,primary,secondary){
+  console.log('STATIC_RENDER', JSON.stringify({mapDataAddress:'0x'+mapDataAddress.toString(16),width,height,primary:'0x'+primary.toString(16),secondary:'0x'+secondary.toString(16),isBeta:mapDataAddress===bad}));
+  return original.call(this,mapDataAddress,width,height,primary,secondary);
+};
+setupApp();
+</script></body></html>
