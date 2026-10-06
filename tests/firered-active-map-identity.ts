@@ -19,7 +19,7 @@ function u8(rom:Uint8Array,o:number){return o>=0&&o<rom.length?rom[o]:0}
 function u16(rom:Uint8Array,o:number){return u8(rom,o)|(u8(rom,o+1)<<8)}
 function u32(rom:Uint8Array,o:number){return (u8(rom,o)|(u8(rom,o+1)<<8)|(u8(rom,o+2)<<16)|(u8(rom,o+3)*0x1000000))>>>0}
 function isPtr(rom:Uint8Array,address:number,size=1){const o=address-BASE;return o>=0&&o+size<=rom.length}
-function findCinnabarAnchor(rom:Uint8Array){
+function findPalletAnchor(rom:Uint8Array){
   for(let off=0;off<=rom.length-0x1c;off+=4){
     const layout=u32(rom,off);
     if(!isPtr(rom,layout,0x18))continue;
@@ -27,23 +27,21 @@ function findCinnabarAnchor(rom:Uint8Array){
     if(u32(rom,lo)!==24||u32(rom,lo+4)!==20)continue;
     const cp=u32(rom,off+0x0c);
     if(!isPtr(rom,cp,8))continue;
-    const co=cp-BASE, n=u32(rom,co)|0;
+    const co=cp-BASE,n=u32(rom,co)|0;
     if(n<2||n>64)continue;
     const dp=u32(rom,co+4);
     if(!isPtr(rom,dp,n*0xc))continue;
-    let north=false,east=false;
+    let north=false,south=false;
     for(let i=0;i<n;i++){
       const e=dp-BASE+i*0xc;
-      const dir=u8(rom,e), ofs=u32(rom,e+4)|0, g=u8(rom,e+8), m=u8(rom,e+9);
-      if(dir===2&&ofs===0&&g===3&&m===40)north=true;
-      if(dir===4&&ofs===0&&g===3&&m===38)east=true;
+      const dir=u8(rom,e),ofs=u32(rom,e+4)|0,g=u8(rom,e+8),m=u8(rom,e+9);
+      if(dir===2&&ofs===0&&g===3&&m===19)north=true;
+      if(dir===1&&ofs===0&&g===3&&m===39)south=true;
     }
-    if(north&&east)return {mapLayoutAddress:layout,mapLayoutId:u16(rom,off+0x12)};
+    if(north&&south)return {mapLayoutAddress:layout,mapLayoutId:u16(rom,off+0x12)};
   }
   return null;
 }
-
-function assert(ok:unknown,msg:string):asserts ok{if(!ok)throw new Error(msg)}
 
 function makeState(mapGroup:number,mapNumber:number,cinnabar:any):GameState{
   return {
@@ -105,8 +103,8 @@ async function main(){
   assert(String.fromCharCode(rom[0xac],rom[0xad],rom[0xae],rom[0xaf])==='BPRE','wrong ROM');
   assert(rom[0xbc]===1,'wrong revision');
 
-  const anchor=findCinnabarAnchor(rom);
-  assert(anchor,'Cinnabar anchor not found independently');
+  const anchor=findPalletAnchor(rom);
+  assert(anchor,'Pallet anchor not found independently');
 
   const catalog=new MapCatalog();
   assert(catalog.buildGen3FromRom(rom,anchor)===425,'catalog failed');
