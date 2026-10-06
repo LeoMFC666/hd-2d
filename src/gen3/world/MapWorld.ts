@@ -323,7 +323,10 @@ export class MapWorld {
                 source.mapNumber,
 
               offset:
-                -connection.offset,
+                this.getReverseOffset(
+                  connection.direction,
+                  connection.offset,
+                ),
             },
           },
         );
@@ -354,6 +357,24 @@ export class MapWorld {
         edge,
       ],
     );
+  }
+
+  private getReverseOffset(
+    direction:
+      MapConnectionDirection,
+    offset: number,
+  ): number {
+    switch (
+      direction
+    ) {
+      case 'NORTH':
+      case 'SOUTH':
+        return offset;
+
+      case 'WEST':
+      case 'EAST':
+        return -offset;
+    }
   }
 
   private getOppositeDirection(
