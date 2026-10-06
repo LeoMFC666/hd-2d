@@ -36,6 +36,12 @@ interface MapVisual {
 
   geometry:
     THREE.PlaneGeometry;
+
+  mapDataAddress: number;
+  primaryTilesetAddress: number;
+  secondaryTilesetAddress: number;
+  width: number;
+  height: number;
 }
 
 export class PlayerRenderer {
@@ -545,12 +551,25 @@ export class PlayerRenderer {
         map.mapNumber,
       );
 
-    if (
-      this.mapVisuals.has(
+    const existing =
+      this.mapVisuals.get(
         key,
+      );
+
+    if (
+      existing &&
+      this.mapVisualMatchesDefinition(
+        existing,
+        map,
       )
     ) {
       return;
+    }
+
+    if (existing) {
+      this.disposeMapVisual(
+        key,
+      );
     }
 
     if (
@@ -567,6 +586,86 @@ export class PlayerRenderer {
 
     this.buildQueue.push(
       map,
+    );
+  }
+
+  private mapVisualMatchesDefinition(
+    visual: MapVisual,
+    map: MapDefinition,
+  ): boolean {
+    return (
+      visual.mapDataAddress ===
+        map.mapDataAddress &&
+      visual.primaryTilesetAddress ===
+        map.primaryTilesetAddress &&
+      visual.secondaryTilesetAddress ===
+        map.secondaryTilesetAddress &&
+      visual.width ===
+        map.width &&
+      visual.height ===
+        map.height
+    );
+  }
+
+  private disposeMapVisual(
+    key: string,
+  ): void {
+    const visual =
+      this.mapVisuals.get(
+        key,
+      );
+
+    if (!visual) {
+      return;
+    }
+
+    this.root.remove(
+      visual.baseMesh,
+    );
+
+    this.root.remove(
+      visual.overlayMesh,
+    );
+
+    visual.baseTexture.dispose();
+    visual.overlayTexture.dispose();
+    visual.geometry.dispose();
+    visual.overlayMesh.geometry.dispose();
+
+    const baseMaterial =
+      visual.baseMesh.material;
+
+    const overlayMaterial =
+      visual.overlayMesh.material;
+
+    if (
+      Array.isArray(
+        baseMaterial,
+      )
+    ) {
+      baseMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      baseMaterial.dispose();
+    }
+
+    if (
+      Array.isArray(
+        overlayMaterial,
+      )
+    ) {
+      overlayMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      overlayMaterial.dispose();
+    }
+
+    this.mapVisuals.delete(
+      key,
     );
   }
 
@@ -1044,6 +1143,16 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         geometry,
+        mapDataAddress:
+          map.mapDataAddress,
+        primaryTilesetAddress:
+          map.primaryTilesetAddress,
+        secondaryTilesetAddress:
+          map.secondaryTilesetAddress,
+        width:
+          map.width,
+        height:
+          map.height,
       };
 
     const mapKey =
