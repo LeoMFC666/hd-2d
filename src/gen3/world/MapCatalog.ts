@@ -1041,7 +1041,7 @@ export class MapCatalog {
           const connectionOffset =
             dataOffset + index * MAP_CONNECTION_SIZE;
           const direction = MAP_DIRECTION_BY_VALUE[
-            this.readU8(romBytes, connectionOffset),
+            this.readU8(romBytes, connectionOffset)
           ];
 
           if (!direction) {
