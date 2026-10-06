@@ -344,6 +344,10 @@ export class PlayerRenderer {
     this.worldCatalogLastAttemptAt =
       now;
 
+    const headerIdentity =
+      this.stateAdapter
+        .getActiveMapHeaderIdentity();
+
     const count =
       this.mapCatalog
         .buildGen3FromRom(
@@ -360,6 +364,15 @@ export class PlayerRenderer {
 
             mapLayoutAddress:
               state.map.mapLayoutAddress,
+
+            eventsAddress:
+              headerIdentity?.eventsAddress,
+
+            scriptsAddress:
+              headerIdentity?.scriptsAddress,
+
+            connectionsAddress:
+              headerIdentity?.connectionsAddress,
           },
         );
 
@@ -542,7 +555,9 @@ export class PlayerRenderer {
     );
   }
 
-  private ensureExteriorWorld(): void {
+  private ensureExteriorWorld(
+    state: GameState,
+  ): void {
     if (
       !this.worldCatalogBuilt ||
       this.mapWorld.getPositionedMaps().length > 0
@@ -550,9 +565,21 @@ export class PlayerRenderer {
       return;
     }
 
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
     const positioned =
-      this.mapWorld
-        .buildLargestConnectedWorld();
+      activeMap &&
+      activeMap.connections.length > 0
+        ? this.mapWorld.buildFrom(
+            activeMap.mapGroup,
+            activeMap.mapNumber,
+          )
+        : this.mapWorld
+            .buildLargestConnectedWorld();
 
     if (
       positioned <= 0
@@ -578,6 +605,15 @@ export class PlayerRenderer {
       {
         maps:
           positioned,
+
+        root:
+          activeMap &&
+          activeMap.connections.length > 0
+            ? this.createMapKey(
+                activeMap.mapGroup,
+                activeMap.mapNumber,
+              )
+            : 'largest-component',
       },
     );
   }
@@ -1471,7 +1507,9 @@ export class PlayerRenderer {
         state,
       );
 
-      this.ensureExteriorWorld();
+      this.ensureExteriorWorld(
+        state,
+      );
 
       if (
         state.map.mapLayoutAddress !==
