@@ -22,6 +22,9 @@ export class MapWorld {
       WorldMapPosition
     >();
 
+  private readonly positionedOrder:
+    string[] = [];
+
   constructor(
     catalog: MapCatalog,
   ) {
@@ -75,17 +78,40 @@ export class MapWorld {
       MapDefinition[] = [];
 
     for (
-      const map of
-        this.catalog.getAll()
+      const key of
+        this.positionedOrder
     ) {
+      const separator =
+        key.indexOf(':');
+
       if (
-        this.positions.has(
-          this.createKey(
-            map.mapGroup,
-            map.mapNumber,
-          ),
-        )
+        separator <= 0
       ) {
+        continue;
+      }
+
+      const mapGroup =
+        Number(
+          key.slice(
+            0,
+            separator,
+          ),
+        );
+
+      const mapNumber =
+        Number(
+          key.slice(
+            separator + 1,
+          ),
+        );
+
+      const map =
+        this.catalog.get(
+          mapGroup,
+          mapNumber,
+        );
+
+      if (map) {
         result.push(
           map,
         );
@@ -97,6 +123,7 @@ export class MapWorld {
 
   clearPositions(): void {
     this.positions.clear();
+    this.positionedOrder.length = 0;
   }
 
   buildFrom(
@@ -113,25 +140,25 @@ export class MapWorld {
       return 0;
     }
 
-    const startKey =
+    this.clearPositions();
+
+    this.positions.set(
       this.createKey(
         start.mapGroup,
         start.mapNumber,
-      );
+      ),
+      {
+        x: 0,
+        y: 0,
+      },
+    );
 
-    if (
-      !this.positions.has(
-        startKey,
-      )
-    ) {
-      this.positions.set(
-        startKey,
-        {
-          x: 0,
-          y: 0,
-        },
-      );
-    }
+    this.positionedOrder.push(
+      this.createKey(
+        start.mapGroup,
+        start.mapNumber,
+      ),
+    );
 
     const queue:
       MapDefinition[] = [
@@ -188,9 +215,8 @@ export class MapWorld {
           current.connections
       ) {
         const target =
-          this.catalog.get(
-            connection.mapGroup,
-            connection.mapNumber,
+          this.resolveConnection(
+            connection,
           );
 
         if (!target) {
@@ -217,6 +243,10 @@ export class MapWorld {
               connection,
             ),
           );
+
+          this.positionedOrder.push(
+            targetKey,
+          );
         }
 
         if (
@@ -232,6 +262,15 @@ export class MapWorld {
     }
 
     return count;
+  }
+
+  private resolveConnection(
+    connection: MapConnection,
+  ): MapDefinition | null {
+    return this.catalog.get(
+      connection.mapGroup,
+      connection.mapNumber,
+    );
   }
 
   private calculatePosition(
