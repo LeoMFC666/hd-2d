@@ -237,6 +237,15 @@ async function main(): Promise<void> {
   container.style.height = '600px';
   document.body.appendChild(container);
 
+  const originalBuild =
+    MapCatalog.prototype.buildGen3FromRom;
+
+  // The PlayerRenderer runs one update synchronously in its constructor.
+  // Block the global catalog before constructing it so the first queued
+  // 3:8 visual can be the bad beta definition.
+  MapCatalog.prototype.buildGen3FromRom =
+    (() => 0) as any;
+
   const renderer =
     new PlayerRenderer(
       container,
@@ -253,14 +262,6 @@ async function main(): Promise<void> {
       }>;
       queueMapBuild: (map: any) => void;
     };
-
-  const originalBuild =
-    internal.mapCatalog.buildGen3FromRom.bind(
-      internal.mapCatalog,
-    );
-
-  internal.mapCatalog.buildGen3FromRom =
-    (() => 0) as any;
 
   // Simulate the bad first visual: key 3:8 exists, but its data is the beta map.
   const betaDefinition = {
@@ -284,6 +285,10 @@ async function main(): Promise<void> {
     hash(
       staleVisual.baseTexture.image.data as Uint8Array,
     );
+
+  // The ROM catalog becomes available after the first visual exists.
+  MapCatalog.prototype.buildGen3FromRom =
+    originalBuild;
 
   // Now the catalog gets the real Cinnabar definition, exactly like the
   // correct ROM catalog does after initialization.
@@ -329,9 +334,6 @@ async function main(): Promise<void> {
     finalMatchesCorrect,
     finalTexture: [visualWidth, visualHeight],
   };
-
-  internal.mapCatalog.buildGen3FromRom =
-    originalBuild;
 
   renderer.destroy();
   container.remove();
