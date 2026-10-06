@@ -375,9 +375,17 @@ export class MapCatalog {
         REVISION_OFFSET,
       );
 
+    const supportedRevision =
+      gameCode ===
+        'BPRE' ||
+      gameCode ===
+        'BPGE'
+        ? revision === 0 ||
+          revision === 1
+        : revision === 0;
+
     if (
-      revision !==
-        0 ||
+      !supportedRevision ||
       !MAP_GROUP_LENGTHS[
         gameCode
       ]
