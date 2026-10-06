@@ -1,0 +1,31 @@
+name: Direct mGBA bus audit v2
+on:
+  push:
+    branches: [diagnose/direct-mgba-bus-v2]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 & sleep 2
+      - run: |
+          node --input-type=module <<'EOF'
+          import {chromium} from 'playwright';
+          const b=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=swiftshader']});
+          const p=await b.newPage();
+          p.on('console',m=>console.log('[browser]',m.type(),m.text()));
+          p.on('pageerror',e=>console.error('[pageerror]',e));
+          await p.goto('http://127.0.0.1:5173/tests/direct-mgba-bus-v2.html',{waitUntil:'networkidle'});
+          await p.waitForFunction(()=>document.body.dataset.pass==='true',{timeout:120000});
+          console.log(await p.locator('#out').innerText());
+          await b.close();
+          EOF
