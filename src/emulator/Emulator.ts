@@ -54,6 +54,20 @@ export class MgbaEmulatorAdapter implements EmulatorAdapter {
             'Verifique a resolução do pacote pelo Vite.',
         );
       }
+
+      (
+        window as Window & {
+          __qaMgbaSetKeys?: (
+            keys: number,
+          ) => void;
+        }
+      ).__qaMgbaSetKeys = (
+        keys: number,
+      ) => {
+        this.runtimeModule?._mgbawasm_set_keys?.(
+          keys,
+        );
+      };
     } catch (error) {
       this.engine = null;
       this.runtimeModule = null;
@@ -212,6 +226,14 @@ export class MgbaEmulatorAdapter implements EmulatorAdapter {
   }
 
   destroy(): void {
+    delete (
+      window as Window & {
+        __qaMgbaSetKeys?: (
+          keys: number,
+        ) => void;
+      }
+    ).__qaMgbaSetKeys;
+
     this.engine?.destroy();
     this.engine = null;
     this.runtimeModule = null;

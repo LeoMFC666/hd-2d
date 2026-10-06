@@ -85,6 +85,63 @@ const MAP_DIRECTION_BY_VALUE:
       null,
   };
 
+const FRLG_GAME_CODES =
+  new Set([
+    'BPRE',
+    'BPGE',
+    'BPRP',
+    'BPRJ',
+    'BPGP',
+    'BPGJ',
+  ]);
+
+const FRLG_MAP_GROUP_LENGTHS =
+  [
+    5,
+    123,
+    60,
+    66,
+    4,
+    6,
+    8,
+    10,
+    6,
+    8,
+    20,
+    10,
+    8,
+    2,
+    10,
+    4,
+    2,
+    2,
+    2,
+    1,
+    1,
+    2,
+    2,
+    3,
+    2,
+    3,
+    2,
+    1,
+    1,
+    1,
+    1,
+    7,
+    5,
+    5,
+    8,
+    8,
+    5,
+    5,
+    1,
+    1,
+    1,
+    2,
+    1,
+  ] as const;
+
 const MAP_GROUP_LENGTHS:
   Record<
     string,
@@ -127,97 +184,12 @@ const MAP_GROUP_LENGTHS:
       1,
     ],
 
-    BPRE: [
-      5,
-      123,
-      60,
-      66,
-      4,
-      6,
-      8,
-      10,
-      6,
-      8,
-      20,
-      10,
-      8,
-      2,
-      10,
-      4,
-      2,
-      2,
-      2,
-      1,
-      1,
-      2,
-      2,
-      3,
-      2,
-      3,
-      2,
-      1,
-      1,
-      1,
-      1,
-      7,
-      5,
-      5,
-      8,
-      8,
-      5,
-      5,
-      1,
-      1,
-      1,
-      2,
-      1,
-    ],
-
-    BPGE: [
-      5,
-      123,
-      60,
-      66,
-      4,
-      6,
-      8,
-      10,
-      6,
-      8,
-      20,
-      10,
-      8,
-      2,
-      10,
-      4,
-      2,
-      2,
-      2,
-      1,
-      1,
-      2,
-      2,
-      3,
-      2,
-      3,
-      2,
-      1,
-      1,
-      1,
-      1,
-      7,
-      5,
-      5,
-      8,
-      8,
-      5,
-      5,
-      1,
-      1,
-      1,
-      2,
-      1,
-    ],
+    BPRE: FRLG_MAP_GROUP_LENGTHS,
+    BPRP: FRLG_MAP_GROUP_LENGTHS,
+    BPRJ: FRLG_MAP_GROUP_LENGTHS,
+    BPGE: FRLG_MAP_GROUP_LENGTHS,
+    BPGP: FRLG_MAP_GROUP_LENGTHS,
+    BPGJ: FRLG_MAP_GROUP_LENGTHS,
 
     AXVE: [
       54,
@@ -375,11 +347,13 @@ export class MapCatalog {
         REVISION_OFFSET,
       );
 
+    const isFireRedLeafGreenGameCode =
+      FRLG_GAME_CODES.has(
+        gameCode,
+      );
+
     const supportedRevision =
-      gameCode ===
-        'BPRE' ||
-      gameCode ===
-        'BPGE'
+      isFireRedLeafGreenGameCode
         ? revision === 0 ||
           revision === 1
         : revision === 0;
@@ -433,10 +407,7 @@ export class MapCatalog {
       0;
 
     if (
-      gameCode ===
-        'BPRE' ||
-      gameCode ===
-        'BPGE'
+      isFireRedLeafGreenGameCode
     ) {
       mapGroupsAddress =
         this.findFireRedMapGroupsAddress(
@@ -679,99 +650,26 @@ export class MapCatalog {
     groupLengths:
       readonly number[],
   ): number {
-    const staticHeaders =
-      new Set<number>();
+    const tableSize =
+      groupLengths.length * 4;
 
     for (
       let offset = 0;
       offset <=
         romBytes.length -
-          MAP_HEADER_SIZE;
+          tableSize;
       offset += 4
     ) {
-      const mapLayoutAddress =
-        this.readU32(
-          romBytes,
-          offset +
-            MAP_HEADER_LAYOUT_OFFSET,
-        );
-
-      if (
-        mapLayoutAddress !==
-        anchor.mapLayoutAddress
-      ) {
-        continue;
-      }
-
-      const mapLayoutId =
-        this.readU16(
-          romBytes,
-          offset +
-            MAP_HEADER_LAYOUT_ID_OFFSET,
-        );
-
-      if (
-        mapLayoutId !==
-        anchor.mapLayoutId
-      ) {
-        continue;
-      }
-
-      const connectionsAddress =
-        this.readU32(
-          romBytes,
-          offset +
-            MAP_HEADER_CONNECTIONS_OFFSET,
-        );
-
-      if (
-        connectionsAddress !== 0 &&
-        !this.isValidRomPointer(
-          romBytes,
-          connectionsAddress,
-          MAP_CONNECTIONS_SIZE,
-        )
-      ) {
-        continue;
-      }
-
-      staticHeaders.add(
+      const tableAddress =
         GBA_ROM_BASE +
-          offset,
-      );
-    }
-
-    if (
-      staticHeaders.size ===
-      0
-    ) {
-      return 0;
-    }
-
-    for (
-      let offset = 0;
-      offset + 4 <=
-        romBytes.length;
-      offset += 4
-    ) {
-      const value =
-        this.readU32(
-          romBytes,
-          offset,
-        );
-
-      if (
-        !staticHeaders.has(
-          value,
-        )
-      ) {
-        continue;
-      }
+        offset;
 
       const groupAddress =
-        GBA_ROM_BASE +
-        offset -
-        anchor.mapNumber * 4;
+        this.readU32(
+          romBytes,
+          offset +
+            anchor.mapGroup * 4,
+        );
 
       if (
         !this.validateFireRedMapGroup(
@@ -785,55 +683,8 @@ export class MapCatalog {
         continue;
       }
 
-      const anchorHeaderAddress =
-        this.readU32(
-          romBytes,
-          (
-            groupAddress -
-            GBA_ROM_BASE
-          ) +
-            anchor.mapNumber * 4,
-        );
-
       if (
-        anchorHeaderAddress !==
-        value
-      ) {
-        continue;
-      }
-
-      const anchorHeaderOffset =
-        anchorHeaderAddress -
-        GBA_ROM_BASE;
-
-      if (
-        this.readU32(
-          romBytes,
-          anchorHeaderOffset +
-            MAP_HEADER_LAYOUT_OFFSET,
-        ) !==
-        anchor.mapLayoutAddress
-      ) {
-        continue;
-      }
-
-      if (
-        this.readU16(
-          romBytes,
-          anchorHeaderOffset +
-            MAP_HEADER_LAYOUT_ID_OFFSET,
-        ) !==
-        anchor.mapLayoutId
-      ) {
-        continue;
-      }
-
-      const tableAddress =
-        groupAddress -
-        anchor.mapGroup * 4;
-
-      if (
-        this.validateMapGroupsTable(
+        this.validateFireRedMapGroupsTable(
           romBytes,
           tableAddress,
           groupLengths,
@@ -943,7 +794,15 @@ export class MapCatalog {
           MAP_HEADER_LAYOUT_OFFSET,
       );
 
+    const mapLayoutId =
+      this.readU16(
+        romBytes,
+        headerOffset +
+          MAP_HEADER_LAYOUT_ID_OFFSET,
+      );
+
     if (
+      mapLayoutId > 0xff ||
       !this.isValidRomPointer(
         romBytes,
         mapLayoutAddress,
@@ -1245,6 +1104,83 @@ export class MapCatalog {
         )
       ) {
         return false;
+      }
+    }
+
+    return true;
+  }
+
+  private validateFireRedMapGroupsTable(
+    romBytes: Uint8Array,
+    tableAddress: number,
+    groupLengths:
+      readonly number[],
+  ): boolean {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        tableAddress,
+        groupLengths.length * 4,
+      )
+    ) {
+      return false;
+    }
+
+    for (
+      let mapGroup = 0;
+      mapGroup <
+        groupLengths.length;
+      mapGroup++
+    ) {
+      const groupLength =
+        groupLengths[
+          mapGroup
+        ];
+
+      const groupAddress =
+        this.readU32(
+          romBytes,
+          (
+            tableAddress -
+            GBA_ROM_BASE
+          ) +
+            mapGroup * 4,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          groupAddress,
+          groupLength * 4,
+        )
+      ) {
+        return false;
+      }
+
+      for (
+        let mapNumber = 0;
+        mapNumber <
+          groupLength;
+        mapNumber++
+      ) {
+        const mapHeaderAddress =
+          this.readU32(
+            romBytes,
+            (
+              groupAddress -
+              GBA_ROM_BASE
+            ) +
+              mapNumber * 4,
+          );
+
+        if (
+          !this.isValidFireRedMapHeader(
+            romBytes,
+            mapHeaderAddress,
+          )
+        ) {
+          return false;
+        }
       }
     }
 
