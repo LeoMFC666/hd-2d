@@ -710,17 +710,6 @@ export class PlayerRenderer {
       MapRenderData | null =
       null;
 
-    const state =
-      this.currentState;
-
-    const isActiveMap =
-      state !== null &&
-      this.isFireRedFamily(state) &&
-      state.map.mapGroup === map.mapGroup &&
-      state.map.mapNumber === map.mapNumber;
-
-    void isActiveMap;
-
     if (
       !renderData
     ) {
