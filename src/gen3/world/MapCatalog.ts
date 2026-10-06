@@ -1467,16 +1467,13 @@ export class MapCatalog {
             mapGroup * 4,
         );
 
-      const groupLength =
-        groupLengths[
-          mapGroup
-        ];
-
       if (
-        !this.isValidRomPointer(
+        !this.validateMapGroup(
           romBytes,
           groupAddress,
-          groupLength * 4,
+          mapGroup,
+          0,
+          groupLengths,
         )
       ) {
         return false;
