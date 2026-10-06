@@ -1,5 +1,6 @@
 import type {
   MapConnection,
+  MapConnectionDirection,
   MapDefinition,
 } from './MapDefinition';
 
@@ -12,6 +13,12 @@ export interface WorldMapPosition {
   y: number;
 }
 
+interface WorldMapEdge {
+  targetMapGroup: number;
+  targetMapNumber: number;
+  connection: MapConnection;
+}
+
 export class MapWorld {
   private readonly catalog:
     MapCatalog;
@@ -20,6 +27,12 @@ export class MapWorld {
     new Map<
       string,
       WorldMapPosition
+    >();
+
+  private readonly adjacency =
+    new Map<
+      string,
+      WorldMapEdge[]
     >();
 
   constructor(
@@ -113,6 +126,9 @@ export class MapWorld {
       return 0;
     }
 
+    this.adjacency.clear();
+    this.buildAdjacency();
+
     const startKey =
       this.createKey(
         start.mapGroup,
@@ -183,14 +199,19 @@ export class MapWorld {
 
       count++;
 
+      const edges =
+        this.adjacency.get(
+          currentKey,
+        ) ?? [];
+
       for (
-        const connection of
-          current.connections
+        const edge of
+          edges
       ) {
         const target =
           this.catalog.get(
-            connection.mapGroup,
-            connection.mapNumber,
+            edge.targetMapGroup,
+            edge.targetMapNumber,
           );
 
         if (!target) {
@@ -214,7 +235,7 @@ export class MapWorld {
               current,
               sourcePosition,
               target,
-              connection,
+              edge.connection,
             ),
           );
         }
@@ -232,6 +253,128 @@ export class MapWorld {
     }
 
     return count;
+  }
+
+  private buildAdjacency(): void {
+    for (
+      const source of
+        this.catalog.getAll()
+    ) {
+      const sourceKey =
+        this.createKey(
+          source.mapGroup,
+          source.mapNumber,
+        );
+
+      for (
+        const connection of
+          source.connections
+      ) {
+        const target =
+          this.catalog.get(
+            connection.mapGroup,
+            connection.mapNumber,
+          );
+
+        if (
+          !target
+        ) {
+          continue;
+        }
+
+        this.addEdge(
+          sourceKey,
+          {
+            targetMapGroup:
+              target.mapGroup,
+
+            targetMapNumber:
+              target.mapNumber,
+
+            connection,
+          },
+        );
+
+        const targetKey =
+          this.createKey(
+            target.mapGroup,
+            target.mapNumber,
+          );
+
+        this.addEdge(
+          targetKey,
+          {
+            targetMapGroup:
+              source.mapGroup,
+
+            targetMapNumber:
+              source.mapNumber,
+
+            connection: {
+              direction:
+                this.getOppositeDirection(
+                  connection.direction,
+                ),
+
+              mapGroup:
+                source.mapGroup,
+
+              mapNumber:
+                source.mapNumber,
+
+              offset:
+                -connection.offset,
+            },
+          },
+        );
+      }
+    }
+  }
+
+  private addEdge(
+    sourceKey: string,
+    edge: WorldMapEdge,
+  ): void {
+    const edges =
+      this.adjacency.get(
+        sourceKey,
+      );
+
+    if (edges) {
+      edges.push(
+        edge,
+      );
+
+      return;
+    }
+
+    this.adjacency.set(
+      sourceKey,
+      [
+        edge,
+      ],
+    );
+  }
+
+  private getOppositeDirection(
+    direction:
+      MapConnectionDirection,
+  ): MapConnectionDirection {
+    switch (
+      direction
+    ) {
+      case 'NORTH':
+        return 'SOUTH';
+
+      case 'SOUTH':
+        return 'NORTH';
+
+      case 'WEST':
+        return 'EAST';
+
+      case 'EAST':
+        return 'WEST';
+    }
   }
 
   private calculatePosition(
