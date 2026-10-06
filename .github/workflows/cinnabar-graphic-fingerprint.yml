@@ -1,0 +1,33 @@
+name: Cinnabar graphic fingerprint audit
+on:
+  push:
+    branches: [diagnose/cinnabar-graphic-fingerprint]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: npm}
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 >/tmp/vite.log 2>&1 &
+          for i in {1..60}; do if curl -fsS http://127.0.0.1:5173/tests/cinnabar-graphic-fingerprint.html >/dev/null; then exit 0; fi; sleep 1; done
+          cat /tmp/vite.log; exit 1
+      - name: Browser audit
+        run: |
+          node --input-type=module <<'EOF'
+          import {chromium} from 'playwright';
+          const b=await chromium.launch({headless:true,args:['--no-sandbox']});
+          const p=await b.newPage();
+          await p.goto('http://127.0.0.1:5173/tests/cinnabar-graphic-fingerprint.html',{waitUntil:'networkidle'});
+          await p.waitForFunction(()=>document.body.dataset.pass!==undefined,{timeout:120000});
+          console.log(await p.locator('#out').innerText());
+          if(await p.locator('body').getAttribute('data-pass')!=='true')process.exit(1);
+          await b.close();
+          EOF
