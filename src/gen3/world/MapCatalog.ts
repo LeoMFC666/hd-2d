@@ -690,11 +690,6 @@ export class MapCatalog {
       }
     }
 
-    this.repairFireRedCinnabarEntry(
-      romBytes,
-      groupLengths,
-    );
-
     return count;
   }
 
@@ -1075,6 +1070,11 @@ export class MapCatalog {
         count++;
       }
     }
+
+    this.repairFireRedCinnabarEntry(
+      romBytes,
+      groupLengths,
+    );
 
     return count;
   }
