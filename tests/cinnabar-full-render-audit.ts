@@ -191,22 +191,68 @@ async function main(): Promise<void> {
       secondary < BASE
     ) continue;
 
-    const count = reader.readI32?.(BASE) ?? 0;
-    void count;
+    const headerAddress = BASE + offset;
+    const connectionsPtr = reader.readU32(
+      headerAddress + 0x0c,
+    );
 
-    const connectionsPtr = reader.readU32(BASE + offset + 0x0c);
-    if (connectionsPtr !== 0) {
-      const co = connectionsPtr - BASE;
-      if (co >= 0 && co + 8 <= rom.length) {
-        const n = reader.readI32?.(connectionsPtr) ?? 0;
-        void n;
+    if (connectionsPtr < BASE) {
+      continue;
+    }
+
+    const connectionsOffset = connectionsPtr - BASE;
+    if (connectionsOffset < 0 || connectionsOffset + 8 > rom.length) {
+      continue;
+    }
+
+    const connectionCount = reader.readU32(connectionsPtr) | 0;
+    if (connectionCount < 0 || connectionCount > 64) {
+      continue;
+    }
+
+    const required = [
+      { direction: 2, mapGroup: 3, mapNumber: 40, offset: 0 },
+      { direction: 4, mapGroup: 3, mapNumber: 38, offset: 0 },
+    ];
+
+    let matched = 0;
+    if (connectionCount > 0) {
+      const dataAddress = reader.readU32(connectionsPtr + 4);
+      const dataOffset = dataAddress - BASE;
+      if (
+        dataAddress < BASE ||
+        dataOffset < 0 ||
+        dataOffset + connectionCount * 0x0c > rom.length
+      ) {
+        continue;
+      }
+
+      for (let index = 0; index < connectionCount; index++) {
+        const entry = dataOffset + index * 0x0c;
+        const direction = reader.readU8(BASE + entry);
+        const offsetValue = reader.readU32(BASE + entry + 4) | 0;
+        const mapGroup = reader.readU8(BASE + entry + 8);
+        const mapNumber = reader.readU8(BASE + entry + 9);
+
+        if (
+          required.some(
+            c =>
+              c.direction === direction &&
+              c.mapGroup === mapGroup &&
+              c.mapNumber === mapNumber &&
+              c.offset === offsetValue,
+          )
+        ) {
+          matched++;
+        }
       }
     }
 
-    const headerAddress = BASE + offset;
+    if (matched !== required.length) {
+      continue;
+    }
+
     const mapLayoutId = reader.readU16(headerAddress + 0x12);
-    // We need a catalog anchor only; the stable catalog resolves the global
-    // table from the layout/header identity.
     anchor.mapLayoutAddress = layoutAddress;
     anchor.mapLayoutId = mapLayoutId;
     break;
