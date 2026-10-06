@@ -1467,6 +1467,23 @@ export class MapCatalog {
         offset -
         mapNumber * 4;
 
+      const targetHeader =
+        this.readU32(
+          romBytes,
+          (
+            groupAddress -
+            GBA_ROM_BASE
+          ) +
+          mapNumber * 4,
+        );
+
+      if (
+        targetHeader !==
+        staticHeaderAddress
+      ) {
+        continue;
+      }
+
       if (
         !this.validateMapGroup(
           romBytes,
