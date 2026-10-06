@@ -1,0 +1,111 @@
+name: Real mGBA Cinnabar audit
+on:
+  push:
+    branches: [diagnose/real-mgba-cinnabar]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5173/tests/real-mgba-cinnabar.html >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vite.log
+          exit 1
+      - name: Real browser audit
+        run: |
+          cat > /tmp/real-mgba-cinnabar.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({
+            headless: false,
+            args: ['--no-sandbox', '--use-gl=swiftshader', '--autoplay-policy=no-user-gesture-required']
+          });
+          const context = await browser.newContext({
+            viewport: { width: 900, height: 1100 },
+            deviceScaleFactor: 1,
+          });
+          const page = await context.newPage();
+          const logs = [];
+          const errors = [];
+          page.on('console', msg => {
+            const line = '[console:' + msg.type() + '] ' + msg.text();
+            logs.push(line);
+            console.log(line);
+          });
+          page.on('pageerror', err => {
+            const line = '[pageerror] ' + String(err);
+            errors.push(line);
+            console.log(line);
+          });
+
+          await page.goto('http://127.0.0.1:5173/tests/real-mgba-cinnabar.html', {
+            waitUntil: 'networkidle',
+          });
+
+          const rom = '/home/runner/work/hd-2d/hd-2d/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba';
+          const save = '/home/runner/work/hd-2d/hd-2d/firered.sav';
+
+          await page.locator('#romInput').setInputFiles(rom);
+          await page.waitForFunction(
+            () => (document.querySelector('#status')?.textContent || '').startsWith('ROM loaded:'),
+            null,
+            { timeout: 90000 }
+          );
+
+          await page.locator('#saveInput').setInputFiles(save);
+          await page.waitForFunction(
+            () => (document.querySelector('#status')?.textContent || '').startsWith('Save loaded:'),
+            null,
+            { timeout: 90000 }
+          );
+
+          await page.waitForTimeout(6000);
+
+          const bodyText = await page.locator('body').innerText();
+          console.log('--- BODY ---\n' + bodyText);
+
+          await page.screenshot({ path: '/tmp/real-mgba-cinnabar.png', fullPage: true });
+
+          if (errors.length) {
+            throw new Error(errors.join('\n'));
+          }
+
+          if (!/Map State/.test(logs.join('\n'))) {
+            throw new Error('No Map State log observed');
+          }
+
+          const mapLog = logs.filter(line => line.includes('Map State:')).at(-1) || '';
+          const worldLog = logs.filter(line => line.includes('Active World:')).at(-1) || '';
+
+          if (!worldLog) {
+            throw new Error('No Active World log observed');
+          }
+
+          console.log('MAP_LOG=' + mapLog);
+          console.log('WORLD_LOG=' + worldLog);
+
+          await browser.close();
+          EOF
+          xvfb-run -a node /tmp/real-mgba-cinnabar.mjs
+      - name: Upload screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-mgba-cinnabar
+          path: |
+            /tmp/real-mgba-cinnabar.png
+            /tmp/vite.log
+          if-no-files-found: warn
