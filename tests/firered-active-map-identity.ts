@@ -31,6 +31,14 @@ function findPalletAnchor(rom:Uint8Array){
     if(!isPtr(rom,layout,0x18))continue;
     const lo=layout-BASE;
     if(u32(rom,lo)!==24||u32(rom,lo+4)!==20)continue;
+    const mapData=u32(rom,lo+0x0c);
+    const primary=u32(rom,lo+0x10);
+    const secondary=u32(rom,lo+0x14);
+    if(
+      !isPtr(rom,mapData,24*20*2) ||
+      !isPtr(rom,primary,4) ||
+      !isPtr(rom,secondary,4)
+    ) continue;
     const cp=u32(rom,off+0x0c);
     if(!isPtr(rom,cp,8))continue;
     const co=cp-BASE,n=u32(rom,co)|0;
