@@ -334,6 +334,9 @@ export class PlayerRenderer {
     if (
       count <= 0
     ) {
+      this.worldCatalogBuildAttempted =
+        false;
+
       console.warn(
         'Unable to build Gen 3 map catalog.',
       );
