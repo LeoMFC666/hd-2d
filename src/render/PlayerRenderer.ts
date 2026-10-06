@@ -347,6 +347,90 @@ export class PlayerRenderer {
     );
   }
 
+  private ensureCurrentMapDefinition(
+    state: GameState,
+  ): void {
+    if (
+      state.map.mapLayoutAddress === 0
+    ) {
+      return;
+    }
+
+    const existing =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    if (existing) {
+      return;
+    }
+
+    if (
+      state.map.width <= 0 ||
+      state.map.height <= 0 ||
+      state.map.mapDataAddress === 0 ||
+      state.map.primaryTilesetAddress === 0 ||
+      state.map.secondaryTilesetAddress === 0
+    ) {
+      return;
+    }
+
+    this.mapCatalog.register({
+      mapGroup:
+        state.map.mapGroup,
+
+      mapNumber:
+        state.map.mapNumber,
+
+      mapLayoutId:
+        state.map.mapLayoutId,
+
+      mapHeaderAddress:
+        state.map.mapHeaderAddress,
+
+      mapLayoutAddress:
+        state.map.mapLayoutAddress,
+
+      mapDataAddress:
+        state.map.mapDataAddress,
+
+      primaryTilesetAddress:
+        state.map.primaryTilesetAddress,
+
+      secondaryTilesetAddress:
+        state.map.secondaryTilesetAddress,
+
+      width:
+        state.map.width,
+
+      height:
+        state.map.height,
+
+      worldX:
+        0,
+
+      worldY:
+        0,
+
+      connections: [],
+    });
+
+    console.warn(
+      'Using current Gen 3 map fallback.',
+      {
+        mapGroup:
+          state.map.mapGroup,
+
+        mapNumber:
+          state.map.mapNumber,
+
+        mapLayoutId:
+          state.map.mapLayoutId,
+      },
+    );
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
@@ -1191,8 +1275,13 @@ export class PlayerRenderer {
         state,
       );
 
+      this.ensureCurrentMapDefinition(
+        state,
+      );
+
       if (
-        this.worldCatalogBuilt
+        state.map.mapLayoutAddress !==
+        0
       ) {
         this.updateActiveWorld(
           state,
