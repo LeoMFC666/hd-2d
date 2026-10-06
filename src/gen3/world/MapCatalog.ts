@@ -690,7 +690,140 @@ export class MapCatalog {
       }
     }
 
+    this.repairFireRedCinnabarEntry(
+      romBytes,
+      groupLengths,
+    );
+
     return count;
+  }
+
+  private repairFireRedCinnabarEntry(
+    romBytes: Uint8Array,
+    groupLengths: readonly number[],
+  ): void {
+    const current =
+      this.get(3, 8);
+
+    if (!current) {
+      return;
+    }
+
+    const candidate =
+      this.findOfficialFireRedCinnabarHeader(
+        romBytes,
+        groupLengths,
+      );
+
+    if (!candidate) {
+      return;
+    }
+
+    this.register({
+      ...current,
+      mapLayoutId:
+        candidate.mapLayoutId,
+      mapHeaderAddress:
+        candidate.mapHeaderAddress,
+      mapLayoutAddress:
+        candidate.mapLayoutAddress,
+      mapDataAddress:
+        candidate.mapDataAddress,
+      primaryTilesetAddress:
+        candidate.primaryTilesetAddress,
+      secondaryTilesetAddress:
+        candidate.secondaryTilesetAddress,
+      width:
+        candidate.width,
+      height:
+        candidate.height,
+      connections:
+        candidate.connections,
+    });
+  }
+
+  private findOfficialFireRedCinnabarHeader(
+    romBytes: Uint8Array,
+    groupLengths: readonly number[],
+  ): FireRedMapHeaderCandidate | null {
+    const expectedConnections = [
+      {
+        direction: 'NORTH' as MapConnectionDirection,
+        mapGroup: 3,
+        mapNumber: 40,
+        offset: 0,
+      },
+      {
+        direction: 'EAST' as MapConnectionDirection,
+        mapGroup: 3,
+        mapNumber: 38,
+        offset: 0,
+      },
+    ];
+
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          MAP_HEADER_SIZE;
+      offset += 4
+    ) {
+      const candidate =
+        this.readFireRedMapHeaderCandidate(
+          romBytes,
+          GBA_ROM_BASE + offset,
+          groupLengths,
+        );
+
+      if (!candidate) {
+        continue;
+      }
+
+      if (
+        candidate.width !== 24 ||
+        candidate.height !== 20
+      ) {
+        continue;
+      }
+
+      if (
+        candidate.mapLayoutId !== 86
+      ) {
+        continue;
+      }
+
+      if (
+        candidate.mapDataAddress ===
+        GBA_ROM_BASE +
+          0x00338378
+      ) {
+        continue;
+      }
+
+      const hasExpectedConnections =
+        expectedConnections.every(
+          expected =>
+            candidate.connections.some(
+              actual =>
+                actual.direction ===
+                  expected.direction &&
+                actual.mapGroup ===
+                  expected.mapGroup &&
+                actual.mapNumber ===
+                  expected.mapNumber &&
+                actual.offset ===
+                  expected.offset,
+            ),
+        );
+
+      if (!hasExpectedConnections) {
+        continue;
+      }
+
+      return candidate;
+    }
+
+    return null;
   }
 
   private buildFireRedFromGlobalMapGroups(
