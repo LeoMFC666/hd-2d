@@ -675,44 +675,16 @@ export class PlayerRenderer {
   private buildMapVisual(
     map: MapDefinition,
   ): void {
-    let renderData:
-      {
-        blocks: ReturnType<
-          Gen3StateAdapter['getMapBlocks']
-        > extends infer B
-          ? B extends readonly unknown[]
-            ? B
-            : never
-          : never;
-        graphics: Map<
-          number,
-          Gen3MetatileGraphics | null
-        >;
-      } | null = null;
+    type MapRenderData =
+      NonNullable<
+        ReturnType<
+          Gen3StateAdapter['getMapRenderData']
+        >
+      >;
 
-    try {
-      renderData =
-        this.stateAdapter
-          .getMapRenderData(
-            map.mapDataAddress,
-            map.width,
-            map.height,
-            map.primaryTilesetAddress,
-            map.secondaryTilesetAddress,
-          );
-    } catch (error) {
-      console.warn(
-        'Static FireRed/LeafGreen map render failed; using active emulator map.',
-        {
-          key:
-            this.createMapKey(
-              map.mapGroup,
-              map.mapNumber,
-            ),
-          error,
-        },
-      );
-    }
+    let renderData:
+      MapRenderData | null =
+      null;
 
     const state =
       this.currentState;
@@ -724,7 +696,6 @@ export class PlayerRenderer {
       state.map.mapNumber === map.mapNumber;
 
     if (
-      !renderData &&
       isActiveMap
     ) {
       const blocks =
@@ -767,7 +738,36 @@ export class PlayerRenderer {
       }
     }
 
-    if (!renderData) {
+    if (
+      !renderData
+    ) {
+      try {
+      renderData =
+        this.stateAdapter
+          .getMapRenderData(
+            map.mapDataAddress,
+            map.width,
+            map.height,
+            map.primaryTilesetAddress,
+            map.secondaryTilesetAddress,
+          );
+    } catch (error) {
+      console.warn(
+        'Static FireRed/LeafGreen map render failed; using active emulator map.',
+        {
+          key:
+            this.createMapKey(
+              map.mapGroup,
+              map.mapNumber,
+            ),
+          error,
+        },
+      );
+    }
+
+    if (
+      !renderData
+    ) {
       return;
     }
 
