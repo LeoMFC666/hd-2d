@@ -3,7 +3,7 @@ name: Cinnabar stable browser audit
 on:
   push:
     branches:
-      - diagnose/cinnabar-stable-browser
+      - diagnose/cinnabar-fix-full
   workflow_dispatch:
 
 jobs:
