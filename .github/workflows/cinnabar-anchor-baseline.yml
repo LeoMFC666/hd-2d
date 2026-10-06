@@ -1,0 +1,37 @@
+name: Cinnabar anchor baseline audit
+on:
+  push:
+    branches: [diagnose/cinnabar-anchor-baseline]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: npm}
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 >/tmp/vite.log 2>&1 &
+          for i in {1..60}; do
+            curl -fsS http://127.0.0.1:5173/tests/cinnabar-anchor-baseline.html >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/vite.log
+          exit 1
+      - name: Browser audit
+        run: |
+          node --input-type=module <<'EOF'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+          const page=await browser.newPage();
+          await page.goto('http://127.0.0.1:5173/tests/cinnabar-anchor-baseline.html',{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.pass!==undefined,{timeout:30000});
+          console.log(await page.locator('#out').innerText());
+          if(await page.locator('body').getAttribute('data-pass')!=='true') process.exit(1);
+          await browser.close();
+          EOF
