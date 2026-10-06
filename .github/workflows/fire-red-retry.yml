@@ -72,9 +72,9 @@ jobs:
               rom,
               {
                 mapGroup: 3,
-                mapNumber: 8,
-                mapLayoutId: 0,
-                mapLayoutAddress: 0,
+                mapNumber: 0,
+                mapLayoutId: 78,
+                mapLayoutAddress: 0x082dd530,
               },
             );
 
