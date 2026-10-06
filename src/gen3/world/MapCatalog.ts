@@ -376,6 +376,20 @@ export class MapCatalog {
       );
 
     if (
+      gameCode === 'BPRE' ||
+      gameCode === 'BPRP' ||
+      gameCode === 'BPRJ' ||
+      gameCode === 'BPGE' ||
+      gameCode === 'BPGP' ||
+      gameCode === 'BPGJ'
+    ) {
+      return this.buildFireRedLeafGreenFromRom(
+        romBytes,
+        anchor,
+      );
+    }
+
+    if (
       revision !==
         0 ||
       !MAP_GROUP_LENGTHS[
@@ -646,6 +660,521 @@ export class MapCatalog {
     }
 
     return count;
+  }
+
+  private buildFireRedLeafGreenFromRom(
+    romBytes: Uint8Array,
+    anchor: Gen3MapCatalogAnchor,
+  ): number {
+    const groupLengths =
+      MAP_GROUP_LENGTHS.BPRE;
+
+    if (
+      !groupLengths ||
+      anchor.mapGroup < 0 ||
+      anchor.mapGroup >=
+        groupLengths.length
+    ) {
+      return 0;
+    }
+
+    if (
+      anchor.mapNumber < 0 ||
+      !this.isValidRomPointer(
+        romBytes,
+        anchor.mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return 0;
+    }
+
+    const mapGroupsAddress =
+      this.findFireRedMapGroupsAddress(
+        romBytes,
+        anchor,
+        groupLengths,
+      );
+
+    if (
+      mapGroupsAddress === 0
+    ) {
+      return 0;
+    }
+
+    let count = 0;
+
+    for (
+      let mapGroup = 0;
+      mapGroup < groupLengths.length;
+      mapGroup++
+    ) {
+      const groupAddress =
+        this.readU32(
+          romBytes,
+          (
+            mapGroupsAddress -
+            GBA_ROM_BASE
+          ) +
+            mapGroup * 4,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          groupAddress,
+          4,
+        )
+      ) {
+        continue;
+      }
+
+      const groupLength =
+        groupLengths[mapGroup];
+
+      for (
+        let mapNumber = 0;
+        mapNumber < groupLength;
+        mapNumber++
+      ) {
+        const entryOffset =
+          (
+            groupAddress -
+            GBA_ROM_BASE
+          ) +
+          mapNumber * 4;
+
+        if (
+          entryOffset < 0 ||
+          entryOffset + 4 >
+            romBytes.length
+        ) {
+          break;
+        }
+
+        const mapHeaderAddress =
+          this.readU32(
+            romBytes,
+            entryOffset,
+          );
+
+        const definition =
+          this.readFireRedMapDefinition(
+            romBytes,
+            mapGroup,
+            mapNumber,
+            mapHeaderAddress,
+            groupLengths,
+          );
+
+        if (!definition) {
+          continue;
+        }
+
+        this.register(
+          definition,
+        );
+
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  private findFireRedMapGroupsAddress(
+    romBytes: Uint8Array,
+    anchor: Gen3MapCatalogAnchor,
+    groupLengths: readonly number[],
+  ): number {
+    const staticHeaders =
+      new Set<number>();
+
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          MAP_HEADER_SIZE;
+      offset += 4
+    ) {
+      const mapLayoutAddress =
+        this.readU32(
+          romBytes,
+          offset +
+            MAP_HEADER_LAYOUT_OFFSET,
+        );
+
+      if (
+        mapLayoutAddress !==
+        anchor.mapLayoutAddress
+      ) {
+        continue;
+      }
+
+      const mapLayoutId =
+        this.readU16(
+          romBytes,
+          offset +
+            MAP_HEADER_LAYOUT_ID_OFFSET,
+        );
+
+      if (
+        mapLayoutId !==
+        anchor.mapLayoutId
+      ) {
+        continue;
+      }
+
+      staticHeaders.add(
+        GBA_ROM_BASE +
+          offset,
+      );
+    }
+
+    if (
+      staticHeaders.size === 0
+    ) {
+      return 0;
+    }
+
+    let bestTableAddress = 0;
+    let bestScore = -1;
+
+    for (
+      let offset = 0;
+      offset + 4 <=
+        romBytes.length;
+      offset += 4
+    ) {
+      const value =
+        this.readU32(
+          romBytes,
+          offset,
+        );
+
+      if (
+        !staticHeaders.has(
+          value,
+        )
+      ) {
+        continue;
+      }
+
+      const groupAddress =
+        GBA_ROM_BASE +
+        offset -
+        anchor.mapNumber * 4;
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          groupAddress,
+          4,
+        )
+      ) {
+        continue;
+      }
+
+      const anchorHeaderAddress =
+        this.readU32(
+          romBytes,
+          (
+            groupAddress -
+            GBA_ROM_BASE
+          ) +
+            anchor.mapNumber * 4,
+        );
+
+      if (
+        anchorHeaderAddress !==
+        value
+      ) {
+        continue;
+      }
+
+      const tableAddress =
+        groupAddress -
+        anchor.mapGroup * 4;
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          tableAddress,
+          groupLengths.length * 4,
+        )
+      ) {
+        continue;
+      }
+
+      let score = 0;
+
+      for (
+        let mapGroup = 0;
+        mapGroup <
+          groupLengths.length;
+        mapGroup++
+      ) {
+        const candidateGroupAddress =
+          this.readU32(
+            romBytes,
+            (
+              tableAddress -
+              GBA_ROM_BASE
+            ) +
+              mapGroup * 4,
+          );
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            candidateGroupAddress,
+            4,
+          )
+        ) {
+          continue;
+        }
+
+        const firstHeaderAddress =
+          this.readU32(
+            romBytes,
+            (
+              candidateGroupAddress -
+              GBA_ROM_BASE
+            ),
+          );
+
+        if (
+          this.isPlausibleFireRedMapHeader(
+            romBytes,
+            firstHeaderAddress,
+          )
+        ) {
+          score++;
+        }
+      }
+
+      const anchorGroupAddress =
+        this.readU32(
+          romBytes,
+          (
+            tableAddress -
+            GBA_ROM_BASE
+          ) +
+            anchor.mapGroup * 4,
+        );
+
+      if (
+        anchorGroupAddress !==
+        groupAddress
+      ) {
+        continue;
+      }
+
+      if (
+        score > bestScore
+      ) {
+        bestScore = score;
+        bestTableAddress =
+          tableAddress;
+      }
+    }
+
+    return bestScore >= 4
+      ? bestTableAddress
+      : 0;
+  }
+
+  private isPlausibleFireRedMapHeader(
+    romBytes: Uint8Array,
+    mapHeaderAddress: number,
+  ): boolean {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapHeaderAddress,
+        MAP_HEADER_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const layoutAddress =
+      this.readU32(
+        romBytes,
+        (
+          mapHeaderAddress -
+          GBA_ROM_BASE
+        ) +
+          MAP_HEADER_LAYOUT_OFFSET,
+      );
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        layoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const layoutOffset =
+      layoutAddress -
+      GBA_ROM_BASE;
+
+    const width =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_WIDTH_OFFSET,
+      );
+
+    const height =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_HEIGHT_OFFSET,
+      );
+
+    if (
+      !this.isValidMapDimension(
+        width,
+      ) ||
+      !this.isValidMapDimension(
+        height,
+      )
+    ) {
+      return false;
+    }
+
+    const mapDataAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_MAP_OFFSET,
+      );
+
+    return this.isValidRomPointer(
+      romBytes,
+      mapDataAddress,
+      width * height * 2,
+    );
+  }
+
+  private readFireRedMapDefinition(
+    romBytes: Uint8Array,
+    mapGroup: number,
+    mapNumber: number,
+    mapHeaderAddress: number,
+    groupLengths: readonly number[],
+  ): MapDefinition | null {
+    if (
+      !this.isPlausibleFireRedMapHeader(
+        romBytes,
+        mapHeaderAddress,
+      )
+    ) {
+      return null;
+    }
+
+    const headerOffset =
+      mapHeaderAddress -
+      GBA_ROM_BASE;
+
+    const mapLayoutAddress =
+      this.readU32(
+        romBytes,
+        headerOffset +
+          MAP_HEADER_LAYOUT_OFFSET,
+      );
+
+    const layoutOffset =
+      mapLayoutAddress -
+      GBA_ROM_BASE;
+
+    const width =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_WIDTH_OFFSET,
+      );
+
+    const height =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_HEIGHT_OFFSET,
+      );
+
+    const mapDataAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_MAP_OFFSET,
+      );
+
+    const primaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+      );
+
+    const secondaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+      );
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        primaryTilesetAddress,
+        0x04,
+      ) ||
+      !this.isValidRomPointer(
+        romBytes,
+        secondaryTilesetAddress,
+        0x04,
+      )
+    ) {
+      return null;
+    }
+
+    const connections =
+      this.readConnections(
+        romBytes,
+        mapHeaderAddress,
+        groupLengths,
+      );
+
+    return {
+      mapGroup,
+      mapNumber,
+
+      mapLayoutId:
+        this.readU16(
+          romBytes,
+          headerOffset +
+            MAP_HEADER_LAYOUT_ID_OFFSET,
+        ),
+
+      mapHeaderAddress,
+      mapLayoutAddress,
+      mapDataAddress,
+
+      primaryTilesetAddress,
+      secondaryTilesetAddress,
+
+      width,
+      height,
+
+      worldX: 0,
+      worldY: 0,
+
+      connections,
+    };
   }
 
   private findStaticMapHeader(
