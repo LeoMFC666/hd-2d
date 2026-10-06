@@ -25,36 +25,42 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
-function findPalletAnchor(rom:Uint8Array){
-  for(let off=0;off<=rom.length-0x1c;off+=4){
-    const layout=u32(rom,off);
-    if(!isPtr(rom,layout,0x18))continue;
-    const lo=layout-BASE;
-    if(u32(rom,lo)!==24||u32(rom,lo+4)!==20)continue;
-    const mapData=u32(rom,lo+0x0c);
-    const primary=u32(rom,lo+0x10);
-    const secondary=u32(rom,lo+0x14);
-    if(
-      !isPtr(rom,mapData,24*20*2) ||
-      !isPtr(rom,primary,4) ||
-      !isPtr(rom,secondary,4)
-    ) continue;
-    const cp=u32(rom,off+0x0c);
-    if(!isPtr(rom,cp,8))continue;
-    const co=cp-BASE,n=u32(rom,co)|0;
-    if(n<2||n>64)continue;
-    const dp=u32(rom,co+4);
-    if(!isPtr(rom,dp,n*0xc))continue;
-    let north=false,south=false;
-    for(let i=0;i<n;i++){
-      const e=dp-BASE+i*0xc;
-      const dir=u8(rom,e),ofs=u32(rom,e+4)|0,g=u8(rom,e+8),m=u8(rom,e+9);
-      if(dir===2&&ofs===0&&g===3&&m===19)north=true;
-      if(dir===1&&ofs===0&&g===3&&m===39)south=true;
-    }
-    if(north&&south)return {mapLayoutAddress:layout,mapLayoutId:u16(rom,off+0x12)};
+function derivePalletAnchorFromGlobalTable(rom:Uint8Array){
+  const mapGroupsAddress = 0x08352718;
+  const group3Address =
+    u32(rom, (mapGroupsAddress - BASE) + 3 * 4);
+  if (!isPtr(rom, group3Address, 66 * 4)) {
+    return null;
   }
-  return null;
+
+  const headerAddress =
+    u32(
+      rom,
+      (group3Address - BASE) + 0 * 4,
+    );
+
+  if (!isPtr(rom, headerAddress, 0x1c)) {
+    return null;
+  }
+
+  const layoutAddress =
+    u32(
+      rom,
+      (headerAddress - BASE) + 0x00,
+    );
+
+  if (!isPtr(rom, layoutAddress, 0x18)) {
+    return null;
+  }
+
+  return {
+    mapLayoutAddress: layoutAddress,
+    mapLayoutId:
+      u16(
+        rom,
+        (headerAddress - BASE) + 0x12,
+      ),
+  };
 }
 
 function makeState(mapGroup:number,mapNumber:number,cinnabar:any):GameState{
@@ -117,7 +123,7 @@ async function main(){
   assert(String.fromCharCode(rom[0xac],rom[0xad],rom[0xae],rom[0xaf])==='BPRE','wrong ROM');
   assert(rom[0xbc]===1,'wrong revision');
 
-  const anchor=findPalletAnchor(rom);
+  const anchor=derivePalletAnchorFromGlobalTable(rom);
   assert(anchor,'Pallet anchor not found independently');
 
   const catalog=new MapCatalog();
