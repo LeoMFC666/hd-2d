@@ -294,6 +294,18 @@ const MAP_GROUP_LENGTHS:
     ],
   };
 
+interface FireRedMapHeaderCandidate {
+  mapHeaderAddress: number;
+  mapLayoutAddress: number;
+  mapLayoutId: number;
+  width: number;
+  height: number;
+  mapDataAddress: number;
+  primaryTilesetAddress: number;
+  secondaryTilesetAddress: number;
+  connections: MapConnection[];
+}
+
 export interface Gen3MapCatalogAnchor {
   mapGroup: number;
   mapNumber: number;
@@ -672,14 +684,14 @@ export class MapCatalog {
     if (
       !groupLengths ||
       anchor.mapGroup < 0 ||
-      anchor.mapGroup >=
-        groupLengths.length
+      anchor.mapGroup >= groupLengths.length ||
+      anchor.mapNumber < 0 ||
+      anchor.mapNumber >= groupLengths[anchor.mapGroup]
     ) {
       return 0;
     }
 
     if (
-      anchor.mapNumber < 0 ||
       !this.isValidRomPointer(
         romBytes,
         anchor.mapLayoutAddress,
@@ -689,494 +701,425 @@ export class MapCatalog {
       return 0;
     }
 
-    const mapGroupsAddress =
-      this.findFireRedMapGroupsAddress(
-        romBytes,
-        anchor,
-        groupLengths,
-      );
-
-    if (
-      mapGroupsAddress === 0
-    ) {
-      return 0;
-    }
-
-    let count = 0;
+    const candidates: FireRedMapHeaderCandidate[] = [];
+    const anchorCandidates: FireRedMapHeaderCandidate[] = [];
 
     for (
-      let mapGroup = 0;
-      mapGroup < groupLengths.length;
-      mapGroup++
+      let offset = 0;
+      offset <= romBytes.length - MAP_HEADER_SIZE;
+      offset += 4
     ) {
-      const groupAddress =
-        this.readU32(
+      const candidate =
+        this.readFireRedMapHeaderCandidate(
           romBytes,
-          (
-            mapGroupsAddress -
-            GBA_ROM_BASE
-          ) +
-            mapGroup * 4,
+          GBA_ROM_BASE + offset,
+          groupLengths,
         );
 
-      if (
-        !this.isValidRomPointer(
-          romBytes,
-          groupAddress,
-          4,
-        )
-      ) {
+      if (!candidate) {
         continue;
       }
 
-      const groupLength =
-        groupLengths[mapGroup];
+      candidates.push(candidate);
 
-      for (
-        let mapNumber = 0;
-        mapNumber < groupLength;
-        mapNumber++
+      if (
+        candidate.mapLayoutAddress === anchor.mapLayoutAddress &&
+        candidate.mapLayoutId === anchor.mapLayoutId
       ) {
-        const entryOffset =
-          (
-            groupAddress -
-            GBA_ROM_BASE
-          ) +
-          mapNumber * 4;
+        anchorCandidates.push(candidate);
+      }
+    }
 
-        if (
-          entryOffset < 0 ||
-          entryOffset + 4 >
-            romBytes.length
-        ) {
-          break;
+    if (anchorCandidates.length === 0) {
+      return 0;
+    }
+
+    const reverseIndex =
+      new Map<string, FireRedMapHeaderCandidate[]>();
+
+    for (const candidate of candidates) {
+      for (const connection of candidate.connections) {
+        const key = this.createFireRedConnectionIndexKey(
+          connection.mapGroup,
+          connection.mapNumber,
+          connection.direction,
+        );
+        const bucket = reverseIndex.get(key) ?? [];
+        bucket.push(candidate);
+        reverseIndex.set(key, bucket);
+      }
+    }
+
+    let bestAssignment:
+      Map<string, FireRedMapHeaderCandidate> | null = null;
+
+    for (const anchorCandidate of anchorCandidates) {
+      const assignment = this.resolveFireRedWorld(
+        anchorCandidate,
+        anchor,
+        reverseIndex,
+      );
+
+      if (
+        bestAssignment === null ||
+        assignment.size > bestAssignment.size
+      ) {
+        bestAssignment = assignment;
+      }
+    }
+
+    if (!bestAssignment) {
+      return 0;
+    }
+
+    for (const [mapKey, candidate] of bestAssignment) {
+      const separator = mapKey.indexOf(':');
+
+      if (separator <= 0) {
+        continue;
+      }
+
+      const mapGroup = Number(mapKey.slice(0, separator));
+      const mapNumber = Number(mapKey.slice(separator + 1));
+
+      this.register({
+        mapGroup,
+        mapNumber,
+        mapLayoutId: candidate.mapLayoutId,
+        mapHeaderAddress: candidate.mapHeaderAddress,
+        mapLayoutAddress: candidate.mapLayoutAddress,
+        mapDataAddress: candidate.mapDataAddress,
+        primaryTilesetAddress: candidate.primaryTilesetAddress,
+        secondaryTilesetAddress: candidate.secondaryTilesetAddress,
+        width: candidate.width,
+        height: candidate.height,
+        worldX: 0,
+        worldY: 0,
+        connections: candidate.connections,
+      });
+    }
+
+    return bestAssignment.size;
+  }
+
+  private resolveFireRedWorld(
+    anchorCandidate: FireRedMapHeaderCandidate,
+    anchor: Gen3MapCatalogAnchor,
+    reverseIndex: Map<string, FireRedMapHeaderCandidate[]>,
+  ): Map<string, FireRedMapHeaderCandidate> {
+    const assignment = new Map<string, FireRedMapHeaderCandidate>();
+    const usedHeaders = new Set<number>();
+    const anchorKey = this.createKey(anchor.mapGroup, anchor.mapNumber);
+
+    assignment.set(anchorKey, anchorCandidate);
+    usedHeaders.add(anchorCandidate.mapHeaderAddress);
+
+    const queue: Array<{
+      mapGroup: number;
+      mapNumber: number;
+      candidate: FireRedMapHeaderCandidate;
+    }> = [{
+      mapGroup: anchor.mapGroup,
+      mapNumber: anchor.mapNumber,
+      candidate: anchorCandidate,
+    }];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (!current) {
+        continue;
+      }
+
+      for (const connection of current.candidate.connections) {
+        const targetKey = this.createKey(
+          connection.mapGroup,
+          connection.mapNumber,
+        );
+
+        if (assignment.has(targetKey)) {
+          continue;
         }
 
-        const mapHeaderAddress =
-          this.readU32(
-            romBytes,
-            entryOffset,
+        const reverseDirection =
+          this.getFireRedOppositeDirection(connection.direction);
+
+        if (!reverseDirection) {
+          continue;
+        }
+
+        const candidates = reverseIndex.get(
+          this.createFireRedConnectionIndexKey(
+            current.mapGroup,
+            current.mapNumber,
+            reverseDirection,
+          ),
+        ) ?? [];
+
+        let selected: FireRedMapHeaderCandidate | null = null;
+        let bestScore = -1;
+
+        for (const candidate of candidates) {
+          if (usedHeaders.has(candidate.mapHeaderAddress)) {
+            continue;
+          }
+
+          const reverseMatch = candidate.connections.some(
+            candidateConnection =>
+              candidateConnection.mapGroup === current.mapGroup &&
+              candidateConnection.mapNumber === current.mapNumber &&
+              candidateConnection.direction === reverseDirection &&
+              candidateConnection.offset === -connection.offset,
           );
 
-        const definition =
-          this.readFireRedMapDefinition(
+          if (!reverseMatch) {
+            continue;
+          }
+
+          const score = this.countResolvableFireRedConnections(
+            candidate,
+            reverseIndex,
+            usedHeaders,
+          );
+
+          if (score > bestScore) {
+            bestScore = score;
+            selected = candidate;
+          }
+        }
+
+        if (!selected) {
+          continue;
+        }
+
+        assignment.set(targetKey, selected);
+        usedHeaders.add(selected.mapHeaderAddress);
+
+        queue.push({
+          mapGroup: connection.mapGroup,
+          mapNumber: connection.mapNumber,
+          candidate: selected,
+        });
+      }
+    }
+
+    return assignment;
+  }
+
+  private countResolvableFireRedConnections(
+    candidate: FireRedMapHeaderCandidate,
+    reverseIndex: Map<string, FireRedMapHeaderCandidate[]>,
+    usedHeaders: Set<number>,
+  ): number {
+    let score = 0;
+
+    for (const connection of candidate.connections) {
+      const reverseDirection =
+        this.getFireRedOppositeDirection(connection.direction);
+
+      if (!reverseDirection) {
+        continue;
+      }
+
+      const candidates = reverseIndex.get(
+        this.createFireRedConnectionIndexKey(
+          connection.mapGroup,
+          connection.mapNumber,
+          reverseDirection,
+        ),
+      ) ?? [];
+
+      if (
+        candidates.some(
+          candidateMatch =>
+            !usedHeaders.has(candidateMatch.mapHeaderAddress) &&
+            candidateMatch.connections.some(
+              reverse =>
+                reverse.mapGroup === candidate.mapGroup &&
+                reverse.mapNumber === candidate.mapNumber &&
+                reverse.direction === reverseDirection &&
+                reverse.offset === -connection.offset,
+            ),
+        )
+      ) {
+        score++;
+      }
+    }
+
+    return score;
+  }
+
+  private readFireRedMapHeaderCandidate(
+    romBytes: Uint8Array,
+    mapHeaderAddress: number,
+    groupLengths: readonly number[],
+  ): FireRedMapHeaderCandidate | null {
+    if (!this.isValidRomPointer(romBytes, mapHeaderAddress, MAP_HEADER_SIZE)) {
+      return null;
+    }
+
+    const headerOffset = mapHeaderAddress - GBA_ROM_BASE;
+    const mapLayoutAddress = this.readU32(
+      romBytes,
+      headerOffset + MAP_HEADER_LAYOUT_OFFSET,
+    );
+
+    if (!this.isValidRomPointer(romBytes, mapLayoutAddress, MAP_LAYOUT_SIZE)) {
+      return null;
+    }
+
+    const layoutOffset = mapLayoutAddress - GBA_ROM_BASE;
+    const width = this.readU32(
+      romBytes,
+      layoutOffset + MAP_LAYOUT_WIDTH_OFFSET,
+    );
+    const height = this.readU32(
+      romBytes,
+      layoutOffset + MAP_LAYOUT_HEIGHT_OFFSET,
+    );
+
+    if (!this.isValidMapDimension(width) || !this.isValidMapDimension(height)) {
+      return null;
+    }
+
+    const mapDataAddress = this.readU32(
+      romBytes,
+      layoutOffset + MAP_LAYOUT_MAP_OFFSET,
+    );
+    const primaryTilesetAddress = this.readU32(
+      romBytes,
+      layoutOffset + MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+    );
+    const secondaryTilesetAddress = this.readU32(
+      romBytes,
+      layoutOffset + MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+    );
+
+    if (
+      !this.isValidRomPointer(romBytes, mapDataAddress, width * height * 2) ||
+      !this.isValidRomPointer(romBytes, primaryTilesetAddress, 0x04) ||
+      !this.isValidRomPointer(romBytes, secondaryTilesetAddress, 0x04)
+    ) {
+      return null;
+    }
+
+    const connectionsAddress = this.readU32(
+      romBytes,
+      headerOffset + MAP_HEADER_CONNECTIONS_OFFSET,
+    );
+
+    let connections: MapConnection[] = [];
+
+    if (connectionsAddress !== 0) {
+      if (!this.isValidRomPointer(romBytes, connectionsAddress, MAP_CONNECTIONS_SIZE)) {
+        return null;
+      }
+
+      const connectionsOffset = connectionsAddress - GBA_ROM_BASE;
+      const count = this.readI32(
+        romBytes,
+        connectionsOffset + MAP_CONNECTIONS_COUNT_OFFSET,
+      );
+
+      if (count < 0 || count > MAX_CONNECTION_COUNT) {
+        return null;
+      }
+
+      if (count > 0) {
+        const dataAddress = this.readU32(
+          romBytes,
+          connectionsOffset + MAP_CONNECTIONS_DATA_OFFSET,
+        );
+
+        if (!this.isValidRomPointer(
+          romBytes,
+          dataAddress,
+          count * MAP_CONNECTION_SIZE,
+        )) {
+          return null;
+        }
+
+        const dataOffset = dataAddress - GBA_ROM_BASE;
+        connections = [];
+
+        for (let index = 0; index < count; index++) {
+          const connectionOffset =
+            dataOffset + index * MAP_CONNECTION_SIZE;
+          const direction = MAP_DIRECTION_BY_VALUE[
+            this.readU8(romBytes, connectionOffset),
+          ];
+
+          if (!direction) {
+            return null;
+          }
+
+          const mapGroup = this.readU8(
             romBytes,
+            connectionOffset + 8,
+          );
+          const mapNumber = this.readU8(
+            romBytes,
+            connectionOffset + 9,
+          );
+
+          if (
+            mapGroup >= groupLengths.length ||
+            mapNumber >= groupLengths[mapGroup]
+          ) {
+            return null;
+          }
+
+          connections.push({
+            direction,
             mapGroup,
             mapNumber,
-            mapHeaderAddress,
-            groupLengths,
-          );
-
-        if (!definition) {
-          continue;
-        }
-
-        this.register(
-          definition,
-        );
-
-        count++;
-      }
-    }
-
-    return count;
-  }
-
-  private findFireRedMapGroupsAddress(
-    romBytes: Uint8Array,
-    anchor: Gen3MapCatalogAnchor,
-    groupLengths: readonly number[],
-  ): number {
-    const staticHeaders =
-      new Set<number>();
-
-    for (
-      let offset = 0;
-      offset <=
-        romBytes.length -
-          MAP_HEADER_SIZE;
-      offset += 4
-    ) {
-      const mapLayoutAddress =
-        this.readU32(
-          romBytes,
-          offset +
-            MAP_HEADER_LAYOUT_OFFSET,
-        );
-
-      if (
-        mapLayoutAddress !==
-        anchor.mapLayoutAddress
-      ) {
-        continue;
-      }
-
-      const mapLayoutId =
-        this.readU16(
-          romBytes,
-          offset +
-            MAP_HEADER_LAYOUT_ID_OFFSET,
-        );
-
-      if (
-        mapLayoutId !==
-        anchor.mapLayoutId
-      ) {
-        continue;
-      }
-
-      staticHeaders.add(
-        GBA_ROM_BASE +
-          offset,
-      );
-    }
-
-    if (
-      staticHeaders.size === 0
-    ) {
-      return 0;
-    }
-
-    let bestTableAddress = 0;
-    let bestScore = -1;
-
-    for (
-      let offset = 0;
-      offset + 4 <=
-        romBytes.length;
-      offset += 4
-    ) {
-      const value =
-        this.readU32(
-          romBytes,
-          offset,
-        );
-
-      if (
-        !staticHeaders.has(
-          value,
-        )
-      ) {
-        continue;
-      }
-
-      const groupAddress =
-        GBA_ROM_BASE +
-        offset -
-        anchor.mapNumber * 4;
-
-      if (
-        !this.isValidRomPointer(
-          romBytes,
-          groupAddress,
-          4,
-        )
-      ) {
-        continue;
-      }
-
-      const anchorHeaderAddress =
-        this.readU32(
-          romBytes,
-          (
-            groupAddress -
-            GBA_ROM_BASE
-          ) +
-            anchor.mapNumber * 4,
-        );
-
-      if (
-        anchorHeaderAddress !==
-        value
-      ) {
-        continue;
-      }
-
-      const tableAddress =
-        groupAddress -
-        anchor.mapGroup * 4;
-
-      if (
-        !this.isValidRomPointer(
-          romBytes,
-          tableAddress,
-          groupLengths.length * 4,
-        )
-      ) {
-        continue;
-      }
-
-      let score = 0;
-
-      for (
-        let mapGroup = 0;
-        mapGroup <
-          groupLengths.length;
-        mapGroup++
-      ) {
-        const candidateGroupAddress =
-          this.readU32(
-            romBytes,
-            (
-              tableAddress -
-              GBA_ROM_BASE
-            ) +
-              mapGroup * 4,
-          );
-
-        if (
-          !this.isValidRomPointer(
-            romBytes,
-            candidateGroupAddress,
-            4,
-          )
-        ) {
-          continue;
-        }
-
-        const firstHeaderAddress =
-          this.readU32(
-            romBytes,
-            (
-              candidateGroupAddress -
-              GBA_ROM_BASE
+            offset: this.readI32(
+              romBytes,
+              connectionOffset + 4,
             ),
-          );
-
-        if (
-          this.isPlausibleFireRedMapHeader(
-            romBytes,
-            firstHeaderAddress,
-          )
-        ) {
-          score++;
+          });
         }
       }
-
-      const anchorGroupAddress =
-        this.readU32(
-          romBytes,
-          (
-            tableAddress -
-            GBA_ROM_BASE
-          ) +
-            anchor.mapGroup * 4,
-        );
-
-      if (
-        anchorGroupAddress !==
-        groupAddress
-      ) {
-        continue;
-      }
-
-      if (
-        score > bestScore
-      ) {
-        bestScore = score;
-        bestTableAddress =
-          tableAddress;
-      }
     }
-
-    return bestScore >= 4
-      ? bestTableAddress
-      : 0;
-  }
-
-  private isPlausibleFireRedMapHeader(
-    romBytes: Uint8Array,
-    mapHeaderAddress: number,
-  ): boolean {
-    if (
-      !this.isValidRomPointer(
-        romBytes,
-        mapHeaderAddress,
-        MAP_HEADER_SIZE,
-      )
-    ) {
-      return false;
-    }
-
-    const layoutAddress =
-      this.readU32(
-        romBytes,
-        (
-          mapHeaderAddress -
-          GBA_ROM_BASE
-        ) +
-          MAP_HEADER_LAYOUT_OFFSET,
-      );
-
-    if (
-      !this.isValidRomPointer(
-        romBytes,
-        layoutAddress,
-        MAP_LAYOUT_SIZE,
-      )
-    ) {
-      return false;
-    }
-
-    const layoutOffset =
-      layoutAddress -
-      GBA_ROM_BASE;
-
-    const width =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_WIDTH_OFFSET,
-      );
-
-    const height =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_HEIGHT_OFFSET,
-      );
-
-    if (
-      !this.isValidMapDimension(
-        width,
-      ) ||
-      !this.isValidMapDimension(
-        height,
-      )
-    ) {
-      return false;
-    }
-
-    const mapDataAddress =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_MAP_OFFSET,
-      );
-
-    return this.isValidRomPointer(
-      romBytes,
-      mapDataAddress,
-      width * height * 2,
-    );
-  }
-
-  private readFireRedMapDefinition(
-    romBytes: Uint8Array,
-    mapGroup: number,
-    mapNumber: number,
-    mapHeaderAddress: number,
-    groupLengths: readonly number[],
-  ): MapDefinition | null {
-    if (
-      !this.isPlausibleFireRedMapHeader(
-        romBytes,
-        mapHeaderAddress,
-      )
-    ) {
-      return null;
-    }
-
-    const headerOffset =
-      mapHeaderAddress -
-      GBA_ROM_BASE;
-
-    const mapLayoutAddress =
-      this.readU32(
-        romBytes,
-        headerOffset +
-          MAP_HEADER_LAYOUT_OFFSET,
-      );
-
-    const layoutOffset =
-      mapLayoutAddress -
-      GBA_ROM_BASE;
-
-    const width =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_WIDTH_OFFSET,
-      );
-
-    const height =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_HEIGHT_OFFSET,
-      );
-
-    const mapDataAddress =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_MAP_OFFSET,
-      );
-
-    const primaryTilesetAddress =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
-      );
-
-    const secondaryTilesetAddress =
-      this.readU32(
-        romBytes,
-        layoutOffset +
-          MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
-      );
-
-    if (
-      !this.isValidRomPointer(
-        romBytes,
-        primaryTilesetAddress,
-        0x04,
-      ) ||
-      !this.isValidRomPointer(
-        romBytes,
-        secondaryTilesetAddress,
-        0x04,
-      )
-    ) {
-      return null;
-    }
-
-    const connections =
-      this.readConnections(
-        romBytes,
-        mapHeaderAddress,
-        groupLengths,
-      );
 
     return {
-      mapGroup,
-      mapNumber,
-
-      mapLayoutId:
-        this.readU16(
-          romBytes,
-          headerOffset +
-            MAP_HEADER_LAYOUT_ID_OFFSET,
-        ),
-
       mapHeaderAddress,
       mapLayoutAddress,
-      mapDataAddress,
-
-      primaryTilesetAddress,
-      secondaryTilesetAddress,
-
+      mapLayoutId: this.readU16(
+        romBytes,
+        headerOffset + MAP_HEADER_LAYOUT_ID_OFFSET,
+      ),
       width,
       height,
-
-      worldX: 0,
-      worldY: 0,
-
+      mapDataAddress,
+      primaryTilesetAddress,
+      secondaryTilesetAddress,
       connections,
     };
   }
 
+  private createFireRedConnectionIndexKey(
+    mapGroup: number,
+    mapNumber: number,
+    direction: MapConnectionDirection,
+  ): string {
+    return String(mapGroup) + ':' + String(mapNumber) + ':' + direction;
+  }
+
+  private getFireRedOppositeDirection(
+    direction: MapConnectionDirection,
+  ): MapConnectionDirection | null {
+    switch (direction) {
+      case 'NORTH':
+        return 'SOUTH';
+      case 'SOUTH':
+        return 'NORTH';
+      case 'WEST':
+        return 'EAST';
+      case 'EAST':
+        return 'WEST';
+    }
+  }
   private findStaticMapHeader(
     romBytes: Uint8Array,
     anchor: Gen3MapCatalogAnchor,
