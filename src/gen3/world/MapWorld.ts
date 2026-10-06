@@ -35,6 +35,9 @@ export class MapWorld {
       WorldMapEdge[]
     >();
 
+  private readonly positionedOrder:
+    string[] = [];
+
   constructor(
     catalog: MapCatalog,
   ) {
@@ -88,17 +91,40 @@ export class MapWorld {
       MapDefinition[] = [];
 
     for (
-      const map of
-        this.catalog.getAll()
+      const key of
+        this.positionedOrder
     ) {
+      const separatorIndex =
+        key.indexOf(':');
+
       if (
-        this.positions.has(
-          this.createKey(
-            map.mapGroup,
-            map.mapNumber,
-          ),
-        )
+        separatorIndex <= 0
       ) {
+        continue;
+      }
+
+      const mapGroup =
+        Number(
+          key.slice(
+            0,
+            separatorIndex,
+          ),
+        );
+
+      const mapNumber =
+        Number(
+          key.slice(
+            separatorIndex + 1,
+          ),
+        );
+
+      const map =
+        this.catalog.get(
+          mapGroup,
+          mapNumber,
+        );
+
+      if (map) {
         result.push(
           map,
         );
@@ -110,6 +136,7 @@ export class MapWorld {
 
   clearPositions(): void {
     this.positions.clear();
+    this.positionedOrder.length = 0;
   }
 
   buildFrom(
@@ -146,6 +173,10 @@ export class MapWorld {
           x: 0,
           y: 0,
         },
+      );
+
+      this.positionedOrder.push(
+        startKey,
       );
     }
 
@@ -237,6 +268,10 @@ export class MapWorld {
               target,
               edge.connection,
             ),
+          );
+
+          this.positionedOrder.push(
+            targetKey,
           );
         }
 
