@@ -88,7 +88,7 @@ async function main(){
  const container=document.createElement('div');container.style.width='1200px';container.style.height='800px';document.body.appendChild(container);
  const fake={readState:()=>makeState(pallet),getMapRenderData:adapter.getMapRenderData.bind(adapter)} as unknown as Gen3StateAdapter;
  const renderer=new PlayerRenderer(container,fake,rom);
- for(let i=0;i<30;i++)await new Promise(requestAnimationFrame);
+ for(let i=0;i<100;i++)await new Promise(requestAnimationFrame);
  const internal=renderer as unknown as {mapVisuals:Map<string,{baseTexture:THREE.DataTexture}>,mapWorld:MapWorld};
  const cinnabarVisual=internal.mapVisuals.get('3:8');
  if(!cinnabarVisual)throw new Error('PlayerRenderer did not build Cinnabar');
