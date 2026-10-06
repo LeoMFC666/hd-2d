@@ -376,6 +376,73 @@ export class Gen3StateAdapter {
     return this.primaryMetatileGraphics;
   }
 
+  getActiveMapHeaderIdentity(): {
+    mapLayoutAddress: number;
+    eventsAddress: number;
+    scriptsAddress: number;
+    connectionsAddress: number;
+    mapLayoutId: number;
+  } | null {
+    const address =
+      this.profile?.memory.activeMapHeaderAddress;
+
+    if (
+      address === undefined ||
+      !this.isValidEwramPointer(
+        address,
+      )
+    ) {
+      return null;
+    }
+
+    const mapLayoutAddress =
+      this.memoryReader.readU32(
+        address +
+          MAP_HEADER_MAP_LAYOUT_OFFSET,
+      );
+
+    const eventsAddress =
+      this.memoryReader.readU32(
+        address +
+          0x04,
+      );
+
+    const scriptsAddress =
+      this.memoryReader.readU32(
+        address +
+          0x08,
+      );
+
+    const connectionsAddress =
+      this.memoryReader.readU32(
+        address +
+          0x0c,
+      );
+
+    const mapLayoutId =
+      this.memoryReader.readU16(
+        address +
+          MAP_HEADER_MAP_LAYOUT_ID_OFFSET,
+      );
+
+    if (
+      mapLayoutAddress === 0 ||
+      !this.isValidRomPointer(
+        mapLayoutAddress,
+      )
+    ) {
+      return null;
+    }
+
+    return {
+      mapLayoutAddress,
+      eventsAddress,
+      scriptsAddress,
+      connectionsAddress,
+      mapLayoutId,
+    };
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
