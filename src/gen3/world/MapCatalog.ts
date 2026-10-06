@@ -932,13 +932,8 @@ export class MapCatalog {
       if (
         candidates.some(
           candidateMatch =>
-            !usedHeaders.has(candidateMatch.mapHeaderAddress) &&
-            candidateMatch.connections.some(
-              reverse =>
-                reverse.mapGroup === candidate.mapGroup &&
-                reverse.mapNumber === candidate.mapNumber &&
-                reverse.direction === reverseDirection &&
-                reverse.offset === -connection.offset,
+            !usedHeaders.has(
+              candidateMatch.mapHeaderAddress,
             ),
         )
       ) {
