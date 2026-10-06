@@ -742,27 +742,28 @@ export class PlayerRenderer {
       !renderData
     ) {
       try {
-      renderData =
-        this.stateAdapter
-          .getMapRenderData(
-            map.mapDataAddress,
-            map.width,
-            map.height,
-            map.primaryTilesetAddress,
-            map.secondaryTilesetAddress,
-          );
-    } catch (error) {
-      console.warn(
-        'Static FireRed/LeafGreen map render failed; using active emulator map.',
-        {
-          key:
-            this.createMapKey(
-              map.mapGroup,
-              map.mapNumber,
-            ),
-          error,
-        },
-      );
+        renderData =
+          this.stateAdapter
+            .getMapRenderData(
+              map.mapDataAddress,
+              map.width,
+              map.height,
+              map.primaryTilesetAddress,
+              map.secondaryTilesetAddress,
+            );
+      } catch (error) {
+        console.warn(
+          'Static FireRed/LeafGreen map render failed.',
+          {
+            key:
+              this.createMapKey(
+                map.mapGroup,
+                map.mapNumber,
+              ),
+            error,
+          },
+        );
+      }
     }
 
     if (
