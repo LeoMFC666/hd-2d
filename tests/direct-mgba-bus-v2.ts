@@ -52,7 +52,7 @@ async function main(){
   mod._mgbawasm_init();
   const ptr=mod._malloc(rom.length);
   mod.HEAPU8.set(rom,ptr);
-  const ok=mod._mgbawasm_load(ptr,rom.length,0,0,-1,0,1);
+  const ok=mod._mgbawasm_load(ptr,rom.length,0,0,0,0,1);
   mod._free(ptr);
   if(!ok)throw new Error('mGBA load failed: '+ok);
 
