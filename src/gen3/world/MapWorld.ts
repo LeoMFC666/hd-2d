@@ -315,19 +315,14 @@ export class MapWorld {
 
       count++;
 
-      const edges =
-        this.adjacency.get(
-          currentKey,
-        ) ?? [];
-
       for (
-        const edge of
-          edges
+        const connection of
+          current.connections
       ) {
         const target =
           this.catalog.get(
-            edge.targetMapGroup,
-            edge.targetMapNumber,
+            connection.mapGroup,
+            connection.mapNumber,
           );
 
         if (!target) {
@@ -351,7 +346,7 @@ export class MapWorld {
               current,
               sourcePosition,
               target,
-              edge.connection,
+              connection,
             ),
           );
 
