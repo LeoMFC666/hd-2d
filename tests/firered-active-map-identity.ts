@@ -19,6 +19,12 @@ function u8(rom:Uint8Array,o:number){return o>=0&&o<rom.length?rom[o]:0}
 function u16(rom:Uint8Array,o:number){return u8(rom,o)|(u8(rom,o+1)<<8)}
 function u32(rom:Uint8Array,o:number){return (u8(rom,o)|(u8(rom,o+1)<<8)|(u8(rom,o+2)<<16)|(u8(rom,o+3)*0x1000000))>>>0}
 function isPtr(rom:Uint8Array,address:number,size=1){const o=address-BASE;return o>=0&&o+size<=rom.length}
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
 function findPalletAnchor(rom:Uint8Array){
   for(let off=0;off<=rom.length-0x1c;off+=4){
     const layout=u32(rom,off);
