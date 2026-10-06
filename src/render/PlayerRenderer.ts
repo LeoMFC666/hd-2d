@@ -99,6 +99,9 @@ export class PlayerRenderer {
   private activeMapKey =
     '';
 
+  private worldRootKey =
+    '';
+
   private frameId =
     0;
 
@@ -396,6 +399,9 @@ export class PlayerRenderer {
     this.activeMapKey =
       '';
 
+    this.worldRootKey =
+      '';
+
     this.liveMapSignature =
       '';
 
@@ -556,8 +562,15 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
+    const needsWorldRebuild =
+      this.worldRootKey === '' ||
+      !alreadyPositioned;
+
+    let rebuilt =
+      false;
+
     if (
-      !alreadyPositioned
+      needsWorldRebuild
     ) {
       this.buildQueue.length =
         0;
@@ -566,10 +579,21 @@ export class PlayerRenderer {
 
       this.mapWorld.clearPositions();
 
-      this.mapWorld.buildFrom(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
+      const positionedCount =
+        this.mapWorld.buildFrom(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        );
+
+      if (
+        positionedCount > 0
+      ) {
+        this.worldRootKey =
+          mapKey;
+
+        rebuilt =
+          true;
+      }
     }
 
     const maps =
@@ -613,8 +637,10 @@ export class PlayerRenderer {
         current:
           mapKey,
 
-        rebuilt:
-          !alreadyPositioned,
+        root:
+          this.worldRootKey,
+
+        rebuilt,
       },
     );
   }
