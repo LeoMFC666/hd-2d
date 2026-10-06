@@ -30,7 +30,9 @@ jobs:
         run: npm run build
 
       - name: Install Playwright
-        run: npx playwright@1.55.0 install --with-deps chromium
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
 
       - name: Start Vite
         run: |
@@ -45,11 +47,7 @@ jobs:
 
       - name: Run FireRed browser check
         run: |
-          cat > /tmp/check-fire-red.cjs <<'NODE'
-          const { chromium } = require(require.resolve('playwright', { paths: ['/home/runner/.npm/_npx'] }));
-          NODE
-
-          npx -y -p playwright@1.55.0 node - <<'NODE'
+          node - <<'NODE'
           const fs = require('fs');
           const { chromium } = require('playwright');
 
