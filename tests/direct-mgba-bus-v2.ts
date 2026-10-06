@@ -49,6 +49,7 @@ async function main(){
   if(typeof createMgbaModule!=='function')throw new Error('createMgbaModule not found');
 
   const mod=await createMgbaModule({locateFile:(p:string)=>'/mgba/'+p});
+  mod._mgbawasm_init();
   const ptr=mod._malloc(rom.length);
   mod.HEAPU8.set(rom,ptr);
   const ok=mod._mgbawasm_load(ptr,rom.length,0,0,-1,0,1);
