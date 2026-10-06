@@ -1,0 +1,32 @@
+name: FireRed global catalog diagnostic
+on:
+  push:
+    branches:
+      - diagnose/fire-red-global-catalog
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx tsx -e "
+        import fs from 'node:fs';
+        import {MapCatalog} from './src/gen3/world/MapCatalog';
+        const rom=new Uint8Array(fs.readFileSync('Pokemon - FireRed Version (USA, Europe) (Rev 1).gba'));
+        const c=new MapCatalog();
+        const any=c as any;
+        const header=0x0834fe48;
+        const table=any.findMapGroupsAddress(
+          rom,
+          header,
+          3,
+          0,
+          [5,123,60,66,4,6,8,10,6,8,20,10,8,2,10,4,2,2,2,1,1,2,2,3,2,3,2,1,1,1,1,7,5,5,8,8,5,5,1,1,1,2,1]
+        );
+        console.log('GLOBAL_MAP_GROUPS=', '0x'+Number(table).toString(16));
+        const count=table ? any.validateMapGroupsTable(rom,table,[5,123,60,66,4,6,8,10,6,8,20,10,8,2,10,4,2,2,2,1,1,2,2,3,2,3,2,1,1,1,1,7,5,5,8,8,5,5,1,1,1,2,1]) : false;
+        console.log('GLOBAL_TABLE_VALID=',count);
+      "
