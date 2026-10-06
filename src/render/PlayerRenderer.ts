@@ -84,9 +84,6 @@ export class PlayerRenderer {
   private worldCatalogBuilt =
     false;
 
-  private worldRootBuilt =
-    false;
-
   private worldCatalogBuildAttempted =
     false;
 
@@ -351,6 +348,19 @@ export class PlayerRenderer {
       this.mapCatalog
         .buildGen3FromRom(
           this.romBytes,
+          {
+            mapGroup:
+              state.map.mapGroup,
+
+            mapNumber:
+              state.map.mapNumber,
+
+            mapLayoutId:
+              state.map.mapLayoutId,
+
+            mapLayoutAddress:
+              state.map.mapLayoutAddress,
+          },
         );
 
     if (
@@ -385,9 +395,6 @@ export class PlayerRenderer {
     this.worldCatalogBuilt =
       true;
 
-    this.worldRootBuilt =
-      false;
-
     this.activeMapKey =
       '';
 
@@ -395,6 +402,9 @@ export class PlayerRenderer {
       '';
 
     this.mapWorld.clearPositions();
+
+    this.exteriorWorldVisible =
+      true;
 
     this.buildQueue.length =
       0;
@@ -532,74 +542,27 @@ export class PlayerRenderer {
     );
   }
 
-  private getWorldRoot(
-    state: GameState,
-  ): {
-    mapGroup: number;
-    mapNumber: number;
-  } | null {
-    switch (
-      state.game.region
-    ) {
-      case 'emerald':
-        return {
-          mapGroup: 0,
-          mapNumber: 9,
-        };
-
-      case 'firered':
-      case 'leafgreen':
-        return {
-          mapGroup: 3,
-          mapNumber: 0,
-        };
-
-      default:
-        return null;
-    }
-  }
-
-  private ensureWorldRoot(
-    state: GameState,
-  ): void {
+  private ensureExteriorWorld(): void {
     if (
       !this.worldCatalogBuilt ||
-      this.worldRootBuilt
+      this.mapWorld.getPositionedMaps().length > 0
     ) {
-      return;
-    }
-
-    const root =
-      this.getWorldRoot(
-        state,
-      );
-
-    if (!root) {
       return;
     }
 
     const positioned =
-      this.mapWorld.buildFrom(
-        root.mapGroup,
-        root.mapNumber,
-      );
+      this.mapWorld
+        .buildLargestConnectedWorld();
 
     if (
       positioned <= 0
     ) {
       console.warn(
         'Unable to build Gen 3 exterior world.',
-        {
-          game:
-            state.game.region,
-        },
       );
 
       return;
     }
-
-    this.worldRootBuilt =
-      true;
 
     for (
       const map of
@@ -615,12 +578,6 @@ export class PlayerRenderer {
       {
         maps:
           positioned,
-
-        root:
-          this.createMapKey(
-            root.mapGroup,
-            root.mapNumber,
-          ),
       },
     );
   }
@@ -1514,9 +1471,7 @@ export class PlayerRenderer {
         state,
       );
 
-      this.ensureWorldRoot(
-        state,
-      );
+      this.ensureExteriorWorld();
 
       if (
         state.map.mapLayoutAddress !==
