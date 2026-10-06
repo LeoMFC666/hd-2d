@@ -466,12 +466,40 @@ export class MapCatalog {
       return 0;
     }
 
-    const mapGroupsAddress =
-      this.findFireRedMapGroupsAddress(
-        romBytes,
-        anchor,
-        groupLengths,
-      );
+    let mapGroupsAddress = 0;
+
+    if (
+      anchor.mapGroup === 3 &&
+      anchor.mapNumber === 0
+    ) {
+      mapGroupsAddress =
+        this.findFireRedPalletMapGroupsAddress(
+          romBytes,
+          anchor,
+          groupLengths,
+        );
+    } else {
+      const staticHeader =
+        this.findStaticMapHeader(
+          romBytes,
+          anchor,
+        );
+
+      if (
+        staticHeader === 0
+      ) {
+        return 0;
+      }
+
+      mapGroupsAddress =
+        this.findMapGroupsAddress(
+          romBytes,
+          staticHeader,
+          anchor.mapGroup,
+          anchor.mapNumber,
+          groupLengths,
+        );
+    }
 
     if (
       mapGroupsAddress === 0
@@ -1421,7 +1449,7 @@ export class MapCatalog {
     return 0;
   }
 
-  private findFireRedMapGroupsAddress(
+  private findFireRedPalletMapGroupsAddress(
     romBytes: Uint8Array,
     anchor: Gen3MapCatalogAnchor,
     groupLengths:
