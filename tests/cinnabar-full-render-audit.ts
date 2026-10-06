@@ -169,95 +169,108 @@ async function main(): Promise<void> {
     mapLayoutAddress: 0,
   };
 
-  // Obtain the active Cinnabar layout from an independent local scan using
-  // the exact known dimensions and connection signatures.
-  for (let offset = 0; offset <= rom.length - HEADER_SIZE; offset += 4) {
-    const layoutAddress = reader.readU32(BASE + offset);
-    if (layoutAddress < BASE) continue;
-
-    const lo = layoutAddress - BASE;
-    if (lo < 0 || lo + 0x18 > rom.length) continue;
-
-    const width = reader.readU32(layoutAddress);
-    const height = reader.readU32(layoutAddress + 4);
-    if (width !== 24 || height !== 20) continue;
-
-    const mapData = reader.readU32(layoutAddress + 0x0c);
-    const primary = reader.readU32(layoutAddress + 0x10);
-    const secondary = reader.readU32(layoutAddress + 0x14);
-    if (
-      mapData < BASE ||
-      primary < BASE ||
-      secondary < BASE
-    ) continue;
-
-    const headerAddress = BASE + offset;
-    const connectionsPtr = reader.readU32(
-      headerAddress + 0x0c,
+  function u8(offset: number): number {
+    return offset >= 0 && offset < rom.length ? rom[offset] : 0;
+  }
+  function u16(offset: number): number {
+    return u8(offset) | (u8(offset + 1) << 8);
+  }
+  function u32(offset: number): number {
+    return (
+      (
+        u8(offset) |
+        (u8(offset + 1) << 8) |
+        (u8(offset + 2) << 16) |
+        (u8(offset + 3) * 0x1000000)
+      ) >>> 0
     );
-
-    if (connectionsPtr < BASE) {
-      continue;
+  }
+  function i32(offset: number): number {
+    return u32(offset) | 0;
+  }
+  function isPtr(address: number, size = 1): boolean {
+    const offset = address - BASE;
+    return offset >= 0 && offset + size <= rom.length;
+  }
+  function readConnections(headerAddress: number): Array<{
+    direction: number;
+    mapGroup: number;
+    mapNumber: number;
+    offset: number;
+  }> | null {
+    const connectionsAddress = u32(headerAddress - BASE + 0x0c);
+    if (connectionsAddress === 0) return [];
+    if (!isPtr(connectionsAddress, 8)) return null;
+    const connectionsOffset = connectionsAddress - BASE;
+    const count = i32(connectionsOffset);
+    if (count < 0 || count > 64) return null;
+    if (count === 0) return [];
+    const dataAddress = u32(connectionsOffset + 4);
+    const dataOffset = dataAddress - BASE;
+    if (!isPtr(dataAddress, count * 0x0c)) return null;
+    const result: Array<{
+      direction: number;
+      mapGroup: number;
+      mapNumber: number;
+      offset: number;
+    }> = [];
+    for (let i = 0; i < count; i++) {
+      const e = dataOffset + i * 0x0c;
+      result.push({
+        direction: u8(e),
+        offset: i32(e + 4),
+        mapGroup: u8(e + 8),
+        mapNumber: u8(e + 9),
+      });
     }
-
-    const connectionsOffset = connectionsPtr - BASE;
-    if (connectionsOffset < 0 || connectionsOffset + 8 > rom.length) {
-      continue;
-    }
-
-    const connectionCount = reader.readU32(connectionsPtr) | 0;
-    if (connectionCount < 0 || connectionCount > 64) {
-      continue;
-    }
-
-    const required = [
-      { direction: 2, mapGroup: 3, mapNumber: 40, offset: 0 },
-      { direction: 4, mapGroup: 3, mapNumber: 38, offset: 0 },
-    ];
-
-    let matched = 0;
-    if (connectionCount > 0) {
-      const dataAddress = reader.readU32(connectionsPtr + 4);
-      const dataOffset = dataAddress - BASE;
+    return result;
+  }
+  function findHeader(
+    width: number,
+    height: number,
+    required: Array<{direction: number; mapGroup: number; mapNumber: number; offset: number}>,
+  ): {address:number; layoutAddress:number; layoutId:number} | null {
+    for (let offset = 0; offset <= rom.length - HEADER_SIZE; offset += 4) {
+      const layoutAddress = u32(offset);
+      if (!isPtr(layoutAddress, 0x18)) continue;
+      const lo = layoutAddress - BASE;
+      if (u32(lo) !== width || u32(lo + 4) !== height) continue;
+      const mapDataAddress = u32(lo + 0x0c);
+      const primary = u32(lo + 0x10);
+      const secondary = u32(lo + 0x14);
       if (
-        dataAddress < BASE ||
-        dataOffset < 0 ||
-        dataOffset + connectionCount * 0x0c > rom.length
-      ) {
-        continue;
-      }
-
-      for (let index = 0; index < connectionCount; index++) {
-        const entry = dataOffset + index * 0x0c;
-        const direction = reader.readU8(BASE + entry);
-        const offsetValue = reader.readU32(BASE + entry + 4) | 0;
-        const mapGroup = reader.readU8(BASE + entry + 8);
-        const mapNumber = reader.readU8(BASE + entry + 9);
-
-        if (
-          required.some(
-            c =>
-              c.direction === direction &&
-              c.mapGroup === mapGroup &&
-              c.mapNumber === mapNumber &&
-              c.offset === offsetValue,
-          )
-        ) {
-          matched++;
-        }
-      }
+        !isPtr(mapDataAddress, width * height * 2) ||
+        !isPtr(primary, 4) ||
+        !isPtr(secondary, 4)
+      ) continue;
+      const address = BASE + offset;
+      const connections = readConnections(address);
+      if (!connections) continue;
+      if (!required.every(expected =>
+        connections.some(actual =>
+          actual.direction === expected.direction &&
+          actual.mapGroup === expected.mapGroup &&
+          actual.mapNumber === expected.mapNumber &&
+          actual.offset === expected.offset,
+        ),
+      )) continue;
+      return {
+        address,
+        layoutAddress,
+        layoutId: u16(offset + 0x12),
+      };
     }
-
-    if (matched !== required.length) {
-      continue;
-    }
-
-    const mapLayoutId = reader.readU16(headerAddress + 0x12);
-    anchor.mapLayoutAddress = layoutAddress;
-    anchor.mapLayoutId = mapLayoutId;
-    break;
+    return null;
   }
 
+  const palletHeader = findHeader(24, 20, [
+    {direction: 2, mapGroup: 3, mapNumber: 19, offset: 0},
+    {direction: 1, mapGroup: 3, mapNumber: 39, offset: 0},
+  ]);
+  if (!palletHeader) throw new Error('Independent Pallet header not found');
+
+  anchor.mapLayoutAddress = palletHeader.layoutAddress;
+  anchor.mapLayoutId = palletHeader.layoutId;
   if (anchor.mapLayoutAddress === 0) {
     throw new Error('Could not find a 24x20 Cinnabar layout anchor');
   }
@@ -356,8 +369,7 @@ async function main(): Promise<void> {
   const container = document.querySelector('#sceneContainer') as HTMLElement;
   const playerRenderer = new PlayerRenderer(container, fakeAdapter, rom);
 
-  await new Promise(requestAnimationFrame);
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 20; i++) {
     await new Promise(requestAnimationFrame);
   }
 
