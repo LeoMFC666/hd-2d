@@ -1,0 +1,531 @@
+name: FireRed retry validation
+on:
+  push:
+    branches:
+      - diagnose/fire-red-retry
+  pull_request:
+    branches:
+      - main
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Prepare retry test
+        run: |
+          cat > fire-red-retry-test.html <<'HTML'
+          <!doctype html>
+          <html>
+          <body style="margin:0;background:#111">
+            <div id="sceneContainer" style="width:1024px;height:720px"></div>
+            <pre id="result" style="position:fixed;top:0;left:0;color:white;z-index:2"></pre>
+            <script type="module" src="/fire-red-retry-test.ts"></script>
+          </body>
+          </html>
+          HTML
+
+          cat > fire-red-retry-test.ts <<'TS'
+          import {
+            Gen3StateAdapter,
+          } from './src/gen3/Gen3StateAdapter';
+          import type {
+            MemoryReader,
+          } from './src/gen3/MemoryReader';
+          import {
+            PlayerRenderer,
+          } from './src/render/PlayerRenderer';
+          import {
+            MapCatalog,
+          } from './src/gen3/world/MapCatalog';
+
+          declare global {
+            interface Window {
+              __retryResult?: Record<string, unknown>;
+            }
+          }
+
+          const response =
+            await fetch(
+              '/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba',
+            );
+
+          const rom =
+            new Uint8Array(
+              await response.arrayBuffer(),
+            );
+
+          const catalog =
+            new MapCatalog();
+
+          const catalogCount =
+            catalog.buildGen3FromRom(
+              rom,
+              {
+                mapGroup: 3,
+                mapNumber: 8,
+                mapLayoutId: 0,
+                mapLayoutAddress: 0,
+              },
+            );
+
+          const cinnabar =
+            catalog.get(3, 8);
+
+          if (!cinnabar) {
+            throw new Error(
+              'Cinnabar was not found in the global catalog.',
+            );
+          }
+
+          const ewram =
+            new Uint8Array(0x40000);
+
+          const iwram =
+            new Uint8Array(0x8000);
+
+          const setU8 = (
+            target: Uint8Array,
+            address: number,
+            value: number,
+            base: number,
+          ): void => {
+            target[address - base] =
+              value & 0xff;
+          };
+
+          const setU16 = (
+            target: Uint8Array,
+            address: number,
+            value: number,
+            base: number,
+          ): void => {
+            setU8(
+              target,
+              address,
+              value,
+              base,
+            );
+
+            setU8(
+              target,
+              address + 1,
+              value >> 8,
+              base,
+            );
+          };
+
+          const setU32 = (
+            target: Uint8Array,
+            address: number,
+            value: number,
+            base: number,
+          ): void => {
+            setU8(
+              target,
+              address,
+              value,
+              base,
+            );
+            setU8(
+              target,
+              address + 1,
+              value >> 8,
+              base,
+            );
+            setU8(
+              target,
+              address + 2,
+              value >> 16,
+              base,
+            );
+            setU8(
+              target,
+              address + 3,
+              value >>> 24,
+              base,
+            );
+          };
+
+          const readU8 = (
+            address: number,
+          ): number => {
+            if (
+              address >= 0x08000000 &&
+              address <
+                0x08000000 +
+                  rom.length
+            ) {
+              return rom[
+                address -
+                0x08000000
+              ] ?? 0;
+            }
+
+            if (
+              address >= 0x02000000 &&
+              address <
+                0x02040000
+            ) {
+              return ewram[
+                address -
+                0x02000000
+              ] ?? 0;
+            }
+
+            if (
+              address >= 0x03000000 &&
+              address <
+                0x03008000
+            ) {
+              return iwram[
+                address -
+                0x03000000
+              ] ?? 0;
+            }
+
+            return 0;
+          };
+
+          const memoryReader:
+            MemoryReader = {
+            readU8,
+
+            readU16(
+              address: number,
+            ): number {
+              return (
+                readU8(address) |
+                (
+                  readU8(
+                    address + 1,
+                  ) <<
+                  8
+                )
+              );
+            },
+
+            readU32(
+              address: number,
+            ): number {
+              return (
+                (
+                  readU8(address) |
+                  (
+                    readU8(
+                      address + 1,
+                    ) <<
+                    8
+                  ) |
+                  (
+                    readU8(
+                      address + 2,
+                    ) <<
+                    16
+                  ) |
+                  (
+                    readU8(
+                      address + 3,
+                    ) *
+                    0x1000000
+                  )
+                ) >>> 0
+              );
+            },
+
+            readRange(
+              address: number,
+              length: number,
+            ): Uint8Array {
+              const out =
+                new Uint8Array(
+                  length,
+                );
+
+              for (
+                let i = 0;
+                i < length;
+                i++
+              ) {
+                out[i] =
+                  readU8(
+                    address + i,
+                  );
+              }
+
+              return out;
+            },
+          };
+
+          const saveBlock1 =
+            0x02001000;
+
+          setU32(
+            iwram,
+            0x03005008,
+            saveBlock1,
+            0x03000000,
+          );
+
+          setU8(
+            ewram,
+            saveBlock1 + 0x04,
+            3,
+            0x02000000,
+          );
+
+          setU8(
+            ewram,
+            saveBlock1 + 0x05,
+            8,
+            0x02000000,
+          );
+
+          setU16(
+            ewram,
+            saveBlock1 + 0x32,
+            cinnabar.mapLayoutId,
+            0x02000000,
+          );
+
+          setU16(
+            ewram,
+            saveBlock1 + 0x00,
+            10,
+            0x02000000,
+          );
+
+          setU16(
+            ewram,
+            saveBlock1 + 0x02,
+            10,
+            0x02000000,
+          );
+
+          const activeHeader =
+            0x02036dfc;
+
+          setU32(
+            ewram,
+            activeHeader,
+            cinnabar.mapLayoutAddress,
+            0x02000000,
+          );
+
+          setU16(
+            ewram,
+            activeHeader + 0x12,
+            cinnabar.mapLayoutId,
+            0x02000000,
+          );
+
+          const avatar =
+            0x02037078;
+
+          setU8(
+            ewram,
+            avatar + 0x05,
+            0,
+            0x02000000,
+          );
+
+          const stateAdapter =
+            new Gen3StateAdapter(
+              memoryReader,
+              rom,
+            );
+
+          const originalRender =
+            stateAdapter.getMapRenderData.bind(
+              stateAdapter,
+            );
+
+          let renderCalls = 0;
+
+          stateAdapter.getMapRenderData = (
+            ...args
+          ) => {
+            renderCalls++;
+
+            if (
+              renderCalls === 1
+            ) {
+              return null;
+            }
+
+            return originalRender(
+              ...args,
+            );
+          };
+
+          const container =
+            document.getElementById(
+              'sceneContainer',
+            );
+
+          if (!container) {
+            throw new Error(
+              'Scene container missing.',
+            );
+          }
+
+          const renderer =
+            new PlayerRenderer(
+              container,
+              stateAdapter,
+              rom,
+            );
+
+          await new Promise(
+            resolve =>
+              setTimeout(
+                resolve,
+                2500,
+              ),
+          );
+
+          const runtime =
+            renderer as any;
+
+          const result = {
+            catalogCount:
+              runtime.mapCatalog
+                .getAll()
+                .length,
+
+            activeMap:
+              runtime.activeMapKey,
+
+            renderCalls,
+
+            visualCount:
+              runtime.mapVisuals.size,
+
+            canvas:
+              Boolean(
+                container.querySelector(
+                  'canvas',
+                ),
+              ),
+
+            pass:
+              runtime.activeMapKey ===
+                '3:8' &&
+              renderCalls >= 2 &&
+              runtime.mapVisuals.size >= 1 &&
+              Boolean(
+                container.querySelector(
+                  'canvas',
+                ),
+              ),
+          };
+
+          window.__retryResult =
+            result;
+
+          const resultElement =
+            document.getElementById(
+              'result',
+            );
+
+          if (resultElement) {
+            resultElement.textContent =
+              JSON.stringify(
+                result,
+                null,
+                2,
+              );
+          }
+
+          console.log(
+            'FINAL_FIRE_RED_RETRY_TEST=' +
+              JSON.stringify(result),
+          );
+
+          renderer.destroy();
+          TS
+
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5173/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run retry browser test
+        run: |
+          xvfb-run -a node - <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({
+              headless: false,
+              args: [
+                '--use-gl=swiftshader',
+                '--enable-webgl',
+                '--ignore-gpu-blocklist',
+              ],
+            });
+
+            const page = await browser.newPage({
+              viewport: {
+                width: 1280,
+                height: 800,
+              },
+            });
+
+            page.on('console', msg => {
+              console.log(
+                '[console:' +
+                  msg.type() +
+                  '] ' +
+                  msg.text(),
+              );
+            });
+
+            await page.goto(
+              'http://127.0.0.1:5173/fire-red-retry-test.html',
+              {
+                waitUntil: 'networkidle',
+              },
+            );
+
+            await page.waitForTimeout(
+              3500,
+            );
+
+            const result =
+              await page.evaluate(
+                () =>
+                  window.__retryResult ??
+                  null,
+              );
+
+            console.log(
+              'RETRY_RESULT=' +
+                JSON.stringify(result),
+            );
+
+            await browser.close();
+
+            if (
+              !result ||
+              result.pass !== true
+            ) {
+              process.exit(2);
+            }
+          })().catch(error => {
+            console.error(error);
+            process.exit(3);
+          });
+          NODE
