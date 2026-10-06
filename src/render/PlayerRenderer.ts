@@ -381,6 +381,10 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
+    if (existing) {
+      return;
+    }
+
     const definition: MapDefinition = {
       mapGroup: state.map.mapGroup,
       mapNumber: state.map.mapNumber,
@@ -417,6 +421,26 @@ export class PlayerRenderer {
       mapKey ===
       this.activeMapKey
     ) {
+      const activeMap =
+        this.mapCatalog.get(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        );
+
+      if (
+        activeMap &&
+        !this.mapVisuals.has(
+          mapKey,
+        ) &&
+        !this.queuedMaps.has(
+          mapKey,
+        )
+      ) {
+        this.queueMapBuild(
+          activeMap,
+        );
+      }
+
       return;
     }
 
@@ -695,48 +719,7 @@ export class PlayerRenderer {
       state.map.mapGroup === map.mapGroup &&
       state.map.mapNumber === map.mapNumber;
 
-    if (
-      isActiveMap
-    ) {
-      const blocks =
-        Array.from(
-          this.stateAdapter.getMapBlocks(),
-        );
-
-      if (
-        blocks.length ===
-        map.width * map.height
-      ) {
-        const graphics =
-          new Map<
-            number,
-            Gen3MetatileGraphics | null
-          >();
-
-        for (
-          const block of blocks
-        ) {
-          if (
-            !graphics.has(
-              block.metatileId,
-            )
-          ) {
-            graphics.set(
-              block.metatileId,
-              this.stateAdapter
-                .getMetatileGraphics(
-                  block.metatileId,
-                ),
-            );
-          }
-        }
-
-        renderData = {
-          blocks,
-          graphics,
-        };
-      }
-    }
+    void isActiveMap;
 
     if (
       !renderData
