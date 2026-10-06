@@ -63,8 +63,7 @@ async function main(){
  const specs={
   pallet:{g:3,n:0,w:24,h:20,c:[{direction:2,mapGroup:3,mapNumber:19,offset:0},{direction:1,mapGroup:3,mapNumber:39,offset:0}]},
   route1:{g:3,n:19,w:24,h:40,c:[{direction:2,mapGroup:3,mapNumber:1,offset:-12},{direction:1,mapGroup:3,mapNumber:0,offset:0}]},
-  cinnabar:{g:3,n:8,w:24,h:20,c:[{direction:2,mapGroup:3,mapNumber:40,offset:0},{direction:4,mapGroup:3,mapNumber:38,offset:0}]},
-  route21south:{g:3,n:40,w:24,h:50,c:[{direction:1,mapGroup:3,mapNumber:18,offset:0},{direction:2,mapGroup:3,mapNumber:8,offset:0}]}
+  cinnabar:{g:3,n:8,w:24,h:20,c:[{direction:2,mapGroup:3,mapNumber:40,offset:0},{direction:4,mapGroup:3,mapNumber:38,offset:0}]}
  } as const;
 
  const anchors:any={};
