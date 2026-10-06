@@ -19,6 +19,12 @@ const MAP_HEADER_SIZE =
 const MAP_HEADER_LAYOUT_OFFSET =
   0x00;
 
+const MAP_HEADER_EVENTS_OFFSET =
+  0x04;
+
+const MAP_HEADER_SCRIPTS_OFFSET =
+  0x08;
+
 const MAP_HEADER_CONNECTIONS_OFFSET =
   0x0c;
 
@@ -308,6 +314,10 @@ export interface Gen3MapCatalogAnchor {
   mapNumber: number;
   mapLayoutId: number;
   mapLayoutAddress: number;
+
+  eventsAddress?: number;
+  scriptsAddress?: number;
+  connectionsAddress?: number;
 }
 
 export class MapCatalog {
@@ -689,12 +699,53 @@ export class MapCatalog {
         continue;
       }
 
+      const eventsAddress =
+        this.readU32(
+          romBytes,
+          offset +
+            MAP_HEADER_EVENTS_OFFSET,
+        );
+
+      if (
+        anchor.eventsAddress !==
+          undefined &&
+        eventsAddress !==
+          anchor.eventsAddress
+      ) {
+        continue;
+      }
+
+      const scriptsAddress =
+        this.readU32(
+          romBytes,
+          offset +
+            MAP_HEADER_SCRIPTS_OFFSET,
+        );
+
+      if (
+        anchor.scriptsAddress !==
+          undefined &&
+        scriptsAddress !==
+          anchor.scriptsAddress
+      ) {
+        continue;
+      }
+
       const connectionsAddress =
         this.readU32(
           romBytes,
           offset +
             MAP_HEADER_CONNECTIONS_OFFSET,
         );
+
+      if (
+        anchor.connectionsAddress !==
+          undefined &&
+        connectionsAddress !==
+          anchor.connectionsAddress
+      ) {
+        continue;
+      }
 
       if (
         connectionsAddress !== 0 &&
