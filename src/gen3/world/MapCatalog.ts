@@ -1482,15 +1482,6 @@ export class MapCatalog {
         continue;
       }
 
-      const tableEntryOffset =
-        (
-          groupAddress -
-          GBA_ROM_BASE
-        );
-
-      const groupTableReferenceOffset =
-        tableEntryOffset;
-
       for (
         let tableOffset = 0;
         tableOffset <=
@@ -1577,8 +1568,6 @@ export class MapCatalog {
         ) {
           continue;
         }
-
-        void groupTableReferenceOffset;
 
         return candidateTableAddress;
       }
