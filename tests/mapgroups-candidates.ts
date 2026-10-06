@@ -43,7 +43,31 @@ async function main(){
  }
  const exact=candidates.filter(x=>x.matchesRealLayout);
  const beta=candidates.filter(x=>x.pointsBeta);
- const result={pass:true,romBytes:rom.length,knownRealTable:hex(realTable),knownRealGroup3:hex(realGroup3),knownRealCinnabarHeader:hex(realHeader),knownRealCinnabar:real,targetBetaOffset:'0x00338378',targetBetaAddress:hex(TARGET),candidateCount:candidates.length,exactRealLayoutCandidates:exact,betaCandidates:beta,allCandidates:candidates};
+ const result={
+  pass:true,
+  romBytes:rom.length,
+  knownRealTable:hex(realTable),
+  knownRealGroup3:hex(realGroup3),
+  knownRealCinnabarHeader:hex(realHeader),
+  knownRealCinnabar:real,
+  targetBetaOffset:'0x00338378',
+  targetBetaAddress:hex(TARGET),
+  candidateCount:candidates.length,
+  exactRealLayoutCount:exact.length,
+  exactRealLayoutCandidates:exact.slice(0,20),
+  betaCount:beta.length,
+  betaCandidates:beta.slice(0,20),
+  candidateSummary:candidates.map(x=>({
+    table:x.table,
+    group3:x.group3,
+    header:x.header,
+    layout:x.layout,
+    id:x.id,
+    mapData:x.mapData,
+    matchesRealLayout:x.matchesRealLayout,
+    pointsBeta:x.pointsBeta
+  })),
+ };
  document.body.dataset.pass='true';document.querySelector('#out')!.textContent=JSON.stringify(result,null,2);
 }
 main().catch(e=>{document.body.dataset.pass='false';document.querySelector('#out')!.textContent=JSON.stringify({pass:false,error:String(e)},null,2);throw e});
