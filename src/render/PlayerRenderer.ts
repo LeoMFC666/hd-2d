@@ -87,20 +87,8 @@ export class PlayerRenderer {
   private worldCatalogBuildAttempted =
     false;
 
-  private worldCatalogLastAttemptKey =
-    '';
-
-  private worldCatalogLastAttemptAt =
-    0;
-
-  private liveMapSignature =
-    '';
-
   private activeMapKey =
     '';
-
-  private exteriorWorldVisible =
-    true;
 
   private frameId =
     0;
@@ -303,46 +291,21 @@ export class PlayerRenderer {
     state: GameState,
   ): void {
     if (
-      this.worldCatalogBuilt
+      this.worldCatalogBuilt ||
+      this.worldCatalogBuildAttempted
     ) {
       return;
     }
 
     if (
-      state.map.mapLayoutAddress === 0
-    ) {
-      return;
-    }
-
-    const attemptKey =
-      [
-        state.map.mapGroup,
-        state.map.mapNumber,
-        state.map.mapLayoutId,
-        state.map.mapLayoutAddress,
-      ].join(':');
-
-    const now =
-      performance.now();
-
-    if (
-      this.worldCatalogBuildAttempted &&
-      this.worldCatalogLastAttemptKey ===
-        attemptKey &&
-      now - this.worldCatalogLastAttemptAt <
-        1000
+      state.map
+        .mapLayoutAddress === 0
     ) {
       return;
     }
 
     this.worldCatalogBuildAttempted =
       true;
-
-    this.worldCatalogLastAttemptKey =
-      attemptKey;
-
-    this.worldCatalogLastAttemptAt =
-      now;
 
     const count =
       this.mapCatalog
@@ -359,34 +322,16 @@ export class PlayerRenderer {
               state.map.mapLayoutId,
 
             mapLayoutAddress:
-              state.map.mapLayoutAddress,
+              state.map
+                .mapLayoutAddress,
           },
         );
 
     if (
       count <= 0
     ) {
-      this.worldCatalogBuilt =
-        false;
-
       console.warn(
-        'Unable to build Gen 3 map catalog; retrying.',
-        {
-          game:
-            state.game.region,
-
-          mapGroup:
-            state.map.mapGroup,
-
-          mapNumber:
-            state.map.mapNumber,
-
-          mapLayoutId:
-            state.map.mapLayoutId,
-
-          mapLayoutAddress:
-            `0x${state.map.mapLayoutAddress.toString(16)}`,
-        },
+        'Unable to build Gen 3 map catalog.',
       );
 
       return;
@@ -395,213 +340,10 @@ export class PlayerRenderer {
     this.worldCatalogBuilt =
       true;
 
-    this.activeMapKey =
-      '';
-
-    this.liveMapSignature =
-      '';
-
-    this.exteriorWorldVisible =
-      true;
-
-    this.mapWorld.clearPositions();
-
-    this.buildQueue.length =
-      0;
-
-    this.queuedMaps.clear();
-
-    this.mapWorld.clearPositions();
-
     console.log(
       'Gen 3 Map Catalog:',
       count,
       'maps',
-    );
-  }
-
-  private ensureCurrentMapDefinition(
-    state: GameState,
-  ): void {
-    if (this.worldCatalogBuilt) {
-      return;
-    }
-
-    if (
-      state.map.mapLayoutAddress === 0
-    ) {
-      return;
-    }
-
-    if (
-      state.map.width <= 0 ||
-      state.map.height <= 0 ||
-      state.map.mapDataAddress === 0 ||
-      state.map.primaryTilesetAddress === 0 ||
-      state.map.secondaryTilesetAddress === 0
-    ) {
-      return;
-    }
-
-    const existing =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    const connections =
-      existing?.connections ??
-      [];
-
-    const signature =
-      [
-        state.map.mapGroup,
-        state.map.mapNumber,
-        state.map.mapLayoutId,
-        state.map.mapHeaderAddress,
-        state.map.mapLayoutAddress,
-        state.map.mapDataAddress,
-        state.map.primaryTilesetAddress,
-        state.map.secondaryTilesetAddress,
-        state.map.width,
-        state.map.height,
-      ].join(':');
-
-    if (
-      signature ===
-      this.liveMapSignature
-    ) {
-      return;
-    }
-
-    const definition: MapDefinition = {
-      mapGroup:
-        state.map.mapGroup,
-
-      mapNumber:
-        state.map.mapNumber,
-
-      mapLayoutId:
-        state.map.mapLayoutId,
-
-      mapHeaderAddress:
-        state.map.mapHeaderAddress,
-
-      mapLayoutAddress:
-        state.map.mapLayoutAddress,
-
-      mapDataAddress:
-        state.map.mapDataAddress,
-
-      primaryTilesetAddress:
-        state.map.primaryTilesetAddress,
-
-      secondaryTilesetAddress:
-        state.map.secondaryTilesetAddress,
-
-      width:
-        state.map.width,
-
-      height:
-        state.map.height,
-
-      worldX:
-        existing?.worldX ?? 0,
-
-      worldY:
-        existing?.worldY ?? 0,
-
-      connections,
-    };
-
-    this.mapCatalog.register(
-      definition,
-    );
-
-    this.liveMapSignature =
-      signature;
-
-    console.log(
-      'Live Gen 3 map synchronized:',
-      {
-        key:
-          this.createMapKey(
-            state.map.mapGroup,
-            state.map.mapNumber,
-          ),
-
-        layoutId:
-          state.map.mapLayoutId,
-
-        mapDataAddress:
-          `0x${state.map.mapDataAddress.toString(16)}`,
-
-        preservedConnections:
-          connections.length,
-      },
-    );
-  }
-
-  private ensureExteriorWorld(
-    state: GameState,
-  ): void {
-    if (
-      !this.worldCatalogBuilt ||
-      this.mapWorld.getPositionedMaps().length > 0
-    ) {
-      return;
-    }
-
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    const positioned =
-      activeMap &&
-      activeMap.connections.length > 0
-        ? this.mapWorld.buildFrom(
-            activeMap.mapGroup,
-            activeMap.mapNumber,
-          )
-        : this.mapWorld
-            .buildLargestConnectedWorld();
-
-    if (
-      positioned <= 0
-    ) {
-      console.warn(
-        'Unable to build Gen 3 exterior world.',
-      );
-
-      return;
-    }
-
-    for (
-      const map of
-        this.mapWorld.getPositionedMaps()
-    ) {
-      this.queueMapBuild(
-        map,
-      );
-    }
-
-    console.log(
-      'Gen 3 Exterior World:',
-      {
-        maps:
-          positioned,
-
-        root:
-          activeMap &&
-          activeMap.connections.length > 0
-            ? this.createMapKey(
-                activeMap.mapGroup,
-                activeMap.mapNumber,
-              )
-            : 'largest-component',
-      },
     );
   }
 
@@ -624,54 +366,37 @@ export class PlayerRenderer {
     this.activeMapKey =
       mapKey;
 
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    const isExterior =
+    const alreadyPositioned =
       this.mapWorld.hasPosition(
         state.map.mapGroup,
         state.map.mapNumber,
       );
 
     if (
-      isExterior
+      !alreadyPositioned
     ) {
-      const maps =
-        this.mapWorld
-          .getPositionedMaps();
+      this.buildQueue.length =
+        0;
 
-      for (
-        const map of maps
-      ) {
-        this.queueMapBuild(
-          map,
-        );
-      }
+      this.queuedMaps.clear();
 
-      this.syncMapVisualPositions(
-        maps,
+      this.mapWorld.clearPositions();
+
+      this.mapWorld.buildFrom(
+        state.map.mapGroup,
+        state.map.mapNumber,
       );
-
-      this.setWorldView(
-        true,
-      );
-
-      console.log(
-        'Active Gen 3 Exterior Map:',
-        {
-          maps:
-            maps.length,
-
-          current:
-            mapKey,
-        },
-      );
-
-      return;
     }
+
+    const maps =
+      this.mapWorld
+        .getPositionedMaps();
+
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
 
     if (activeMap) {
       this.queueMapBuild(
@@ -679,15 +404,33 @@ export class PlayerRenderer {
       );
     }
 
-    this.setWorldView(
-      false,
+    for (
+      const map of maps
+    ) {
+      this.queueMapBuild(
+        map,
+      );
+    }
+
+    this.syncMapVisualPositions(
+      maps,
+    );
+
+    this.updateWorldVisibility(
+      maps,
     );
 
     console.log(
-      'Active Gen 3 Interior Map:',
+      'Active World:',
       {
+        maps:
+          maps.length,
+
         current:
           mapKey,
+
+        rebuilt:
+          !alreadyPositioned,
       },
     );
   }
@@ -809,11 +552,22 @@ export class PlayerRenderer {
     }
   }
 
-  private setWorldView(
-    exteriorVisible: boolean,
+  private updateWorldVisibility(
+    maps: MapDefinition[],
   ): void {
-    this.exteriorWorldVisible =
-      exteriorVisible;
+    const positionedKeys =
+      new Set<string>();
+
+    for (
+      const map of maps
+    ) {
+      positionedKeys.add(
+        this.createMapKey(
+          map.mapGroup,
+          map.mapNumber,
+        ),
+      );
+    }
 
     for (
       const [
@@ -821,42 +575,10 @@ export class PlayerRenderer {
         visual,
       ] of this.mapVisuals
     ) {
-      const separator =
-        key.indexOf(':');
-
-      let isExterior =
-        false;
-
-      if (
-        separator > 0
-      ) {
-        const mapGroup =
-          Number(
-            key.slice(
-              0,
-              separator,
-            ),
-          );
-
-        const mapNumber =
-          Number(
-            key.slice(
-              separator + 1,
-            ),
-          );
-
-        isExterior =
-          this.mapWorld.hasPosition(
-            mapGroup,
-            mapNumber,
-          );
-      }
-
       const visible =
-        exteriorVisible
-          ? isExterior
-          : key ===
-            this.activeMapKey;
+        positionedKeys.has(
+          key,
+        );
 
       visual.baseMesh.visible =
         visible;
@@ -1129,19 +851,7 @@ export class PlayerRenderer {
         .getWorldPosition(
           map.mapGroup,
           map.mapNumber,
-        ) ??
-      (
-        this.createMapKey(
-          map.mapGroup,
-          map.mapNumber,
-        ) ===
-        this.activeMapKey
-          ? {
-              x: 0,
-              y: 0,
-            }
-          : null
-      );
+        );
 
     if (!position) {
       geometry.dispose();
@@ -1205,20 +915,11 @@ export class PlayerRenderer {
       visual,
     );
 
-    const isExterior =
+    const visible =
       this.mapWorld.hasPosition(
         map.mapGroup,
         map.mapNumber,
       );
-
-    const visible =
-      isExterior
-        ? this.exteriorWorldVisible
-        : (
-            !this.exteriorWorldVisible &&
-            mapKey ===
-              this.activeMapKey
-          );
 
     baseMesh.visible =
       visible;
@@ -1490,17 +1191,8 @@ export class PlayerRenderer {
         state,
       );
 
-      this.ensureCurrentMapDefinition(
-        state,
-      );
-
-      this.ensureExteriorWorld(
-        state,
-      );
-
       if (
-        state.map.mapLayoutAddress !==
-        0
+        this.worldCatalogBuilt
       ) {
         this.updateActiveWorld(
           state,
