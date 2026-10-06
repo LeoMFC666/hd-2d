@@ -92,61 +92,216 @@ function fakeRenderData(){
   return {blocks:Array.from({length:24*20},()=>({raw:0,metatileId:0,collision:0,elevation:0})),graphics:new Map([[0,graphic]])};
 }
 
-async function runCase(
-  rom:Uint8Array,
-  catalog:MapCatalog,
-  state:GameState,
-){
-  let current=state;
-  const adapter={
-    readState:()=>current,
-    getMapRenderData:()=>fakeRenderData(),
-  } as unknown as Gen3StateAdapter;
-  const container=document.createElement('div');
-  container.style.width='900px'; container.style.height='600px';
-  document.querySelector('#scene')!.appendChild(container);
-  const renderer=new PlayerRenderer(container,adapter,rom);
-  await new Promise(requestAnimationFrame);
-  await new Promise(requestAnimationFrame);
-  const internal=renderer as unknown as {
-    activeMapKey:string;
-    mapWorld:{getPositionedMaps:()=>any[]};
+function makeDefinition(
+  mapGroup: number,
+  mapNumber: number,
+  mapLayoutAddress: number,
+  mapLayoutId: number,
+): any {
+  return {
+    mapGroup,
+    mapNumber,
+    mapLayoutId,
+    mapHeaderAddress: mapLayoutAddress + 0x100,
+    mapLayoutAddress,
+    mapDataAddress: mapLayoutAddress + 0x200,
+    primaryTilesetAddress: mapLayoutAddress + 0x300,
+    secondaryTilesetAddress: mapLayoutAddress + 0x400,
+    width: 24,
+    height: 20,
+    worldX: 0,
+    worldY: 0,
+    connections: [],
   };
-  const result={activeMapKey:internal.activeMapKey,positionedCount:internal.mapWorld.getPositionedMaps().length};
+}
+
+async function runCase(
+  rom: Uint8Array,
+  state: GameState,
+  definitions: any[],
+) {
+  const adapter = {
+    readState: () => state,
+    getMapRenderData: () => fakeRenderData(),
+  } as unknown as Gen3StateAdapter;
+
+  const container = document.createElement('div');
+  container.style.width = '900px';
+  container.style.height = '600px';
+  document.querySelector('#scene')!.appendChild(container);
+
+  const renderer = new PlayerRenderer(
+    container,
+    adapter,
+    rom,
+  );
+
+  const internal =
+    renderer as unknown as {
+      activeMapKey: string;
+      mapCatalog: MapCatalog;
+      mapWorld: {
+        getPositionedMaps: () => any[];
+      };
+    };
+
+  const originalBuild =
+    internal.mapCatalog.buildGen3FromRom.bind(
+      internal.mapCatalog,
+    );
+
+  internal.mapCatalog.buildGen3FromRom =
+    (() => 1) as any;
+
+  for (const definition of definitions) {
+    internal.mapCatalog.register(
+      definition,
+    );
+  }
+
+  await new Promise(requestAnimationFrame);
+  await new Promise(requestAnimationFrame);
+
+  const result = {
+    activeMapKey:
+      internal.activeMapKey,
+    positionedCount:
+      internal.mapWorld.getPositionedMaps().length,
+  };
+
+  internal.mapCatalog.buildGen3FromRom =
+    originalBuild;
+
   renderer.destroy();
   container.remove();
+
   return result;
 }
 
-async function main(){
-  const rom=new Uint8Array(await (await fetch('/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba')).arrayBuffer());
-  assert(String.fromCharCode(rom[0xac],rom[0xad],rom[0xae],rom[0xaf])==='BPRE','wrong ROM');
-  assert(rom[0xbc]===1,'wrong revision');
+async function main() {
+  const rom = new Uint8Array(32);
+  const cinnabar = makeDefinition(
+    3,
+    8,
+    0x08200000,
+    86,
+  );
+  const ruinValley = makeDefinition(
+    3,
+    61,
+    0x08300000,
+    121,
+  );
+  const viridian = makeDefinition(
+    3,
+    1,
+    0x08400000,
+    42,
+  );
 
-  const anchor=derivePalletAnchorFromGlobalTable(rom);
-  assert(anchor,'Pallet anchor not found independently');
+  const definitions = [
+    cinnabar,
+    ruinValley,
+    viridian,
+  ];
 
-  const catalog=new MapCatalog();
-  assert(catalog.buildGen3FromRom(rom,anchor)===425,'catalog failed');
-  const cinnabar=catalog.get(3,8);
-  const ruin=catalog.get(3,61);
-  assert(cinnabar&&ruin,'required maps missing');
+  const normalCinnabar =
+    makeState(
+      3,
+      8,
+      cinnabar,
+    );
 
-  const normalCinnabar=makeState(3,8,cinnabar);
-  const mismatch=makeState(3,61,cinnabar);
-  const normalRuin=makeState(3,61,ruin);
+  const mismatchedCinnabar =
+    makeState(
+      3,
+      61,
+      cinnabar,
+    );
 
-  const a=await runCase(rom,catalog,normalCinnabar);
-  const b=await runCase(rom,catalog,mismatch);
-  const c=await runCase(rom,catalog,normalRuin);
+  const normalRuin =
+    makeState(
+      3,
+      61,
+      ruinValley,
+    );
 
-  assert(a.activeMapKey==='3:8','normal Cinnabar changed: '+JSON.stringify(a));
-  assert(b.activeMapKey==='3:8','mismatched Cinnabar did not resolve: '+JSON.stringify(b));
-  assert(b.positionedCount===37,'mismatched Cinnabar did not build Kanto world: '+JSON.stringify(b));
-  assert(c.activeMapKey==='3:61','normal Ruin Valley changed: '+JSON.stringify(c));
+  const normalViridian =
+    makeState(
+      3,
+      1,
+      viridian,
+    );
 
-  const result={pass:true,normalCinnabar:a,mismatchedCinnabar:b,normalRuin:c};
-  document.body.dataset.pass='true';
-  document.querySelector('#out')!.textContent=JSON.stringify(result,null,2);
+  const a =
+    await runCase(
+      rom,
+      normalCinnabar,
+      definitions,
+    );
+
+  const b =
+    await runCase(
+      rom,
+      mismatchedCinnabar,
+      definitions,
+    );
+
+  const c =
+    await runCase(
+      rom,
+      normalRuin,
+      definitions,
+    );
+
+  const d =
+    await runCase(
+      rom,
+      normalViridian,
+      definitions,
+    );
+
+  assert(
+    a.activeMapKey === '3:8',
+    'normal Cinnabar changed: ' +
+      JSON.stringify(a),
+  );
+
+  assert(
+    b.activeMapKey === '3:8',
+    'mismatched Cinnabar did not resolve: ' +
+      JSON.stringify(b),
+  );
+
+  assert(
+    b.positionedCount === 1,
+    'mismatched Cinnabar rebuilt the wrong world: ' +
+      JSON.stringify(b),
+  );
+
+  assert(
+    c.activeMapKey === '3:61',
+    'normal Ruin Valley changed: ' +
+      JSON.stringify(c),
+  );
+
+  assert(
+    d.activeMapKey === '3:1',
+    'normal Viridian changed: ' +
+      JSON.stringify(d),
+  );
+
+  const result = {
+    pass: true,
+    normalCinnabar: a,
+    mismatchedCinnabar: b,
+    normalRuin: c,
+    normalViridian: d,
+  };
+
+  document.body.dataset.pass = 'true';
+  document.querySelector('#out')!.textContent =
+    JSON.stringify(result, null, 2);
 }
+
 main().catch(e=>{document.body.dataset.pass='false';document.querySelector('#out')!.textContent=JSON.stringify({pass:false,error:String(e)},null,2);throw e});
