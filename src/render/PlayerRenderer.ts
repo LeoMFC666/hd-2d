@@ -411,13 +411,94 @@ export class PlayerRenderer {
     );
   }
 
+  private resolveActiveMapDefinition(
+    state: GameState,
+  ): MapDefinition | null {
+    const direct =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    if (
+      !this.isFireRedFamily(state) ||
+      state.map.mapLayoutAddress === 0
+    ) {
+      return direct;
+    }
+
+    if (
+      direct &&
+      direct.mapLayoutAddress ===
+        state.map.mapLayoutAddress &&
+      direct.mapLayoutId ===
+        state.map.mapLayoutId
+    ) {
+      return direct;
+    }
+
+    const matches =
+      this.mapCatalog
+        .getAll()
+        .filter(
+          (map) =>
+            map.mapLayoutAddress ===
+              state.map.mapLayoutAddress &&
+            map.mapLayoutId ===
+              state.map.mapLayoutId &&
+            map.width ===
+              state.map.width &&
+            map.height ===
+              state.map.height,
+        );
+
+    if (
+      matches.length === 1
+    ) {
+      console.warn(
+        'Corrected FireRed active map identity from layout.',
+        {
+          from:
+            this.createMapKey(
+              state.map.mapGroup,
+              state.map.mapNumber,
+            ),
+          to:
+            this.createMapKey(
+              matches[0].mapGroup,
+              matches[0].mapNumber,
+            ),
+          mapLayoutId:
+            state.map.mapLayoutId,
+        },
+      );
+
+      return matches[0];
+    }
+
+    return direct;
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
+    const activeMapDefinition =
+      this.resolveActiveMapDefinition(
+        state,
+      );
+
+    const activeMapGroup =
+      activeMapDefinition?.mapGroup ??
+      state.map.mapGroup;
+
+    const activeMapNumber =
+      activeMapDefinition?.mapNumber ??
+      state.map.mapNumber;
+
     const mapKey =
       this.createMapKey(
-        state.map.mapGroup,
-        state.map.mapNumber,
+        activeMapGroup,
+        activeMapNumber,
       );
 
     if (
@@ -425,10 +506,7 @@ export class PlayerRenderer {
       this.activeMapKey
     ) {
       const activeMap =
-        this.mapCatalog.get(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        );
+        activeMapDefinition;
 
       if (
         activeMap &&
@@ -452,8 +530,8 @@ export class PlayerRenderer {
 
     const alreadyPositioned =
       this.mapWorld.hasPosition(
-        state.map.mapGroup,
-        state.map.mapNumber,
+        activeMapGroup,
+        activeMapNumber,
       );
 
     if (
@@ -467,20 +545,20 @@ export class PlayerRenderer {
       this.mapWorld.clearPositions();
 
       this.mapWorld.buildFrom(
-        state.map.mapGroup,
-        state.map.mapNumber,
+        activeMapGroup,
+        activeMapNumber,
       );
 
       if (
         this.isFireRedFamily(state) &&
         !this.mapWorld.hasPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
+          activeMapGroup,
+          activeMapNumber,
         )
       ) {
         this.mapWorld.setWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
+          activeMapGroup,
+          activeMapNumber,
           {
             x: 0,
             y: 0,
@@ -493,11 +571,8 @@ export class PlayerRenderer {
       this.mapWorld
         .getPositionedMaps();
 
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
+      const activeMap =
+        activeMapDefinition;
 
     if (activeMap) {
       this.queueMapBuild(
@@ -1114,11 +1189,24 @@ export class PlayerRenderer {
     x: number;
     z: number;
   } {
+    const activeMap =
+      this.resolveActiveMapDefinition(
+        state,
+      );
+
+    const mapGroup =
+      activeMap?.mapGroup ??
+      state.map.mapGroup;
+
+    const mapNumber =
+      activeMap?.mapNumber ??
+      state.map.mapNumber;
+
     const mapPosition =
       this.mapWorld
         .getWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
+          mapGroup,
+          mapNumber,
         );
 
     if (!mapPosition) {
