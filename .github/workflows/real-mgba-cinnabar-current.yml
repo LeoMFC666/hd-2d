@@ -1,0 +1,102 @@
+name: Real mGBA Cinnabar current audit
+on:
+  push:
+    branches: [diagnose/real-mgba-cinnabar-current]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5173/tests/real-mgba-cinnabar-current.html >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vite.log
+          exit 1
+      - name: Real browser audit
+        run: |
+          cat > real-mgba-current.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({
+            headless: false,
+            args: ['--no-sandbox', '--use-gl=swiftshader', '--autoplay-policy=no-user-gesture-required']
+          });
+          const context = await browser.newContext({
+            viewport: { width: 900, height: 1100 },
+            deviceScaleFactor: 1,
+          });
+          const page = await context.newPage();
+          const logs = [];
+          const errors = [];
+          page.on('console', msg => {
+            const line = '[console:' + msg.type() + '] ' + msg.text();
+            logs.push(line);
+            console.log(line);
+          });
+          page.on('pageerror', err => {
+            const line = '[pageerror] ' + String(err);
+            errors.push(line);
+            console.log(line);
+          });
+
+          await page.goto('http://127.0.0.1:5173/tests/real-mgba-cinnabar-current.html', {waitUntil:'networkidle'});
+
+          await page.locator('#romInput').setInputFiles('/home/runner/work/hd-2d/hd-2d/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba');
+          await page.waitForFunction(() => (document.querySelector('#status')?.textContent || '').startsWith('ROM loaded:'), null, {timeout:90000});
+
+          await page.locator('#saveInput').setInputFiles('/home/runner/work/hd-2d/hd-2d/firered.sav');
+          await page.waitForFunction(() => (document.querySelector('#status')?.textContent || '').startsWith('Save loaded:'), null, {timeout:90000});
+
+          await page.waitForTimeout(8000);
+          const mapLogs = logs.filter(line => line.includes('Map Data:'));
+          const staticLogs = logs.filter(line => line.includes('STATIC_RENDER'));
+          const betaLogs = staticLogs.filter(line => line.includes('"isBeta":true'));
+          const activeLogs = logs.filter(line => line.includes('Map State:'));
+          const worldLogs = logs.filter(line => line.includes('Active World:'));
+
+          console.log('=== MAP DATA LOGS ===');
+          console.log(mapLogs.join('\n'));
+          console.log('=== STATIC RENDER LOGS ===');
+          console.log(staticLogs.join('\n'));
+          console.log('=== BETA RENDER LOGS ===');
+          console.log(betaLogs.join('\n'));
+
+          await page.screenshot({path:'/tmp/real-mgba-current.png',fullPage:true});
+
+          if(errors.length) throw new Error(errors.join('\n'));
+          if(!activeLogs.length) throw new Error('No Map State log');
+          if(!worldLogs.length) throw new Error('No Active World log');
+
+          const result = {
+            betaStaticRenderCount: betaLogs.length,
+            betaStaticRenders: betaLogs.slice(-20),
+            mapDataLogs: mapLogs.slice(-10),
+            activeMapLogs: activeLogs.slice(-10),
+            worldLogs: worldLogs.slice(-10),
+          };
+          require('fs').writeFileSync('/tmp/real-mgba-current.json', JSON.stringify(result,null,2));
+          await browser.close();
+          EOF
+          xvfb-run -a node real-mgba-current.mjs
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-mgba-cinnabar-current
+          path: |
+            /tmp/real-mgba-current.png
+            /tmp/real-mgba-current.json
+            /tmp/vite.log
+          if-no-files-found: warn
