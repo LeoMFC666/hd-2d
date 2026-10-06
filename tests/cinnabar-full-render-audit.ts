@@ -472,6 +472,12 @@ async function main(): Promise<void> {
       cinnabar: {
         size: [cinnabar.width, cinnabar.height],
         position: world.getWorldPosition(3, 8),
+        header: '0x' + cinnabar.mapHeaderAddress.toString(16),
+        layout: '0x' + cinnabar.mapLayoutAddress.toString(16),
+        mapData: '0x' + cinnabar.mapDataAddress.toString(16),
+        primaryTileset: '0x' + cinnabar.primaryTilesetAddress.toString(16),
+        secondaryTileset: '0x' + cinnabar.secondaryTilesetAddress.toString(16),
+        betaOffset338378Address: '0x' + (0x08000000 + 0x00338378).toString(16),
         hash: firstHash,
       },
       ruinValley: {
