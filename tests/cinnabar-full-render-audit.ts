@@ -164,7 +164,7 @@ async function main(): Promise<void> {
   const catalog = new MapCatalog();
   const anchor = {
     mapGroup: 3,
-    mapNumber: 8,
+    mapNumber: 0,
     mapLayoutId: 0,
     mapLayoutAddress: 0,
   };
