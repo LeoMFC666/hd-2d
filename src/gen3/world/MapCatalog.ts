@@ -756,9 +756,51 @@ export class MapCatalog {
         continue;
       }
 
+      const anchorHeaderAddress =
+        this.readU32(
+          romBytes,
+          (
+            groupAddress -
+            GBA_ROM_BASE
+          ) +
+            anchor.mapNumber * 4,
+        );
+
+      if (
+        anchorHeaderAddress !==
+        value
+      ) {
+        continue;
+      }
+
+      const anchorHeaderOffset =
+        anchorHeaderAddress -
+        GBA_ROM_BASE;
+
+      if (
+        this.readU32(
+          romBytes,
+          anchorHeaderOffset +
+            MAP_HEADER_LAYOUT_OFFSET,
+        ) !==
+        anchor.mapLayoutAddress
+      ) {
+        continue;
+      }
+
+      if (
+        this.readU16(
+          romBytes,
+          anchorHeaderOffset +
+            MAP_HEADER_LAYOUT_ID_OFFSET,
+        ) !==
+        anchor.mapLayoutId
+      ) {
+        continue;
+      }
+
       const tableAddress =
-        GBA_ROM_BASE +
-        offset -
+        groupAddress -
         anchor.mapGroup * 4;
 
       if (
@@ -805,6 +847,31 @@ export class MapCatalog {
       return false;
     }
 
+    for (
+      let currentMapNumber = 0;
+      currentMapNumber < groupLength;
+      currentMapNumber++
+    ) {
+      const mapHeaderAddress =
+        this.readU32(
+          romBytes,
+          (
+            groupAddress -
+            GBA_ROM_BASE
+          ) +
+            currentMapNumber * 4,
+        );
+
+      if (
+        !this.isValidMapHeader(
+          romBytes,
+          mapHeaderAddress,
+        )
+      ) {
+        return false;
+      }
+    }
+
     const targetHeader =
       this.readU32(
         romBytes,
@@ -815,10 +882,115 @@ export class MapCatalog {
           mapNumber * 4,
       );
 
-    return this.isValidRomPointer(
+    return this.isValidMapHeader(
       romBytes,
       targetHeader,
-      MAP_HEADER_SIZE,
+    );
+  }
+
+  private isValidMapHeader(
+    romBytes: Uint8Array,
+    mapHeaderAddress: number,
+  ): boolean {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapHeaderAddress,
+        MAP_HEADER_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const headerOffset =
+      mapHeaderAddress -
+      GBA_ROM_BASE;
+
+    const mapLayoutAddress =
+      this.readU32(
+        romBytes,
+        headerOffset +
+          MAP_HEADER_LAYOUT_OFFSET,
+      );
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const layoutOffset =
+      mapLayoutAddress -
+      GBA_ROM_BASE;
+
+    const width =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_WIDTH_OFFSET,
+      );
+
+    const height =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_HEIGHT_OFFSET,
+      );
+
+    if (
+      !this.isValidMapDimension(
+        width,
+      ) ||
+      !this.isValidMapDimension(
+        height,
+      )
+    ) {
+      return false;
+    }
+
+    const mapDataAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_MAP_OFFSET,
+      );
+
+    const primaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+      );
+
+    const secondaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset +
+          MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+      );
+
+    return (
+      this.isValidRomPointer(
+        romBytes,
+        mapDataAddress,
+        width *
+          height *
+          2,
+      ) &&
+      this.isValidRomPointer(
+        romBytes,
+        primaryTilesetAddress,
+        0x04,
+      ) &&
+      this.isValidRomPointer(
+        romBytes,
+        secondaryTilesetAddress,
+        0x04,
+      )
     );
   }
 
