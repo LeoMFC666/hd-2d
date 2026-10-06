@@ -84,6 +84,9 @@ export class PlayerRenderer {
   private worldCatalogBuilt =
     false;
 
+  private worldRootBuilt =
+    false;
+
   private worldCatalogBuildAttempted =
     false;
 
@@ -345,20 +348,6 @@ export class PlayerRenderer {
       this.mapCatalog
         .buildGen3FromRom(
           this.romBytes,
-          {
-            mapGroup:
-              state.map.mapGroup,
-
-            mapNumber:
-              state.map.mapNumber,
-
-            mapLayoutId:
-              state.map.mapLayoutId,
-
-            mapLayoutAddress:
-              state.map
-                .mapLayoutAddress,
-          },
         );
 
     if (
@@ -393,11 +382,16 @@ export class PlayerRenderer {
     this.worldCatalogBuilt =
       true;
 
+    this.worldRootBuilt =
+      false;
+
     this.activeMapKey =
       '';
 
     this.liveMapSignature =
       '';
+
+    this.mapWorld.clearPositions();
 
     this.buildQueue.length =
       0;
@@ -416,6 +410,10 @@ export class PlayerRenderer {
   private ensureCurrentMapDefinition(
     state: GameState,
   ): void {
+    if (this.worldCatalogBuilt) {
+      return;
+    }
+
     if (
       state.map.mapLayoutAddress === 0
     ) {
@@ -531,6 +529,99 @@ export class PlayerRenderer {
     );
   }
 
+  private getWorldRoot(
+    state: GameState,
+  ): {
+    mapGroup: number;
+    mapNumber: number;
+  } | null {
+    switch (
+      state.game.region
+    ) {
+      case 'emerald':
+        return {
+          mapGroup: 0,
+          mapNumber: 9,
+        };
+
+      case 'firered':
+      case 'leafgreen':
+        return {
+          mapGroup: 3,
+          mapNumber: 0,
+        };
+
+      default:
+        return null;
+    }
+  }
+
+  private ensureWorldRoot(
+    state: GameState,
+  ): void {
+    if (
+      !this.worldCatalogBuilt ||
+      this.worldRootBuilt
+    ) {
+      return;
+    }
+
+    const root =
+      this.getWorldRoot(
+        state,
+      );
+
+    if (!root) {
+      return;
+    }
+
+    const positioned =
+      this.mapWorld.buildFrom(
+        root.mapGroup,
+        root.mapNumber,
+      );
+
+    if (
+      positioned <= 0
+    ) {
+      console.warn(
+        'Unable to build Gen 3 exterior world.',
+        {
+          game:
+            state.game.region,
+        },
+      );
+
+      return;
+    }
+
+    this.worldRootBuilt =
+      true;
+
+    for (
+      const map of
+        this.mapWorld.getPositionedMaps()
+    ) {
+      this.queueMapBuild(
+        map,
+      );
+    }
+
+    console.log(
+      'Gen 3 Exterior World:',
+      {
+        maps:
+          positioned,
+
+        root:
+          this.createMapKey(
+            root.mapGroup,
+            root.mapNumber,
+          ),
+      },
+    );
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
@@ -550,37 +641,54 @@ export class PlayerRenderer {
     this.activeMapKey =
       mapKey;
 
-    const alreadyPositioned =
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const isExterior =
       this.mapWorld.hasPosition(
         state.map.mapGroup,
         state.map.mapNumber,
       );
 
     if (
-      !alreadyPositioned
+      isExterior
     ) {
-      this.buildQueue.length =
-        0;
+      const maps =
+        this.mapWorld
+          .getPositionedMaps();
 
-      this.queuedMaps.clear();
+      for (
+        const map of maps
+      ) {
+        this.queueMapBuild(
+          map,
+        );
+      }
 
-      this.mapWorld.clearPositions();
-
-      this.mapWorld.buildFrom(
-        state.map.mapGroup,
-        state.map.mapNumber,
+      this.syncMapVisualPositions(
+        maps,
       );
+
+      this.setWorldView(
+        true,
+      );
+
+      console.log(
+        'Active Gen 3 Exterior Map:',
+        {
+          maps:
+            maps.length,
+
+          current:
+            mapKey,
+        },
+      );
+
+      return;
     }
-
-    const maps =
-      this.mapWorld
-        .getPositionedMaps();
-
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
 
     if (activeMap) {
       this.queueMapBuild(
@@ -588,33 +696,15 @@ export class PlayerRenderer {
       );
     }
 
-    for (
-      const map of maps
-    ) {
-      this.queueMapBuild(
-        map,
-      );
-    }
-
-    this.syncMapVisualPositions(
-      maps,
-    );
-
-    this.updateWorldVisibility(
-      maps,
+    this.setWorldView(
+      false,
     );
 
     console.log(
-      'Active World:',
+      'Active Gen 3 Interior Map:',
       {
-        maps:
-          maps.length,
-
         current:
           mapKey,
-
-        rebuilt:
-          !alreadyPositioned,
       },
     );
   }
@@ -736,33 +826,51 @@ export class PlayerRenderer {
     }
   }
 
-  private updateWorldVisibility(
-    maps: MapDefinition[],
+  private setWorldView(
+    exteriorVisible: boolean,
   ): void {
-    const positionedKeys =
-      new Set<string>();
-
-    for (
-      const map of maps
-    ) {
-      positionedKeys.add(
-        this.createMapKey(
-          map.mapGroup,
-          map.mapNumber,
-        ),
-      );
-    }
-
     for (
       const [
         key,
         visual,
       ] of this.mapVisuals
     ) {
+      const separator =
+        key.indexOf(':');
+
+      let isExterior =
+        false;
+
+      if (
+        separator > 0
+      ) {
+        const mapGroup =
+          Number(
+            key.slice(
+              0,
+              separator,
+            ),
+          );
+
+        const mapNumber =
+          Number(
+            key.slice(
+              separator + 1,
+            ),
+          );
+
+        isExterior =
+          this.mapWorld.hasPosition(
+            mapGroup,
+            mapNumber,
+          );
+      }
+
       const visible =
-        positionedKeys.has(
-          key,
-        );
+        exteriorVisible
+          ? isExterior
+          : key ===
+            this.activeMapKey;
 
       visual.baseMesh.visible =
         visible;
@@ -1035,7 +1143,19 @@ export class PlayerRenderer {
         .getWorldPosition(
           map.mapGroup,
           map.mapNumber,
-        );
+        ) ??
+      (
+        this.createMapKey(
+          map.mapGroup,
+          map.mapNumber,
+        ) ===
+        this.activeMapKey
+          ? {
+              x: 0,
+              y: 0,
+            }
+          : null
+      );
 
     if (!position) {
       geometry.dispose();
@@ -1376,6 +1496,10 @@ export class PlayerRenderer {
       );
 
       this.ensureCurrentMapDefinition(
+        state,
+      );
+
+      this.ensureWorldRoot(
         state,
       );
 
