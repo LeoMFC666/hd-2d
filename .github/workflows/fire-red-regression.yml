@@ -36,7 +36,7 @@ jobs:
 
       - name: Test FireRed catalog, world and render data
         run: |
-          cat > /tmp/test-fire-red.ts <<'TS'
+          cat > test-fire-red.ts <<'TS'
           import fs from 'node:fs';
           import { MapCatalog } from './src/gen3/world/MapCatalog';
           import { MapWorld } from './src/gen3/world/MapWorld';
@@ -531,7 +531,7 @@ jobs:
           );
           TS
 
-          npx tsx /tmp/test-fire-red.ts
+          npx tsx test-fire-red.ts
 
       - name: Start Vite
         run: |
