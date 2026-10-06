@@ -1,0 +1,16 @@
+name: world-diagnostic
+
+on:
+  push:
+    branches:
+      - diagnose/world-roms
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/world-diagnostic.mjs "Pokemon - Emerald Version (USA, Europe).gba" "Pokemon - FireRed Version (USA, Europe) (Rev 1).gba" "Pokemon Perfect Fire Red v5.5 ORIGINAL.gba"
