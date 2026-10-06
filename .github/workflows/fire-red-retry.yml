@@ -21,6 +21,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Prepare retry test
         run: |
+          mkdir -p public
+          cp "Pokemon - FireRed Version (USA, Europe) (Rev 1).gba" public/test-rom.gba
           cat > fire-red-retry-test.html <<'HTML'
           <!doctype html>
           <html>
@@ -54,7 +56,7 @@ jobs:
 
           const response =
             await fetch(
-              '/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba',
+              '/test-rom.gba',
             );
 
           const rom =
