@@ -55,6 +55,16 @@ const MAP_CONNECTIONS_DATA_OFFSET =
 const MAP_CONNECTION_SIZE =
   0x0c;
 
+// FireRed Rev. 1 keeps an unused beta map header at this ROM offset.
+// It is an earlier Navel Rock map and must not be selected when resolving
+// a live map only from layout id/address.
+const FIRERED_BETA_MAP_HEADER_OFFSETS:
+  Record<string, readonly number[]> = {
+    BPRE: [
+      0x00338378,
+    ],
+  };
+
 const MAX_MAP_DIMENSION =
   512;
 
@@ -1408,6 +1418,26 @@ export class MapCatalog {
       if (
         layoutAddress !==
         anchor.mapLayoutAddress
+      ) {
+        continue;
+      }
+
+      const gameCode =
+        this.readAscii(
+          romBytes,
+          GAME_CODE_OFFSET,
+          4,
+        );
+
+      const betaOffsets =
+        FIRERED_BETA_MAP_HEADER_OFFSETS[
+          gameCode
+        ] ?? [];
+
+      if (
+        betaOffsets.includes(
+          offset,
+        )
       ) {
         continue;
       }
