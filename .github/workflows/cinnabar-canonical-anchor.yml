@@ -1,0 +1,16 @@
+name: Cinnabar canonical anchor regression
+on:
+  push:
+    branches: [diagnose/cinnabar-canonical-anchor]
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: npm}
+      - run: npm ci
+      - run: npm install --no-save tsx
+      - run: npm run build
+      - run: npx tsx scripts/cinnabar-canonical-anchor.ts
