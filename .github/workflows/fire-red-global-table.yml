@@ -1,0 +1,100 @@
+name: FireRed global table v2
+on:
+  push:
+    branches:
+      - diagnose/fire-red-global-table-v2
+  pull_request:
+    branches:
+      - main
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - name: Diagnose global map table
+        run: |
+          cat > fire-red-global-table-test.ts <<'TS'
+          import fs from 'node:fs';
+          import { MapCatalog } from './src/gen3/world/MapCatalog';
+
+          const rom = new Uint8Array(
+            fs.readFileSync(
+              'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba'
+            )
+          );
+
+          const catalog = new MapCatalog();
+          const anyCatalog = catalog as any;
+
+          const anchorHeader = anyCatalog.findStaticMapHeader(
+            rom,
+            {
+              mapGroup: 3,
+              mapNumber: 0,
+              mapLayoutId: 78,
+              mapLayoutAddress: 0x082dd530,
+            },
+          );
+
+          console.log(
+            'STATIC_HEADER=0x' +
+            Number(anchorHeader).toString(16),
+          );
+
+          const lengths = [
+            5,123,60,66,4,6,8,10,6,8,20,10,8,2,10,4,2,
+            2,2,1,1,2,2,3,2,3,2,1,1,1,1,7,5,5,8,8,5,5,1,1,1,2,1
+          ];
+
+          const table = anyCatalog.findMapGroupsAddress(
+            rom,
+            anchorHeader,
+            3,
+            0,
+            lengths,
+          );
+
+          console.log(
+            'MAP_GROUPS_TABLE=0x' +
+            Number(table).toString(16),
+          );
+
+          if (table) {
+            console.log(
+              'TABLE_VALID=' +
+              anyCatalog.validateMapGroupsTable(
+                rom,
+                table,
+                lengths,
+              ),
+            );
+
+            const firstGroups = [];
+            for (let group = 0; group < lengths.length; group++) {
+              const addr =
+                anyCatalog.readU32(
+                  rom,
+                  table - 0x08000000 + group * 4,
+                );
+              firstGroups.push({
+                group,
+                address: '0x' + addr.toString(16),
+              });
+            }
+            console.log(
+              'GROUP_POINTERS=' +
+              JSON.stringify(firstGroups),
+            );
+          }
+
+          console.log(
+            'FINAL_FIRE_RED_GLOBAL_TABLE_DIAG=PASS',
+          );
+          TS
+
+          npx tsx fire-red-global-table-test.ts
