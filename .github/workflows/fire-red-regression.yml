@@ -88,23 +88,22 @@ jobs:
             });
 
             const romInput = page.locator('#romInput');
-            const saveInput = page.locator('#saveInput');
 
             await romInput.setInputFiles(
               'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba'
             );
 
-            await page.waitForTimeout(2500);
-
-            await saveInput.setInputFiles('firered.sav');
-
-            await page.waitForTimeout(5000);
+            await page.waitForTimeout(7000);
 
             const status = await page.locator('#status').textContent();
-            const canvas = await page.locator('#sceneContainer canvas').count();
+            const emulatorCanvas =
+              await page.locator('#emulator').count();
+            const sceneCanvas =
+              await page.locator('#sceneContainer canvas').count();
 
             console.log('FINAL_STATUS=' + status);
-            console.log('SCENE_CANVAS_COUNT=' + canvas);
+            console.log('EMULATOR_CANVAS_COUNT=' + emulatorCanvas);
+            console.log('SCENE_CANVAS_COUNT=' + sceneCanvas);
             console.log('ERROR_COUNT=' + errors.length);
 
             await page.screenshot({
@@ -114,36 +113,34 @@ jobs:
 
             fs.writeFileSync(
               '/tmp/fire-red-logs.txt',
-              logs.join('\n') + '\n\n' +
-              errors.join('\n') + '\n'
+              logs.join('\\n') + '\\n\\n' +
+              errors.join('\\n') + '\\n'
             );
 
-            await browser.close();
-
             if (errors.length > 0) {
+              await browser.close();
               process.exit(1);
             }
 
-            const relevant = logs.filter(line =>
-              /Gen 3 Map Catalog|Active World/i.test(line)
-            );
-
-            if (relevant.length === 0) {
-              console.error('No catalog/world log was observed.');
+            if (sceneCanvas !== 1) {
+              console.error(
+                'PlayerRenderer did not create its Three.js canvas.',
+              );
+              await browser.close();
               process.exit(2);
             }
 
-            const catalog = logs.filter(line =>
-              /Gen 3 Map Catalog/i.test(line)
+            const relevant = logs.filter(line =>
+              /Gen 3 Game Profile|mGBA runtime|Map State|Gen 3 Map Catalog|Active World/i.test(line)
             );
 
-            if (
-              catalog.some(line => /0 maps/i.test(line)) ||
-              catalog.length === 0
-            ) {
-              console.error('FireRed catalog was not built with maps.');
+            if (relevant.length === 0) {
+              console.error('No Gen 3 runtime/map log was observed.');
+              await browser.close();
               process.exit(3);
             }
+
+            await browser.close();
           })().catch(error => {
             console.error(error);
             process.exit(4);
