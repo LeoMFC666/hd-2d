@@ -102,6 +102,9 @@ export class PlayerRenderer {
   private activeMapKey =
     '';
 
+  private exteriorWorldVisible =
+    true;
+
   private frameId =
     0;
 
@@ -829,6 +832,9 @@ export class PlayerRenderer {
   private setWorldView(
     exteriorVisible: boolean,
   ): void {
+    this.exteriorWorldVisible =
+      exteriorVisible;
+
     for (
       const [
         key,
@@ -1219,11 +1225,20 @@ export class PlayerRenderer {
       visual,
     );
 
-    const visible =
+    const isExterior =
       this.mapWorld.hasPosition(
         map.mapGroup,
         map.mapNumber,
       );
+
+    const visible =
+      isExterior
+        ? this.exteriorWorldVisible
+        : (
+            !this.exteriorWorldVisible &&
+            mapKey ===
+              this.activeMapKey
+          );
 
     baseMesh.visible =
       visible;
