@@ -546,13 +546,13 @@ jobs:
 
       - name: Run FireRed browser check
         run: |
-          node - <<'NODE'
+          xvfb-run -a node - <<'NODE'
           const fs = require('fs');
           const { chromium } = require('playwright');
 
           (async () => {
             const browser = await chromium.launch({
-              headless: true,
+              headless: false,
               args: [
                 '--use-gl=swiftshader',
                 '--enable-webgl',
