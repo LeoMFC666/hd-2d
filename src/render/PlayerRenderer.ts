@@ -81,6 +81,10 @@ export class PlayerRenderer {
   private readonly queuedMaps =
     new Set<string>();
 
+  private currentState:
+    GameState | null =
+    null;
+
   private worldCatalogBuilt =
     false;
 
@@ -347,6 +351,59 @@ export class PlayerRenderer {
     );
   }
 
+  private isFireRedFamily(
+    state: GameState,
+  ): boolean {
+    return (
+      state.game.region === 'firered' ||
+      state.game.region === 'leafgreen'
+    );
+  }
+
+  private ensureCurrentMapDefinition(
+    state: GameState,
+  ): void {
+    if (
+      !this.isFireRedFamily(state) ||
+      state.map.mapLayoutAddress === 0 ||
+      state.map.width <= 0 ||
+      state.map.height <= 0 ||
+      state.map.mapDataAddress === 0 ||
+      state.map.primaryTilesetAddress === 0 ||
+      state.map.secondaryTilesetAddress === 0
+    ) {
+      return;
+    }
+
+    const existing =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const definition: MapDefinition = {
+      mapGroup: state.map.mapGroup,
+      mapNumber: state.map.mapNumber,
+      mapLayoutId: state.map.mapLayoutId,
+      mapHeaderAddress: state.map.mapHeaderAddress,
+      mapLayoutAddress: state.map.mapLayoutAddress,
+      mapDataAddress: state.map.mapDataAddress,
+      primaryTilesetAddress:
+        state.map.primaryTilesetAddress,
+      secondaryTilesetAddress:
+        state.map.secondaryTilesetAddress,
+      width: state.map.width,
+      height: state.map.height,
+      worldX: existing?.worldX ?? 0,
+      worldY: existing?.worldY ?? 0,
+      connections: existing?.connections ?? [],
+    };
+
+    this.mapCatalog.register(
+      definition,
+    );
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
@@ -386,6 +443,23 @@ export class PlayerRenderer {
         state.map.mapGroup,
         state.map.mapNumber,
       );
+
+      if (
+        this.isFireRedFamily(state) &&
+        !this.mapWorld.hasPosition(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        )
+      ) {
+        this.mapWorld.setWorldPosition(
+          state.map.mapGroup,
+          state.map.mapNumber,
+          {
+            x: 0,
+            y: 0,
+          },
+        );
+      }
     }
 
     const maps =
@@ -496,9 +570,19 @@ export class PlayerRenderer {
       return;
     }
 
-    this.buildMapVisual(
-      map,
-    );
+    try {
+      this.buildMapVisual(
+        map,
+      );
+    } catch (error) {
+      console.error(
+        'Failed to build map visual.',
+        {
+          key,
+          error,
+        },
+      );
+    }
   }
 
   private syncMapVisualPositions(
@@ -591,15 +675,97 @@ export class PlayerRenderer {
   private buildMapVisual(
     map: MapDefinition,
   ): void {
-    const renderData =
-      this.stateAdapter
-        .getMapRenderData(
-          map.mapDataAddress,
-          map.width,
-          map.height,
-          map.primaryTilesetAddress,
-          map.secondaryTilesetAddress,
+    let renderData:
+      {
+        blocks: ReturnType<
+          Gen3StateAdapter['getMapBlocks']
+        > extends infer B
+          ? B extends readonly unknown[]
+            ? B
+            : never
+          : never;
+        graphics: Map<
+          number,
+          Gen3MetatileGraphics | null
+        >;
+      } | null = null;
+
+    try {
+      renderData =
+        this.stateAdapter
+          .getMapRenderData(
+            map.mapDataAddress,
+            map.width,
+            map.height,
+            map.primaryTilesetAddress,
+            map.secondaryTilesetAddress,
+          );
+    } catch (error) {
+      console.warn(
+        'Static FireRed/LeafGreen map render failed; using active emulator map.',
+        {
+          key:
+            this.createMapKey(
+              map.mapGroup,
+              map.mapNumber,
+            ),
+          error,
+        },
+      );
+    }
+
+    const state =
+      this.currentState;
+
+    const isActiveMap =
+      state !== null &&
+      this.isFireRedFamily(state) &&
+      state.map.mapGroup === map.mapGroup &&
+      state.map.mapNumber === map.mapNumber;
+
+    if (
+      !renderData &&
+      isActiveMap
+    ) {
+      const blocks =
+        Array.from(
+          this.stateAdapter.getMapBlocks(),
         );
+
+      if (
+        blocks.length ===
+        map.width * map.height
+      ) {
+        const graphics =
+          new Map<
+            number,
+            Gen3MetatileGraphics | null
+          >();
+
+        for (
+          const block of blocks
+        ) {
+          if (
+            !graphics.has(
+              block.metatileId,
+            )
+          ) {
+            graphics.set(
+              block.metatileId,
+              this.stateAdapter
+                .getMetatileGraphics(
+                  block.metatileId,
+                ),
+            );
+          }
+        }
+
+        renderData = {
+          blocks,
+          graphics,
+        };
+      }
+    }
 
     if (!renderData) {
       return;
@@ -1187,11 +1353,24 @@ export class PlayerRenderer {
         this.stateAdapter
           .readState();
 
+      this.currentState =
+        state;
+
       this.ensureWorldCatalog(
         state,
       );
 
       if (
+        this.isFireRedFamily(state)
+      ) {
+        this.ensureCurrentMapDefinition(
+          state,
+        );
+
+        this.updateActiveWorld(
+          state,
+        );
+      } else if (
         this.worldCatalogBuilt
       ) {
         this.updateActiveWorld(
