@@ -466,24 +466,10 @@ export class MapCatalog {
       return 0;
     }
 
-    const staticHeader =
-      this.findStaticMapHeader(
+    const mapGroupsAddress =
+      this.findFireRedMapGroupsAddress(
         romBytes,
         anchor,
-      );
-
-    if (
-      staticHeader === 0
-    ) {
-      return 0;
-    }
-
-    const mapGroupsAddress =
-      this.findMapGroupsAddress(
-        romBytes,
-        staticHeader,
-        anchor.mapGroup,
-        anchor.mapNumber,
         groupLengths,
       );
 
@@ -1430,6 +1416,172 @@ export class MapCatalog {
         GBA_ROM_BASE +
         offset
       );
+    }
+
+    return 0;
+  }
+
+  private findFireRedMapGroupsAddress(
+    romBytes: Uint8Array,
+    anchor: Gen3MapCatalogAnchor,
+    groupLengths:
+      readonly number[],
+  ): number {
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          MAP_HEADER_SIZE;
+      offset += 4
+    ) {
+      const headerLayoutAddress =
+        this.readU32(
+          romBytes,
+          offset +
+            MAP_HEADER_LAYOUT_OFFSET,
+        );
+
+      if (
+        headerLayoutAddress !==
+        anchor.mapLayoutAddress
+      ) {
+        continue;
+      }
+
+      const headerLayoutId =
+        this.readU16(
+          romBytes,
+          offset +
+            MAP_HEADER_LAYOUT_ID_OFFSET,
+        );
+
+      if (
+        headerLayoutId !==
+        anchor.mapLayoutId
+      ) {
+        continue;
+      }
+
+      const candidateHeaderAddress =
+        GBA_ROM_BASE +
+        offset;
+
+      const groupAddress =
+        candidateHeaderAddress -
+        anchor.mapNumber * 4;
+
+      if (
+        !this.validateMapGroup(
+          romBytes,
+          groupAddress,
+          anchor.mapGroup,
+          anchor.mapNumber,
+          groupLengths,
+        )
+      ) {
+        continue;
+      }
+
+      const tableEntryOffset =
+        (
+          groupAddress -
+          GBA_ROM_BASE
+        );
+
+      const groupTableReferenceOffset =
+        tableEntryOffset;
+
+      for (
+        let tableOffset = 0;
+        tableOffset <=
+          romBytes.length -
+            groupLengths.length * 4;
+        tableOffset += 4
+      ) {
+        if (
+          this.readU32(
+            romBytes,
+            tableOffset,
+          ) !==
+          groupAddress
+        ) {
+          continue;
+        }
+
+        const candidateTableAddress =
+          GBA_ROM_BASE +
+          tableOffset -
+          anchor.mapGroup * 4;
+
+        if (
+          !this.validateMapGroupsTable(
+            romBytes,
+            candidateTableAddress,
+            groupLengths,
+          )
+        ) {
+          continue;
+        }
+
+        const resolvedGroupAddress =
+          this.readU32(
+            romBytes,
+            (
+              candidateTableAddress -
+              GBA_ROM_BASE
+            ) +
+              anchor.mapGroup * 4,
+          );
+
+        if (
+          resolvedGroupAddress !==
+          groupAddress
+        ) {
+          continue;
+        }
+
+        const resolvedHeaderAddress =
+          this.readU32(
+            romBytes,
+            (
+              resolvedGroupAddress -
+              GBA_ROM_BASE
+            ) +
+              anchor.mapNumber * 4,
+          );
+
+        if (
+          resolvedHeaderAddress !==
+          candidateHeaderAddress
+        ) {
+          continue;
+        }
+
+        const resolvedHeaderOffset =
+          resolvedHeaderAddress -
+          GBA_ROM_BASE;
+
+        if (
+          this.readU32(
+            romBytes,
+            resolvedHeaderOffset +
+              MAP_HEADER_LAYOUT_OFFSET,
+          ) !==
+          anchor.mapLayoutAddress ||
+          this.readU16(
+            romBytes,
+            resolvedHeaderOffset +
+              MAP_HEADER_LAYOUT_ID_OFFSET,
+          ) !==
+          anchor.mapLayoutId
+        ) {
+          continue;
+        }
+
+        void groupTableReferenceOffset;
+
+        return candidateTableAddress;
+      }
     }
 
     return 0;
