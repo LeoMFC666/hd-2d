@@ -296,6 +296,48 @@ async function main(): Promise<void> {
     throw new Error('Connected world expected 37 maps, got ' + connected);
   }
 
+  const positionedMaps = world.getPositionedMaps();
+  const rectangles = positionedMaps.map(map => {
+    const position = world.getWorldPosition(map.mapGroup, map.mapNumber);
+    if (!position) throw new Error('Missing world position for ' + map.mapGroup + ':' + map.mapNumber);
+    return {
+      key: map.mapGroup + ':' + map.mapNumber,
+      x: position.x,
+      y: position.y,
+      width: map.width,
+      height: map.height,
+    };
+  });
+
+  const overlaps: Array<{a:string;b:string;overlapX:number;overlapY:number}> = [];
+  for (let i = 0; i < rectangles.length; i++) {
+    for (let j = i + 1; j < rectangles.length; j++) {
+      const a = rectangles[i];
+      const b = rectangles[j];
+      const overlapX =
+        Math.min(a.x + a.width, b.x + b.width) -
+        Math.max(a.x, b.x);
+      const overlapY =
+        Math.min(a.y + a.height, b.y + b.height) -
+        Math.max(a.y, b.y);
+      if (overlapX > 0 && overlapY > 0) {
+        overlaps.push({
+          a: a.key,
+          b: b.key,
+          overlapX,
+          overlapY,
+        });
+      }
+    }
+  }
+
+  if (overlaps.length > 0) {
+    throw new Error(
+      'Connected world contains overlapping map rectangles: ' +
+      JSON.stringify(overlaps),
+    );
+  }
+
   if (
     !world.hasPosition(3, 0) ||
     !world.hasPosition(3, 19) ||
@@ -439,6 +481,10 @@ async function main(): Promise<void> {
     },
     renderHashStableAfterRuin: firstHash === secondHash,
     playerRendererHashMatchesDirect: finalHash === firstHash,
+    worldGeometry: {
+      overlapCount: overlaps.length,
+      positionedMapCount: positionedMaps.length,
+    },
     texture: {
       width: visual.baseTexture.image.width,
       height: visual.baseTexture.image.height,
