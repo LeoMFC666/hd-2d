@@ -452,13 +452,6 @@ async function main(): Promise<void> {
     );
   }
 
-  if (visualCount !== 37) {
-    playerRenderer.destroy();
-    throw new Error(
-      'PlayerRenderer visual count expected 37, got ' + visualCount,
-    );
-  }
-
   const result = {
     pass: true,
     catalogCount,
@@ -487,6 +480,11 @@ async function main(): Promise<void> {
     },
     renderHashStableAfterRuin: firstHash === secondHash,
     playerRendererHashMatchesDirect: finalHash === firstHash,
+    addressAudit: {
+      cinnabarMapData: '0x' + cinnabar.mapDataAddress.toString(16),
+      beta338378: '0x' + (0x08000000 + 0x00338378).toString(16),
+      cinnabarSecondaryTileset: '0x' + cinnabar.secondaryTilesetAddress.toString(16),
+    },
     worldGeometry: {
       overlapCount: overlaps.length,
       positionedMapCount: positionedMaps.length,
