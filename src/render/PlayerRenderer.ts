@@ -87,6 +87,15 @@ export class PlayerRenderer {
   private worldCatalogBuildAttempted =
     false;
 
+  private worldCatalogLastAttemptKey =
+    '';
+
+  private worldCatalogLastAttemptAt =
+    0;
+
+  private liveMapSignature =
+    '';
+
   private activeMapKey =
     '';
 
@@ -291,21 +300,46 @@ export class PlayerRenderer {
     state: GameState,
   ): void {
     if (
-      this.worldCatalogBuilt ||
-      this.worldCatalogBuildAttempted
+      this.worldCatalogBuilt
     ) {
       return;
     }
 
     if (
-      state.map
-        .mapLayoutAddress === 0
+      state.map.mapLayoutAddress === 0
+    ) {
+      return;
+    }
+
+    const attemptKey =
+      [
+        state.map.mapGroup,
+        state.map.mapNumber,
+        state.map.mapLayoutId,
+        state.map.mapLayoutAddress,
+      ].join(':');
+
+    const now =
+      performance.now();
+
+    if (
+      this.worldCatalogBuildAttempted &&
+      this.worldCatalogLastAttemptKey ===
+        attemptKey &&
+      now - this.worldCatalogLastAttemptAt <
+        1000
     ) {
       return;
     }
 
     this.worldCatalogBuildAttempted =
       true;
+
+    this.worldCatalogLastAttemptKey =
+      attemptKey;
+
+    this.worldCatalogLastAttemptAt =
+      now;
 
     const count =
       this.mapCatalog
@@ -330,8 +364,27 @@ export class PlayerRenderer {
     if (
       count <= 0
     ) {
+      this.worldCatalogBuilt =
+        false;
+
       console.warn(
-        'Unable to build Gen 3 map catalog.',
+        'Unable to build Gen 3 map catalog; retrying.',
+        {
+          game:
+            state.game.region,
+
+          mapGroup:
+            state.map.mapGroup,
+
+          mapNumber:
+            state.map.mapNumber,
+
+          mapLayoutId:
+            state.map.mapLayoutId,
+
+          mapLayoutAddress:
+            `0x${state.map.mapLayoutAddress.toString(16)}`,
+        },
       );
 
       return;
@@ -339,6 +392,19 @@ export class PlayerRenderer {
 
     this.worldCatalogBuilt =
       true;
+
+    this.activeMapKey =
+      '';
+
+    this.liveMapSignature =
+      '';
+
+    this.buildQueue.length =
+      0;
+
+    this.queuedMaps.clear();
+
+    this.mapWorld.clearPositions();
 
     console.log(
       'Gen 3 Map Catalog:',
@@ -356,16 +422,6 @@ export class PlayerRenderer {
       return;
     }
 
-    const existing =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    if (existing) {
-      return;
-    }
-
     if (
       state.map.width <= 0 ||
       state.map.height <= 0 ||
@@ -376,7 +432,38 @@ export class PlayerRenderer {
       return;
     }
 
-    this.mapCatalog.register({
+    const existing =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const connections =
+      existing?.connections ??
+      [];
+
+    const signature =
+      [
+        state.map.mapGroup,
+        state.map.mapNumber,
+        state.map.mapLayoutId,
+        state.map.mapHeaderAddress,
+        state.map.mapLayoutAddress,
+        state.map.mapDataAddress,
+        state.map.primaryTilesetAddress,
+        state.map.secondaryTilesetAddress,
+        state.map.width,
+        state.map.height,
+      ].join(':');
+
+    if (
+      signature ===
+      this.liveMapSignature
+    ) {
+      return;
+    }
+
+    const definition: MapDefinition = {
       mapGroup:
         state.map.mapGroup,
 
@@ -408,25 +495,38 @@ export class PlayerRenderer {
         state.map.height,
 
       worldX:
-        0,
+        existing?.worldX ?? 0,
 
       worldY:
-        0,
+        existing?.worldY ?? 0,
 
-      connections: [],
-    });
+      connections,
+    };
 
-    console.warn(
-      'Using current Gen 3 map fallback.',
+    this.mapCatalog.register(
+      definition,
+    );
+
+    this.liveMapSignature =
+      signature;
+
+    console.log(
+      'Live Gen 3 map synchronized:',
       {
-        mapGroup:
-          state.map.mapGroup,
+        key:
+          this.createMapKey(
+            state.map.mapGroup,
+            state.map.mapNumber,
+          ),
 
-        mapNumber:
-          state.map.mapNumber,
-
-        mapLayoutId:
+        layoutId:
           state.map.mapLayoutId,
+
+        mapDataAddress:
+          `0x${state.map.mapDataAddress.toString(16)}`,
+
+        preservedConnections:
+          connections.length,
       },
     );
   }

@@ -61,6 +61,15 @@ const MAX_MAP_DIMENSION =
 const MAX_CONNECTION_COUNT =
   64;
 
+const SUPPORTED_REVISIONS:
+  Record<string, readonly number[]> = {
+  BPRE: [0, 1],
+  BPGE: [0, 1],
+  BPEE: [0],
+  AXVE: [0],
+  AXPE: [0],
+};
+
 const MAP_DIRECTION_BY_VALUE:
   Record<
     number,
@@ -381,8 +390,11 @@ export class MapCatalog {
       ];
 
     if (
-      revision !== 0 ||
-      !groupLengths
+      !groupLengths ||
+      !this.isSupportedRevision(
+        gameCode,
+        revision,
+      )
     ) {
       return 0;
     }
@@ -1014,6 +1026,19 @@ export class MapCatalog {
     }
 
     return result;
+  }
+
+  private isSupportedRevision(
+    gameCode: string,
+    revision: number,
+  ): boolean {
+    return (
+      SUPPORTED_REVISIONS[
+        gameCode
+      ]?.includes(
+        revision,
+      ) ?? false
+    );
   }
 
   private isValidMapDimension(

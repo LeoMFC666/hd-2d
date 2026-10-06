@@ -51,6 +51,7 @@ export interface Gen3GameProfile {
   gameCode: string;
   gameCodes: readonly string[];
   revision: number;
+  supportedRevisions: readonly number[];
   title: string;
   memory: Gen3MemoryLayout;
 }
@@ -146,6 +147,10 @@ export const GEN3_PROFILES:
     revision:
       0,
 
+    supportedRevisions: [
+      0,
+    ],
+
     title:
       'Pokémon Ruby',
 
@@ -178,6 +183,10 @@ export const GEN3_PROFILES:
     revision:
       0,
 
+    supportedRevisions: [
+      0,
+    ],
+
     title:
       'Pokémon Sapphire',
 
@@ -209,6 +218,10 @@ export const GEN3_PROFILES:
 
     revision:
       0,
+
+    supportedRevisions: [
+      0,
+    ],
 
     title:
       'Pokémon Emerald',
@@ -250,6 +263,11 @@ export const GEN3_PROFILES:
     revision:
       0,
 
+    supportedRevisions: [
+      0,
+      1,
+    ],
+
     title:
       'Pokémon FireRed',
 
@@ -290,6 +308,11 @@ export const GEN3_PROFILES:
     revision:
       0,
 
+    supportedRevisions: [
+      0,
+      1,
+    ],
+
     title:
       'Pokémon LeafGreen',
 
@@ -326,10 +349,11 @@ export function detectGen3Game(
       (
         candidate,
       ) =>
-        candidate.revision ===
-          revision &&
         candidate.gameCodes.includes(
           gameCode,
+        ) &&
+        candidate.supportedRevisions.includes(
+          revision,
         ),
     );
 
