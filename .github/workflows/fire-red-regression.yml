@@ -34,6 +34,505 @@ jobs:
           npm install --no-save playwright@1.55.0
           npx playwright install --with-deps chromium
 
+      - name: Test FireRed catalog, world and render data
+        run: |
+          cat > /tmp/test-fire-red.ts <<'TS'
+          import fs from 'node:fs';
+          import { MapCatalog } from './src/gen3/world/MapCatalog';
+          import { MapWorld } from './src/gen3/world/MapWorld';
+          import { Gen3StateAdapter } from './src/gen3/Gen3StateAdapter';
+          import type { MemoryReader } from './src/gen3/MemoryReader';
+
+          const romPath =
+            'Pokemon - FireRed Version (USA, Europe) (Rev 1).gba';
+
+          const rom = new Uint8Array(
+            fs.readFileSync(romPath),
+          );
+
+          const GBA_ROM_BASE = 0x08000000;
+
+          const readU8 = (address: number): number => {
+            const offset =
+              address >= GBA_ROM_BASE
+                ? address - GBA_ROM_BASE
+                : -1;
+
+            return (
+              offset >= 0 &&
+              offset < rom.length
+            )
+              ? rom[offset]
+              : 0;
+          };
+
+          const memoryReader: MemoryReader = {
+            readU8,
+
+            readU16(address: number): number {
+              return (
+                readU8(address) |
+                (readU8(address + 1) << 8)
+              );
+            },
+
+            readU32(address: number): number {
+              return (
+                (
+                  readU8(address) |
+                  (readU8(address + 1) << 8) |
+                  (readU8(address + 2) << 16) |
+                  (readU8(address + 3) * 0x1000000)
+                ) >>> 0
+              );
+            },
+
+            readRange(address: number, length: number): Uint8Array {
+              const bytes = new Uint8Array(length);
+
+              for (
+                let index = 0;
+                index < length;
+                index++
+              ) {
+                bytes[index] =
+                  readU8(address + index);
+              }
+
+              return bytes;
+            },
+          };
+
+          const gameCode =
+            new TextDecoder().decode(
+              rom.subarray(0xac, 0xb0),
+            );
+
+          const revision =
+            rom[0xbc] ?? 0;
+
+          console.log(
+            'ROM:',
+            {
+              size: rom.length,
+              gameCode,
+              revision,
+            },
+          );
+
+          const directions: Record<
+            number,
+            string
+          > = {
+            1: 'SOUTH',
+            2: 'NORTH',
+            3: 'WEST',
+            4: 'EAST',
+          };
+
+          const groups = [
+            5, 123, 60, 66, 4, 6, 8, 10, 6, 8,
+            20, 10, 8, 2, 10, 4, 2, 2, 2, 1,
+            1, 2, 2, 3, 2, 3, 2, 1, 1, 1, 1,
+            7, 5, 5, 8, 8, 5, 5, 1, 1, 1, 2, 1,
+          ];
+
+          const validRomPointer = (
+            address: number,
+            size = 1,
+          ): boolean => {
+            if (address < GBA_ROM_BASE) {
+              return false;
+            }
+
+            const offset =
+              address - GBA_ROM_BASE;
+
+            return (
+              offset >= 0 &&
+              offset + size <= rom.length
+            );
+          };
+
+          type HeaderCandidate = {
+            header: number;
+            layout: number;
+            layoutId: number;
+            width: number;
+            height: number;
+            connections: Array<{
+              direction: string;
+              mapGroup: number;
+              mapNumber: number;
+              offset: number;
+            }>;
+          };
+
+          const candidates: HeaderCandidate[] = [];
+
+          for (
+            let offset = 0;
+            offset <= rom.length - 0x1c;
+            offset += 4
+          ) {
+            const header =
+              GBA_ROM_BASE + offset;
+
+            const layout =
+              memoryReader.readU32(header);
+
+            if (
+              !validRomPointer(
+                layout,
+                0x18,
+              )
+            ) {
+              continue;
+            }
+
+            const width =
+              memoryReader.readU32(layout);
+
+            const height =
+              memoryReader.readU32(layout + 4);
+
+            if (
+              width < 1 ||
+              height < 1 ||
+              width > 512 ||
+              height > 512
+            ) {
+              continue;
+            }
+
+            const map =
+              memoryReader.readU32(layout + 0x0c);
+
+            const primary =
+              memoryReader.readU32(layout + 0x10);
+
+            const secondary =
+              memoryReader.readU32(layout + 0x14);
+
+            if (
+              !validRomPointer(
+                map,
+                width * height * 2,
+              ) ||
+              !validRomPointer(
+                primary,
+                4,
+              ) ||
+              !validRomPointer(
+                secondary,
+                4,
+              )
+            ) {
+              continue;
+            }
+
+            const connectionsAddress =
+              memoryReader.readU32(header + 0x0c);
+
+            const connections = [];
+
+            if (
+              connectionsAddress !== 0
+            ) {
+              if (
+                !validRomPointer(
+                  connectionsAddress,
+                  8,
+                )
+              ) {
+                continue;
+              }
+
+              const count =
+                memoryReader.readU32(
+                  connectionsAddress,
+                ) | 0;
+
+              if (
+                count < 0 ||
+                count > 64
+              ) {
+                continue;
+              }
+
+              if (count > 0) {
+                const data =
+                  memoryReader.readU32(
+                    connectionsAddress + 4,
+                  );
+
+                if (
+                  !validRomPointer(
+                    data,
+                    count * 0x0c,
+                  )
+                ) {
+                  continue;
+                }
+
+                for (
+                  let index = 0;
+                  index < count;
+                  index++
+                ) {
+                  const entry =
+                    data +
+                    index * 0x0c;
+
+                  const direction =
+                    directions[
+                      memoryReader.readU8(entry)
+                    ];
+
+                  const mapGroup =
+                    memoryReader.readU8(
+                      entry + 8,
+                    );
+
+                  const mapNumber =
+                    memoryReader.readU8(
+                      entry + 9,
+                    );
+
+                  if (
+                    !direction ||
+                    mapGroup >= groups.length ||
+                    mapNumber >= groups[mapGroup]
+                  ) {
+                    continue;
+                  }
+
+                  connections.push({
+                    direction,
+                    mapGroup,
+                    mapNumber,
+                    offset:
+                      memoryReader.readU32(
+                        entry + 4,
+                      ) | 0,
+                  });
+                }
+              }
+            }
+
+            candidates.push({
+              header,
+              layout,
+              layoutId:
+                memoryReader.readU16(
+                  header + 0x12,
+                ),
+              width,
+              height,
+              connections,
+            });
+          }
+
+          const palletCandidates =
+            candidates.filter(candidate =>
+              candidate.connections.some(
+                connection =>
+                  connection.mapGroup === 3 &&
+                  connection.mapNumber === 19,
+              ) &&
+              candidate.connections.some(
+                connection =>
+                  connection.mapGroup === 3 &&
+                  connection.mapNumber === 39,
+              ),
+            );
+
+          console.log(
+            'Pallet candidates:',
+            palletCandidates.slice(0, 10),
+            'count=',
+            palletCandidates.length,
+          );
+
+          if (
+            palletCandidates.length === 0
+          ) {
+            throw new Error(
+              'Could not locate Pallet Town header candidate in ROM.',
+            );
+          }
+
+          const anchor =
+            palletCandidates[0];
+
+          const catalog =
+            new MapCatalog();
+
+          const count =
+            catalog.buildGen3FromRom(
+              rom,
+              {
+                mapGroup: 3,
+                mapNumber: 0,
+                mapLayoutId:
+                  anchor.layoutId,
+                mapLayoutAddress:
+                  anchor.layout,
+              },
+            );
+
+          console.log(
+            'FireRed catalog count:',
+            count,
+          );
+
+          if (
+            count <= 0 ||
+            !catalog.has(3, 0)
+          ) {
+            throw new Error(
+              'FireRed MapCatalog failed to register Pallet Town.',
+            );
+          }
+
+          const pallet =
+            catalog.get(3, 0);
+
+          const route1 =
+            catalog.get(3, 19);
+
+          console.log(
+            'Registered overworld anchors:',
+            {
+              pallet: pallet
+                ? {
+                    width: pallet.width,
+                    height: pallet.height,
+                    layout:
+                      '0x' +
+                      pallet.mapLayoutAddress.toString(16),
+                    mapData:
+                      '0x' +
+                      pallet.mapDataAddress.toString(16),
+                    connections:
+                      pallet.connections,
+                  }
+                : null,
+              route1:
+                route1
+                  ? {
+                      width: route1.width,
+                      height: route1.height,
+                    }
+                  : null,
+            },
+          );
+
+          if (!route1) {
+            throw new Error(
+              'FireRed Route 1 was not registered.',
+            );
+          }
+
+          const world =
+            new MapWorld(catalog);
+
+          const worldCount =
+            world.buildFrom(3, 0);
+
+          console.log(
+            'FireRed world count:',
+            worldCount,
+            'positioned=',
+            world.getPositionedMaps().length,
+            'Route1 positioned=',
+            world.hasPosition(3, 19),
+            'Route21 positioned=',
+            world.hasPosition(3, 39),
+          );
+
+          if (
+            worldCount < 3 ||
+            !world.hasPosition(3, 19)
+          ) {
+            throw new Error(
+              'FireRed connection graph did not reconstruct the overworld from Pallet Town.',
+            );
+          }
+
+          const adapter =
+            new Gen3StateAdapter(
+              memoryReader,
+              rom,
+            );
+
+          const renderTargets = [
+            [3, 0],
+            [3, 19],
+            [3, 39],
+          ] as const;
+
+          for (
+            const [mapGroup, mapNumber] of
+              renderTargets
+          ) {
+            const map =
+              catalog.get(
+                mapGroup,
+                mapNumber,
+              );
+
+            if (!map) {
+              continue;
+            }
+
+            const data =
+              adapter.getMapRenderData(
+                map.mapDataAddress,
+                map.width,
+                map.height,
+                map.primaryTilesetAddress,
+                map.secondaryTilesetAddress,
+              );
+
+            console.log(
+              'FireRed render data:',
+              {
+                mapGroup,
+                mapNumber,
+                blocks:
+                  data?.blocks.length ?? 0,
+                graphics:
+                  data?.graphics.size ?? 0,
+                width:
+                  map.width,
+                height:
+                  map.height,
+              },
+            );
+
+            if (
+              !data ||
+              data.blocks.length !==
+                map.width * map.height ||
+              data.graphics.size === 0
+            ) {
+              throw new Error(
+                'FireRed render data generation failed for map ' +
+                mapGroup +
+                ':' +
+                mapNumber,
+              );
+            }
+          }
+
+          console.log(
+            'FIRERED_CATALOG_WORLD_RENDER_TEST=PASS',
+          );
+          TS
+
+          npx tsx /tmp/test-fire-red.ts
+
       - name: Start Vite
         run: |
           nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
