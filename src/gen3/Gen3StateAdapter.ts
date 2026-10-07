@@ -331,10 +331,43 @@ export class Gen3StateAdapter {
     const saveBlock1Address =
       this.resolveSaveBlock1Address();
 
-    this.readMapState(
-      state,
-      saveBlock1Address,
-    );
+    const mapStateKey =
+      this.readMapStateKey(
+        saveBlock1Address,
+      );
+
+    if (
+      this.cachedMapState &&
+      mapStateKey ===
+        this.cachedMapStateKey &&
+      this.cachedMapState.mapLayoutAddress !==
+        0
+    ) {
+      state.map =
+        this.cachedMapState;
+    } else {
+      this.readMapState(
+        state,
+        saveBlock1Address,
+      );
+
+      if (
+        state.map.mapLayoutAddress !==
+        0
+      ) {
+        this.cachedMapState =
+          state.map;
+
+        this.cachedMapStateKey =
+          mapStateKey;
+      } else {
+        this.cachedMapState =
+          null;
+
+        this.cachedMapStateKey =
+          mapStateKey;
+      }
+    }
 
     this.readPlayerPositionFromSaveBlock(
       state,
