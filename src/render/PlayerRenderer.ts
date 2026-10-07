@@ -28,6 +28,10 @@ import {
 const GBA_METATILE_PIXELS =
   16;
 
+const FRLG_BETA_CINNABAR_MAP_DATA =
+  0x08000000 +
+  0x00338378;
+
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
@@ -772,6 +776,36 @@ export class PlayerRenderer {
       return;
     }
 
+    if (
+      this.isForbiddenFireRedMapData({
+        mapGroup:
+          state.map.mapGroup,
+        mapNumber:
+          state.map.mapNumber,
+        mapLayoutId:
+          state.map.mapLayoutId,
+        mapHeaderAddress:
+          state.map.mapHeaderAddress,
+        mapLayoutAddress:
+          state.map.mapLayoutAddress,
+        mapDataAddress:
+          state.map.mapDataAddress,
+        primaryTilesetAddress:
+          state.map.primaryTilesetAddress,
+        secondaryTilesetAddress:
+          state.map.secondaryTilesetAddress,
+        width:
+          state.map.width,
+        height:
+          state.map.height,
+        worldX: 0,
+        worldY: 0,
+        connections: [],
+      })
+    ) {
+      return;
+    }
+
     const existing =
       this.mapCatalog.get(
         state.map.mapGroup,
@@ -843,6 +877,104 @@ export class PlayerRenderer {
       this.mapVisuals.get(
         '3:8',
       );
+
+    if (
+      definition &&
+      (
+        this.isForbiddenFireRedMapData(
+          definition,
+        ) ||
+        (
+          visual &&
+          this.isForbiddenFireRedMapData({
+            mapGroup: 3,
+            mapNumber: 8,
+            mapLayoutId:
+              definition.mapLayoutId,
+            mapHeaderAddress:
+              visual.mapDataAddress,
+            mapLayoutAddress:
+              definition.mapLayoutAddress,
+            mapDataAddress:
+              visual.mapDataAddress,
+            primaryTilesetAddress:
+              definition.primaryTilesetAddress,
+            secondaryTilesetAddress:
+              definition.secondaryTilesetAddress,
+            width:
+              definition.width,
+            height:
+              definition.height,
+            worldX:
+              definition.worldX,
+            worldY:
+              definition.worldY,
+            connections:
+              definition.connections,
+          })
+        )
+      )
+    ) {
+      if (visual) {
+        this.root.remove(
+          visual.baseMesh,
+        );
+        this.root.remove(
+          visual.overlayMesh,
+        );
+        visual.baseTexture.dispose();
+        visual.overlayTexture.dispose();
+        visual.geometry.dispose();
+        visual.overlayMesh.geometry.dispose();
+
+        const baseMaterial =
+          visual.baseMesh.material;
+
+        if (
+          Array.isArray(
+            baseMaterial,
+          )
+        ) {
+          baseMaterial.forEach(
+            material =>
+              material.dispose(),
+          );
+        } else {
+          baseMaterial.dispose();
+        }
+
+        const overlayMaterial =
+          visual.overlayMesh.material;
+
+        if (
+          Array.isArray(
+            overlayMaterial,
+          )
+        ) {
+          overlayMaterial.forEach(
+            material =>
+              material.dispose(),
+          );
+        } else {
+          overlayMaterial.dispose();
+        }
+
+        this.mapVisuals.delete(
+          '3:8',
+        );
+
+        this.tilesetAnimationController
+          .unregisterMap(
+            '3:8',
+          );
+      }
+
+      this.queuedMaps.delete(
+        '3:8',
+      );
+
+      return;
+    }
 
     if (
       !definition ||
@@ -1044,6 +1176,14 @@ export class PlayerRenderer {
   private queueMapBuild(
     map: MapDefinition,
   ): void {
+    if (
+      this.isForbiddenFireRedMapData(
+        map,
+      )
+    ) {
+      return;
+    }
+
     const key =
       this.createMapKey(
         map.mapGroup,
@@ -1207,6 +1347,13 @@ export class PlayerRenderer {
   private buildMapVisual(
     map: MapDefinition,
   ): void {
+    if (
+      this.isForbiddenFireRedMapData(
+        map,
+      )
+    ) {
+      return;
+    }
     type MapRenderData =
       NonNullable<
         ReturnType<
@@ -1832,6 +1979,21 @@ export class PlayerRenderer {
       this.lastMapLayoutId =
         state.map.mapLayoutId;
     }
+  }
+
+  private isForbiddenFireRedMapData(
+    map: MapDefinition,
+  ): boolean {
+    return (
+      (
+        map.mapGroup === 3 &&
+        map.mapNumber === 8
+      ) &&
+      (
+        map.mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+      )
+    );
   }
 
   private createMapKey(
