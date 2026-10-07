@@ -1,0 +1,17 @@
+name: Cinnabar pointer diagnostic
+on:
+ push: {branches: [diagnose/cinnabar-pointer]}
+ workflow_dispatch:
+jobs:
+ audit:
+  runs-on: ubuntu-latest
+  steps:
+   - uses: actions/checkout@v4
+   - uses: actions/setup-node@v4
+     with: {node-version: 24, cache: npm}
+   - run: npm ci
+   - run: npm install --no-save playwright
+   - run: npx playwright install chromium
+   - run: npm run build
+   - run: nohup npm run dev -- --host 127.0.0.1 >/tmp/vite.log 2>&1 &
+   - run: node --input-type=module -e "import {chromium} from 'playwright'; const b=await chromium.launch({headless:true}); const p=await b.newPage(); await p.goto('http://127.0.0.1:5173/tests/cinnabar-pointer.html'); await p.waitForFunction(()=>document.body.dataset.pass==='true'); console.log(await p.locator('#out').innerText()); await b.close()"
