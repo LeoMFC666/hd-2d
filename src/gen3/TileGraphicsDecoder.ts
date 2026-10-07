@@ -10,6 +10,12 @@ const LZ77_HEADER = 0x10;
 export class TileGraphicsDecoder {
   private readonly memoryReader: MemoryReader;
 
+  private readonly romBytes:
+    Uint8Array | null;
+
+  private readonly romDataView:
+    DataView | null;
+
   private readonly decompressedTilesCache =
     new Map<string, Uint8Array>();
 
@@ -18,9 +24,22 @@ export class TileGraphicsDecoder {
 
   constructor(
     memoryReader: MemoryReader,
+    romBytes?: Uint8Array,
   ) {
     this.memoryReader =
       memoryReader;
+
+    this.romBytes =
+      romBytes ?? null;
+
+    this.romDataView =
+      romBytes
+        ? new DataView(
+            romBytes.buffer,
+            romBytes.byteOffset,
+            romBytes.byteLength,
+          )
+        : null;
   }
 
   readTile(
@@ -148,9 +167,28 @@ export class TileGraphicsDecoder {
   private readRawTiles(
     address: number,
   ): Uint8Array {
+    const length =
+      1024 * TILE_BYTES;
+
+    const romOffset =
+      this.getRomOffset(
+        address,
+        length,
+      );
+
+    if (
+      romOffset >= 0 &&
+      this.romBytes
+    ) {
+      return this.romBytes.slice(
+        romOffset,
+        romOffset + length,
+      );
+    }
+
     return this.memoryReader.readRange(
       address,
-      1024 * TILE_BYTES,
+      length,
     );
   }
 
@@ -158,9 +196,7 @@ export class TileGraphicsDecoder {
     address: number,
   ): Uint8Array {
     const header =
-      this.memoryReader.readU8(
-        address,
-      );
+      this.readByte(address);
 
     if (header !== LZ77_HEADER) {
       throw new Error(
@@ -169,13 +205,13 @@ export class TileGraphicsDecoder {
     }
 
     const decompressedSize =
-      this.memoryReader.readU8(
+      this.readByte(
         address + 1,
       ) |
-      (this.memoryReader.readU8(
+      (this.readByte(
         address + 2,
       ) << 8) |
-      (this.memoryReader.readU8(
+      (this.readByte(
         address + 3,
       ) << 16);
 
@@ -202,7 +238,7 @@ export class TileGraphicsDecoder {
       decompressedSize
     ) {
       const flags =
-        this.memoryReader.readU8(
+        this.readByte(
           address + sourceOffset,
         );
 
@@ -223,9 +259,8 @@ export class TileGraphicsDecoder {
           output[
             destinationOffset
           ] =
-            this.memoryReader.readU8(
-              address +
-                sourceOffset,
+            this.readByte(
+              address + sourceOffset,
             );
 
           sourceOffset++;
@@ -235,16 +270,14 @@ export class TileGraphicsDecoder {
         }
 
         const first =
-          this.memoryReader.readU8(
+          this.readByte(
             address +
               sourceOffset,
           );
 
         const second =
-          this.memoryReader.readU8(
-            address +
-              sourceOffset +
-              1,
+          this.readByte(
+            address + sourceOffset + 1,
           );
 
         sourceOffset += 2;
@@ -296,6 +329,50 @@ export class TileGraphicsDecoder {
     }
 
     return output;
+  }
+
+  private getRomOffset(
+    address: number,
+    length = 1,
+  ): number {
+    if (
+      !this.romBytes ||
+      address < 0x08000000
+    ) {
+      return -1;
+    }
+
+    const offset =
+      address -
+      0x08000000;
+
+    return (
+      offset >= 0 &&
+      offset + length <=
+        this.romBytes.length
+    )
+      ? offset
+      : -1;
+  }
+
+  private readByte(
+    address: number,
+  ): number {
+    const offset =
+      this.getRomOffset(
+        address,
+      );
+
+    if (
+      offset >= 0 &&
+      this.romBytes
+    ) {
+      return this.romBytes[offset];
+    }
+
+    return this.memoryReader.readU8(
+      address,
+    );
   }
 
   private decode4bppTile(
