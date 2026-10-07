@@ -501,6 +501,20 @@ export class Gen3StateAdapter {
       }
     }
 
+    // Do not brute-force scan EWRAM/ROM while the emulator is still
+    // rebuilding its overworld after Continue Saved Game. Those scans are
+    // extremely expensive through the mGBA memory bus and can starve the
+    // emulator exactly while an indoor save is being resumed.
+    //
+    // Emerald's real engine restores gMapHeader from the save location and
+    // GetMapLayout() from gMapLayouts[mapLayoutId - 1]. Once the runtime
+    // header is rebuilt, the active-header path above resolves the map.
+    // PlayerRenderer can meanwhile use its already-built static ROM catalog
+    // (keyed by mapGroup/mapNumber) to render the saved indoor map.
+    if (this.profile?.id === 'emerald') {
+      return;
+    }
+
     const now = performance.now();
     const lookupKey =
       `${mapGroup}:${mapNumber}:${mapLayoutId}`;
