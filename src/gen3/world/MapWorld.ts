@@ -153,6 +153,9 @@ export class MapWorld {
       return 0;
     }
 
+    this.positionedMapsDirty =
+      true;
+
     const startKey =
       this.createKey(
         start.mapGroup,
