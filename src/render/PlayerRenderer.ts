@@ -1927,43 +1927,18 @@ export class PlayerRenderer {
       z: number;
     },
   ): void {
-    const targetX =
-      position.x;
-
-    const targetZ =
-      position.z;
-
-    const cameraTargetX =
-      targetX;
-
-    const cameraTargetY =
-      10;
-
-    const cameraTargetZ =
-      targetZ + 11;
-
-    this.camera.position.x +=
-      (
-        cameraTargetX -
-        this.camera.position.x
-      ) * 0.12;
-
-    this.camera.position.y +=
-      (
-        cameraTargetY -
-        this.camera.position.y
-      ) * 0.12;
-
-    this.camera.position.z +=
-      (
-        cameraTargetZ -
-        this.camera.position.z
-      ) * 0.12;
+    // Snap the camera immediately. Do not interpolate camera movement
+    // during normal movement, map transitions, or interior warps.
+    this.camera.position.set(
+      position.x,
+      10,
+      position.z + 11,
+    );
 
     this.camera.lookAt(
-      targetX,
+      position.x,
       0,
-      targetZ,
+      position.z,
     );
   }
 
