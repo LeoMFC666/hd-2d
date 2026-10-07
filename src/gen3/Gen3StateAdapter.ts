@@ -2822,9 +2822,33 @@ export class Gen3StateAdapter {
 
   private isValidRomPointer(
     address: number,
+    size = 1,
   ): boolean {
+    if (
+      address < GBA_ROM_BASE
+    ) {
+      return false;
+    }
+
+    const offset =
+      address -
+      GBA_ROM_BASE;
+
+    if (
+      offset < 0 ||
+      size < 0
+    ) {
+      return false;
+    }
+
+    if (this.romBytes) {
+      return (
+        offset + size <=
+        this.romBytes.length
+      );
+    }
+
     return (
-      address >= 0x08000000 &&
       address < 0x0a000000
     );
   }

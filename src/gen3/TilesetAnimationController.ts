@@ -1799,6 +1799,18 @@ export class TilesetAnimationController {
     return colors;
   }
 
+  private getNumTilesInPrimary(): number {
+    return this.isFireRedFamily
+      ? 640
+      : 512;
+  }
+
+  private getNumMetatilesInPrimary(): number {
+    return this.isFireRedFamily
+      ? 640
+      : 512;
+  }
+
   private readRomU16(
     address: number,
   ): number {
