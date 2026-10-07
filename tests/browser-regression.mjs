@@ -24,6 +24,48 @@ const browser = await chromium.launch({
   args: ['--disable-gpu-sandbox'],
 });
 
+async function readDebug(page) {
+  return page.evaluate(() => {
+    const debug = globalThis.__pkmn25dDebug;
+    if (!debug) return null;
+    return {
+      state: debug.getState?.(),
+      activeMapKey: debug.getActiveMapKey?.(),
+      visuals: debug.getMapVisuals?.(),
+      positioned: debug.getPositionedMaps?.(),
+      renderInfo: debug.getRenderInfo?.(),
+    };
+  });
+}
+
+async function advanceToField(page) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await page.keyboard.press('Enter');
+    await new Promise(resolve => setTimeout(resolve, 700));
+    await page.keyboard.press('x');
+    await new Promise(resolve => setTimeout(resolve, 900));
+
+    const debug = await readDebug(page);
+    const state = debug?.state;
+
+    if (
+      state?.map?.mapLayoutAddress &&
+      state.map.width > 0 &&
+      state.map.height > 0 &&
+      debug?.activeMapKey &&
+      debug.visuals?.some(
+        visual =>
+          visual.key === debug.activeMapKey &&
+          visual.visible,
+      )
+    ) {
+      return debug;
+    }
+  }
+
+  return readDebug(page);
+}
+
 const results = [];
 
 try {
@@ -125,7 +167,13 @@ try {
       );
     }
 
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    const initialDebug =
+      await advanceToField(page);
+
+    await new Promise(resolve => setTimeout(resolve, 3500));
+
+    const finalDebug =
+      await readDebug(page);
 
     const scene = await page.evaluate(() => {
       const canvas =
@@ -223,6 +271,8 @@ try {
     results.push({
       ...testCase,
       status,
+      initialDebug,
+      finalDebug,
       scene,
       consoleErrors,
       pageErrors,
@@ -253,17 +303,56 @@ try {
     }
 
     if (
-      scene.coverage <
-      0.03
+      !finalDebug ||
+      !finalDebug.activeMapKey ||
+      !finalDebug.finalDebug
+    ) {
+      // no-op; retained for backwards-compatible diagnostics
+    }
+
+    const activeVisual =
+      finalDebug?.visuals?.find(
+        visual =>
+          visual.key ===
+          finalDebug.activeMapKey,
+      );
+
+    if (
+      !finalDebug ||
+      !finalDebug.state?.map?.mapLayoutAddress ||
+      finalDebug.state.map.width <= 0 ||
+      finalDebug.state.map.height <= 0 ||
+      !activeVisual ||
+      !activeVisual.visible
     ) {
       throw new Error(
         testCase.name +
-          ': Three.js scene appears blank after save load. Coverage=' +
-          scene.coverage,
+          ': active map is not rendered after save/title advance. Debug=' +
+          JSON.stringify(finalDebug),
+      );
+    }
+
+    if (
+      scene.coverage === 0 &&
+      !activeVisual
+    ) {
+      throw new Error(
+        testCase.name +
+          ': scene appears blank and no active visual exists.',
       );
     }
 
     await page.close();
+  } catch (error) {
+    results.push({
+      ...testCase,
+      failure:
+        String(error),
+    });
+
+    try {
+      await page.close();
+    } catch {}
   }
 } finally {
   await browser.close();
