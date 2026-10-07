@@ -1036,7 +1036,7 @@ export class PlayerRenderer {
         mapKey,
       );
 
-      this.buildQueue =
+      const remainingQueue =
         this.buildQueue.filter(
           map =>
             this.createMapKey(
@@ -1044,6 +1044,13 @@ export class PlayerRenderer {
               map.mapNumber,
             ) !== mapKey,
         );
+
+      this.buildQueue.length =
+        0;
+
+      this.buildQueue.push(
+        ...remainingQueue,
+      );
     }
 
     this.activeMapKey =
@@ -1104,6 +1111,18 @@ export class PlayerRenderer {
 
     this.updateWorldVisibility(
       maps,
+    );
+  }
+
+  private isForbiddenFireRedMapData(
+    map: MapDefinition,
+  ): boolean {
+    return (
+      map.mapGroup === 3 &&
+      map.mapNumber === 8 &&
+      map.mapDataAddress ===
+        0x08000000 +
+        0x00338378
     );
   }
 
@@ -2039,27 +2058,21 @@ export class PlayerRenderer {
         state,
       );
 
+      this.ensureCurrentMapDefinition(
+        state,
+      );
+
       if (
         this.isFireRedFamily(state)
       ) {
         this.ensureFireRedCinnabarDefinition(
           state,
         );
-
-        this.ensureCurrentMapDefinition(
-          state,
-        );
-
-        this.updateActiveWorld(
-          state,
-        );
-      } else if (
-        this.worldCatalogBuilt
-      ) {
-        this.updateActiveWorld(
-          state,
-        );
       }
+
+      this.updateActiveWorld(
+        state,
+      );
 
       this.processMapBuildQueue();
 
