@@ -932,12 +932,12 @@ export class PlayerRenderer {
     }
 
     this.mapVisuals.delete(
-      key,
+      '3:8',
     );
 
     this.tilesetAnimationController
       .unregisterMap(
-        key,
+        '3:8',
       );
   }
 
