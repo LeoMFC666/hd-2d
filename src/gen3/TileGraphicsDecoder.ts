@@ -94,6 +94,41 @@ export class TileGraphicsDecoder {
     };
   }
 
+  readTileBytes(
+    tilesAddress: number,
+    tileId: number,
+    isCompressed: boolean,
+  ): Uint8Array | null {
+    if (
+      tilesAddress <= 0 ||
+      tileId < 0
+    ) {
+      return null;
+    }
+
+    const tiles =
+      this.getTilesData(
+        tilesAddress,
+        isCompressed,
+      );
+
+    const offset =
+      tileId * TILE_BYTES;
+
+    if (
+      offset < 0 ||
+      offset + TILE_BYTES >
+        tiles.length
+    ) {
+      return null;
+    }
+
+    return tiles.slice(
+      offset,
+      offset + TILE_BYTES,
+    );
+  }
+
   private getTilesData(
     tilesAddress: number,
     isCompressed: boolean,
