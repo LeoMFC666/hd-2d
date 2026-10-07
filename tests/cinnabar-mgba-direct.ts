@@ -149,6 +149,20 @@ async function main(){
   const expectedDataBytes=reader.readRange(expectedCinnabarData,32);
   const betaBytes=reader.readRange(betaData,32);
 
+  const rawRomHeader = Array.from(
+    rom.slice(0xa0,0xc0),
+  );
+  const busRomHeader = Array.from(
+    reader.readRange(0x080000a0,0x20),
+  );
+
+  const rawCinnabarBytes = Array.from(
+    rom.slice(expectedCinnabarData-BASE, expectedCinnabarData-BASE+32),
+  );
+  const rawBetaBytes = Array.from(
+    rom.slice(betaData-BASE, betaData-BASE+32),
+  );
+
   const expectedCinnabarLayout=0x082e3b90;
   const ewramCandidates=[];
   const ewramMatches=[];
@@ -229,6 +243,11 @@ async function main(){
     },
     memory:{
       expectedCinnabarData:hex(expectedCinnabarData),
+      betaData:hex(betaData),
+      rawRomHeader,
+      busRomHeader,
+      rawCinnabarBytes,
+      rawBetaBytes,
       betaData:hex(betaData),
       activeDataHash:hash(activeDataBytes),
       expectedDataHash:hash(expectedDataBytes),
