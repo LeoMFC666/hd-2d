@@ -1,0 +1,75 @@
+name: Integrated browser regression audit
+
+on:
+  push:
+    branches: [diagnose/final-integrated-browser]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+
+      - name: Start Vite
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5173/tests/cinnabar-final-fix.html >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/vite.log
+          exit 1
+
+      - name: Cinnabar regression
+        run: |
+          node --input-type=module <<'EOF'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=swiftshader']});
+          const page=await browser.newPage({viewport:{width:1280,height:900}});
+          page.on('console',m=>console.log('[cinnabar]',m.type(),m.text()));
+          page.on('pageerror',e=>console.error('[cinnabar pageerror]',e));
+          await page.goto('http://127.0.0.1:5173/tests/cinnabar-final-fix.html',{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.pass==='true',{timeout:120000});
+          console.log(await page.locator('#out').innerText());
+          await browser.close();
+          EOF
+
+      - name: Tileset animation regression
+        run: |
+          node --input-type=module <<'EOF'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=swiftshader']});
+          const page=await browser.newPage({viewport:{width:1280,height:900}});
+          page.on('console',m=>console.log('[animation]',m.type(),m.text()));
+          page.on('pageerror',e=>console.error('[animation pageerror]',e));
+          await page.goto('http://127.0.0.1:5173/tests/tileset-animation-audit.html',{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.pass==='true',{timeout:120000});
+          console.log(await page.locator('#out').innerText());
+          await browser.close();
+          EOF
+
+      - name: Emerald mGBA save lifecycle regression
+        run: |
+          node --input-type=module <<'EOF'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true,args:['--no-sandbox','--use-gl=swiftshader']});
+          const page=await browser.newPage({viewport:{width:1280,height:900}});
+          page.on('console',m=>console.log('[save]',m.type(),m.text()));
+          page.on('pageerror',e=>console.error('[save pageerror]',e));
+          await page.goto('http://127.0.0.1:5173/tests/mgba-save-lifecycle-audit.html',{waitUntil:'networkidle'});
+          await page.waitForFunction(()=>document.body.dataset.pass==='true',{timeout:120000});
+          console.log(await page.locator('#out').innerText());
+          await browser.close();
+          EOF
