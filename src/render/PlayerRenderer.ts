@@ -400,6 +400,10 @@ export class PlayerRenderer {
             mapLayoutAddress:
               state.map
                 .mapLayoutAddress,
+
+            mapHeaderAddress:
+              state.map
+                .mapHeaderAddress,
           },
         );
 
