@@ -116,18 +116,6 @@ export class PlayerRenderer {
   private frameId =
     0;
 
-  private lastPlayerX =
-    -1;
-
-  private lastPlayerY =
-    -1;
-
-  private lastDirection =
-    '';
-
-  private lastMovementState =
-    '';
-
   private lastMapGroup =
     -1;
 
@@ -136,6 +124,24 @@ export class PlayerRenderer {
 
   private lastMapLayoutId =
     -1;
+
+  private lastMapLayoutAddress =
+    0;
+
+  private lastMapDataAddress =
+    0;
+
+  private lastPrimaryTilesetAddress =
+    0;
+
+  private lastSecondaryTilesetAddress =
+    0;
+
+  private lastMapWidth =
+    0;
+
+  private lastMapHeight =
+    0;
 
   private resizeHandler:
     () => void;
@@ -1990,83 +1996,6 @@ export class PlayerRenderer {
     );
   }
 
-  private updateDebug(
-    state: GameState,
-  ): void {
-    if (
-      state.player.x !==
-        this.lastPlayerX ||
-      state.player.y !==
-        this.lastPlayerY ||
-      state.player.direction !==
-        this.lastDirection ||
-      state.player
-        .movementState !==
-        this.lastMovementState
-    ) {
-      console.log(
-        'Player State:',
-        {
-          x:
-            state.player.x,
-
-          y:
-            state.player.y,
-
-          direction:
-            state.player.direction,
-
-          movementState:
-            state.player.movementState,
-        },
-      );
-
-      this.lastPlayerX =
-        state.player.x;
-
-      this.lastPlayerY =
-        state.player.y;
-
-      this.lastDirection =
-        state.player.direction;
-
-      this.lastMovementState =
-        state.player.movementState;
-    }
-
-    if (
-      state.map.mapGroup !==
-        this.lastMapGroup ||
-      state.map.mapNumber !==
-        this.lastMapNumber ||
-      state.map.mapLayoutId !==
-        this.lastMapLayoutId
-    ) {
-      console.log(
-        'Map State:',
-        {
-          mapGroup:
-            state.map.mapGroup,
-
-          mapNumber:
-            state.map.mapNumber,
-
-          mapLayoutId:
-            state.map.mapLayoutId,
-        },
-      );
-
-      this.lastMapGroup =
-        state.map.mapGroup;
-
-      this.lastMapNumber =
-        state.map.mapNumber;
-
-      this.lastMapLayoutId =
-        state.map.mapLayoutId;
-    }
-  }
-
   private createMapKey(
     mapGroup: number,
     mapNumber: number,
@@ -2088,25 +2017,66 @@ export class PlayerRenderer {
       this.currentState =
         state;
 
-      this.ensureWorldCatalog(
-        state,
-      );
+      const mapChanged =
+        state.map.mapGroup !==
+          this.lastMapGroup ||
+        state.map.mapNumber !==
+          this.lastMapNumber ||
+        state.map.mapLayoutId !==
+          this.lastMapLayoutId ||
+        state.map.mapLayoutAddress !==
+          this.lastMapLayoutAddress ||
+        state.map.mapDataAddress !==
+          this.lastMapDataAddress ||
+        state.map.primaryTilesetAddress !==
+          this.lastPrimaryTilesetAddress ||
+        state.map.secondaryTilesetAddress !==
+          this.lastSecondaryTilesetAddress ||
+        state.map.width !==
+          this.lastMapWidth ||
+        state.map.height !==
+          this.lastMapHeight;
 
-      this.ensureCurrentMapDefinition(
-        state,
-      );
-
-      if (
-        this.isFireRedFamily(state)
-      ) {
-        this.ensureFireRedCinnabarDefinition(
+      if (mapChanged) {
+        this.ensureWorldCatalog(
           state,
         );
-      }
 
-      this.updateActiveWorld(
-        state,
-      );
+        this.ensureCurrentMapDefinition(
+          state,
+        );
+
+        if (
+          this.isFireRedFamily(state)
+        ) {
+          this.ensureFireRedCinnabarDefinition(
+            state,
+          );
+        }
+
+        this.updateActiveWorld(
+          state,
+        );
+
+        this.lastMapGroup =
+          state.map.mapGroup;
+        this.lastMapNumber =
+          state.map.mapNumber;
+        this.lastMapLayoutId =
+          state.map.mapLayoutId;
+        this.lastMapLayoutAddress =
+          state.map.mapLayoutAddress;
+        this.lastMapDataAddress =
+          state.map.mapDataAddress;
+        this.lastPrimaryTilesetAddress =
+          state.map.primaryTilesetAddress;
+        this.lastSecondaryTilesetAddress =
+          state.map.secondaryTilesetAddress;
+        this.lastMapWidth =
+          state.map.width;
+        this.lastMapHeight =
+          state.map.height;
+      }
 
       this.processMapBuildQueue();
 
@@ -2122,10 +2092,6 @@ export class PlayerRenderer {
 
       this.updateCamera(
         playerPosition,
-      );
-
-      this.updateDebug(
-        state,
       );
 
       this.renderer.render(
