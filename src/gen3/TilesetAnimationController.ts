@@ -279,9 +279,28 @@ export class TilesetAnimationController {
       const [tileId, tileBytes] of
         this.liveTiles
     ) {
+      const isPrimarySnapshot =
+        tileId >=
+          ANIMATED_PRIMARY_TILE_START &&
+        tileId <
+          ANIMATED_PRIMARY_TILE_END &&
+        map.primaryTilesetAddress ===
+          this.activePrimaryTilesetAddress;
+
+      const isSecondarySnapshot =
+        this.isAnimatedSecondaryTile(
+          tileId,
+        ) &&
+        map.secondaryTilesetAddress ===
+          this.activeSecondaryTilesetAddress;
+
       if (
         placementsByTile.has(
           tileId,
+        ) &&
+        (
+          isPrimarySnapshot ||
+          isSecondarySnapshot
         )
       ) {
         this.patchTarget(
@@ -308,6 +327,8 @@ export class TilesetAnimationController {
     this.liveRange = null;
     this.liveRangeTilesetAddress = 0;
     this.activePrimaryTilesetAddress = 0;
+    this.activeSecondaryTilesetAddress = 0;
+    this.liveTiles.clear();
     this.frameCounter = 0;
   }
 
