@@ -22,6 +22,12 @@ export class MapWorld {
       WorldMapPosition
     >();
 
+  private positionedMapsCache:
+    MapDefinition[] = [];
+
+  private positionedMapsDirty =
+    true;
+
   constructor(
     catalog: MapCatalog,
   ) {
@@ -71,6 +77,12 @@ export class MapWorld {
 
   getPositionedMaps():
     MapDefinition[] {
+    if (
+      !this.positionedMapsDirty
+    ) {
+      return this.positionedMapsCache;
+    }
+
     const result:
       MapDefinition[] = [];
 
@@ -92,11 +104,19 @@ export class MapWorld {
       }
     }
 
+    this.positionedMapsCache =
+      result;
+
+    this.positionedMapsDirty =
+      false;
+
     return result;
   }
 
   clearPositions(): void {
     this.positions.clear();
+    this.positionedMapsCache = [];
+    this.positionedMapsDirty = true;
   }
 
   setWorldPosition(
@@ -114,6 +134,9 @@ export class MapWorld {
         y: position.y,
       },
     );
+
+    this.positionedMapsDirty =
+      true;
   }
 
   buildFrom(
@@ -155,6 +178,9 @@ export class MapWorld {
         start,
       ];
 
+    let queueIndex =
+      0;
+
     const visited =
       new Set<string>();
 
@@ -162,10 +188,13 @@ export class MapWorld {
       0;
 
     while (
-      queue.length > 0
+      queueIndex <
+      queue.length
     ) {
       const current =
-        queue.shift();
+        queue[
+          queueIndex++
+        ];
 
       if (!current) {
         continue;
