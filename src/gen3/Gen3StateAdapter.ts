@@ -1438,6 +1438,35 @@ export class Gen3StateAdapter {
     );
   }
 
+  private readRomU8(
+    address: number,
+  ): number {
+    if (
+      !this.romDataView ||
+      address < 0x08000000
+    ) {
+      return this.memoryReader.readU8(
+        address,
+      );
+    }
+
+    const offset =
+      address -
+      0x08000000;
+
+    if (
+      offset < 0 ||
+      offset >=
+        this.romDataView.byteLength
+    ) {
+      return 0;
+    }
+
+    return this.romDataView.getUint8(
+      offset,
+    );
+  }
+
   private readRomU16(
     address: number,
   ): number {
@@ -1463,6 +1492,36 @@ export class Gen3StateAdapter {
     }
 
     return this.romDataView.getUint16(
+      offset,
+      true,
+    );
+  }
+
+  private readRomU32(
+    address: number,
+  ): number {
+    if (
+      !this.romDataView ||
+      address < 0x08000000
+    ) {
+      return this.memoryReader.readU32(
+        address,
+      ) >>> 0;
+    }
+
+    const offset =
+      address -
+      0x08000000;
+
+    if (
+      offset < 0 ||
+      offset + 4 >
+        this.romDataView.byteLength
+    ) {
+      return 0;
+    }
+
+    return this.romDataView.getUint32(
       offset,
       true,
     );
@@ -2012,31 +2071,31 @@ export class Gen3StateAdapter {
     }
 
     const isCompressed =
-      this.memoryReader.readU8(
+      this.readRomU8(
         tilesetAddress +
           TILESET_IS_COMPRESSED_OFFSET,
       ) !== 0;
 
     const isSecondary =
-      this.memoryReader.readU8(
+      this.readRomU8(
         tilesetAddress +
           TILESET_IS_SECONDARY_OFFSET,
       ) !== 0;
 
     const tilesAddress =
-      this.memoryReader.readU32(
+      this.readRomU32(
         tilesetAddress +
           TILESET_TILES_OFFSET,
       );
 
     const palettesAddress =
-      this.memoryReader.readU32(
+      this.readRomU32(
         tilesetAddress +
           TILESET_PALETTES_OFFSET,
       );
 
     const metatilesAddress =
-      this.memoryReader.readU32(
+      this.readRomU32(
         tilesetAddress +
           TILESET_METATILES_OFFSET,
       );
@@ -2048,7 +2107,7 @@ export class Gen3StateAdapter {
         : EMERALD_TILESET_METATILE_ATTRIBUTES_OFFSET;
 
     const metatileAttributesAddress =
-      this.memoryReader.readU32(
+      this.readRomU32(
         tilesetAddress +
           metatileAttributesOffset,
       );
@@ -2124,7 +2183,7 @@ export class Gen3StateAdapter {
       i++
     ) {
       const rawTile =
-        this.memoryReader.readU16(
+        this.readRomU16(
           metatileAddress +
             i * 2,
         );
@@ -2172,7 +2231,7 @@ export class Gen3StateAdapter {
         'leafgreen'
     ) {
       rawAttribute =
-        this.memoryReader.readU32(
+        this.readRomU32(
           tileset.metatileAttributesAddress +
             metatileId * 4,
         );
@@ -2189,7 +2248,7 @@ export class Gen3StateAdapter {
         FRLG_METATILE_ATTRIBUTE_LAYER_TYPE_SHIFT;
     } else {
       rawAttribute =
-        this.memoryReader.readU16(
+        this.readRomU16(
           tileset.metatileAttributesAddress +
             metatileId * 2,
         );
