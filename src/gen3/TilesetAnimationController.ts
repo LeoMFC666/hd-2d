@@ -313,7 +313,18 @@ export class TilesetAnimationController {
       return;
     }
 
-    target.visible = visible;
+    if (
+      target.visible ===
+      visible
+    ) {
+      return;
+    }
+
+    target.visible =
+      visible;
+
+    this.animatedTileIndexDirty =
+      true;
   }
 
   clear(): void {
