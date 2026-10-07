@@ -1149,7 +1149,7 @@ export class Gen3StateAdapter {
 
     if (!metatile) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1163,7 +1163,7 @@ export class Gen3StateAdapter {
 
     if (!layers) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
