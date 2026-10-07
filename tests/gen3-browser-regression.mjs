@@ -35,11 +35,31 @@ for (const [name, rom, save] of cases) {
 
     await page.setInputFiles('#romInput', path.join(root, rom));
 
-    await page.waitForFunction(
-      () => document.querySelector('#status')?.textContent?.startsWith('ROM loaded:'),
-      undefined,
-      { timeout: 90000 },
-    );
+    await page.waitForTimeout(20000);
+
+    const romStatus =
+      await page.locator('#status').textContent();
+
+    if (
+      !romStatus?.startsWith('ROM loaded:')
+    ) {
+      await page.screenshot({
+        path: path.join(
+          artifacts,
+          name + '-rom-failure.png',
+        ),
+        fullPage: true,
+      });
+
+      throw new Error(
+        name +
+          ': ROM load did not reach ready state after 20s. ' +
+          'status=' +
+          romStatus +
+          ' errors=' +
+          JSON.stringify(errors),
+      );
+    }
 
     await page.setInputFiles('#saveInput', path.join(root, save));
 
