@@ -298,6 +298,16 @@ export class TilesetAnimationController {
     this.frameCounter = 0;
   }
 
+  suspend(): void {
+    this.liveRange = null;
+    this.liveRangeTilesetAddress = 0;
+    this.liveSecondaryRange = null;
+    this.liveSecondaryTilesetAddress = 0;
+    this.activePrimaryTilesetAddress = 0;
+    this.activeSecondaryTilesetAddress = 0;
+    this.frameCounter = 0;
+  }
+
   update(
     primaryTilesetAddress:
       number,
