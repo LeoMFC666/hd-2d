@@ -25,6 +25,10 @@ const GBA_ROM_HEADER_GAME_CODE =
 const GBA_ROM_BASE =
   0x08000000;
 
+const FRLG_BETA_CINNABAR_MAP_DATA =
+  GBA_ROM_BASE +
+  0x00338378;
+
 const GBA_ROM_HEADER_REVISION =
   0x080000bc;
 
@@ -274,14 +278,33 @@ export class Gen3StateAdapter {
 
   private mapBlocksSecondaryTilesetAddress = 0;
 
+  private mapBlocksMapDataAddress = 0;
+
+  private fireRedCinnabarResolved:
+    {
+      mapHeaderAddress: number;
+      mapLayoutAddress: number;
+      mapLayoutId: number;
+    } | null =
+    null;
+
+  private fireRedCinnabarLookupCompleted =
+    false;
+
   private currentPrimaryTileset: TilesetState | null = null;
 
   private currentSecondaryTileset: TilesetState | null = null;
 
   private metatileGraphicsCache = new Map<
-    number,
+    string,
     Gen3MetatileGraphics | null
   >();
+
+  private readonly tilesetCache =
+    new Map<
+      number,
+      TilesetState
+    >();
 
   constructor(
     memoryReader: MemoryReader,
@@ -376,6 +399,10 @@ export class Gen3StateAdapter {
     return this.primaryMetatileGraphics;
   }
 
+  getMemoryReader(): MemoryReader {
+    return this.memoryReader;
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
@@ -440,6 +467,46 @@ export class Gen3StateAdapter {
       this.mapHeaderMapNumber = -1;
       this.lastMapHeaderLookupKey = '';
       this.lastMapHeaderLookupAt = 0;
+      return;
+    }
+
+    if (
+      this.isFireRedFamily() &&
+      mapGroup === 3 &&
+      mapNumber === 8
+    ) {
+      const cinnabar =
+        this.findFireRedCinnabarLayout();
+
+      if (cinnabar) {
+        state.map.mapLayoutId =
+          cinnabar.mapLayoutId;
+
+        this.mapHeaderAddress =
+          cinnabar.mapHeaderAddress;
+
+        this.mapHeaderLayoutId =
+          cinnabar.mapLayoutId;
+
+        this.mapHeaderMapGroup =
+          3;
+
+        this.mapHeaderMapNumber =
+          8;
+
+        this.readMapLayout(
+          state,
+          cinnabar.mapHeaderAddress,
+          cinnabar.mapLayoutAddress,
+        );
+
+        if (
+          state.map.width > 0
+        ) {
+          return;
+        }
+      }
+
       return;
     }
 
@@ -627,6 +694,16 @@ export class Gen3StateAdapter {
       );
 
     if (
+      this.isFireRedFamily() &&
+      state.map.mapGroup === 3 &&
+      state.map.mapNumber === 8 &&
+      mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+    ) {
+      return;
+    }
+
+    if (
       !this.isValidRomPointer(
         mapDataAddress,
       ) ||
@@ -706,6 +783,9 @@ export class Gen3StateAdapter {
 
       this.mapBlocksWidth =
         width;
+
+      this.mapBlocksMapDataAddress =
+        mapDataAddress;
 
       this.mapBlocksHeight =
         height;
@@ -925,11 +1005,6 @@ export class Gen3StateAdapter {
     const previousSecondary =
       this.currentSecondaryTileset;
 
-    const previousCache =
-      new Map(
-        this.metatileGraphicsCache,
-      );
-
     try {
       const primaryTileset =
         this.readTileset(
@@ -954,14 +1029,23 @@ export class Gen3StateAdapter {
       this.currentSecondaryTileset =
         secondaryTileset;
 
-      this.metatileGraphicsCache.clear();
-
       const blocks =
-        this.readMapBlocks(
-          mapDataAddress,
-          width,
-          height,
-        );
+        mapDataAddress ===
+          this.mapBlocksMapDataAddress &&
+        width ===
+          this.mapBlocksWidth &&
+        height ===
+          this.mapBlocksHeight &&
+        primaryTilesetAddress ===
+          this.mapBlocksPrimaryTilesetAddress &&
+        secondaryTilesetAddress ===
+          this.mapBlocksSecondaryTilesetAddress
+          ? this.mapBlocks
+          : this.readMapBlocks(
+              mapDataAddress,
+              width,
+              height,
+            );
 
       const usedMetatiles =
         new Set<number>();
@@ -1001,21 +1085,7 @@ export class Gen3StateAdapter {
         previousPrimary;
 
       this.currentSecondaryTileset =
-        previousSecondary;
-
-      this.metatileGraphicsCache.clear();
-
-      for (
-        const [
-          key,
-          value,
-        ] of previousCache
-      ) {
-        this.metatileGraphicsCache.set(
-          key,
-          value,
-        );
-      }
+        previousSecondary
     }
   }
   
@@ -1034,14 +1104,25 @@ export class Gen3StateAdapter {
       return null;
     }
 
+    const cacheKey =
+      String(
+        this.currentPrimaryTileset
+          ?.address ?? 0,
+      ) + ':' +
+      String(
+        this.currentSecondaryTileset
+          ?.address ?? 0,
+      ) + ':' +
+      String(metatileId);
+
     if (
       this.metatileGraphicsCache.has(
-        metatileId,
+        cacheKey,
       )
     ) {
       return (
         this.metatileGraphicsCache.get(
-          metatileId,
+          cacheKey,
         ) ?? null
       );
     }
@@ -1053,7 +1134,7 @@ export class Gen3StateAdapter {
 
     if (!source) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1068,7 +1149,7 @@ export class Gen3StateAdapter {
 
     if (!metatile) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1082,7 +1163,7 @@ export class Gen3StateAdapter {
 
     if (!layers) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1101,7 +1182,7 @@ export class Gen3StateAdapter {
     };
 
     this.metatileGraphicsCache.set(
-      metatileId,
+      cacheKey,
       graphics,
     );
 
@@ -1155,46 +1236,58 @@ export class Gen3StateAdapter {
     width: number,
     height: number,
   ): MapBlockState[] {
-    const blocks: MapBlockState[] =
-      new Array(width * height);
+    const count =
+      width * height;
+
+    if (
+      count <= 0
+    ) {
+      return [];
+    }
+
+    const bytes =
+      this.memoryReader.readRange(
+        mapDataAddress,
+        count * 2,
+      );
+
+    const blocks:
+      MapBlockState[] =
+      new Array(count);
 
     for (
-      let y = 0;
-      y < height;
-      y++
+      let index = 0;
+      index < count;
+      index++
     ) {
-      for (
-        let x = 0;
-        x < width;
-        x++
-      ) {
-        const raw =
-          this.memoryReader.readU16(
-            mapDataAddress +
-              (y * width + x) * 2,
-          );
+      const offset =
+        index * 2;
 
-        blocks[
-          y * width + x
-        ] = {
-          raw,
-          metatileId:
+      const raw =
+        bytes[offset] |
+        (
+          bytes[offset + 1] <<
+          8
+        );
+
+      blocks[index] = {
+        raw,
+        metatileId:
+          raw &
+          MAPGRID_METATILE_ID_MASK,
+        collision:
+          (
             raw &
-            MAPGRID_METATILE_ID_MASK,
-          collision:
-            (
-              raw &
-              MAPGRID_COLLISION_MASK
-            ) >>
-            MAPGRID_COLLISION_SHIFT,
-          elevation:
-            (
-              raw &
-              MAPGRID_ELEVATION_MASK
-            ) >>
-            MAPGRID_ELEVATION_SHIFT,
-        };
-      }
+            MAPGRID_COLLISION_MASK
+          ) >>
+          MAPGRID_COLLISION_SHIFT,
+        elevation:
+          (
+            raw &
+            MAPGRID_ELEVATION_MASK
+          ) >>
+          MAPGRID_ELEVATION_SHIFT,
+      };
     }
 
     return blocks;
@@ -1352,7 +1445,8 @@ export class Gen3StateAdapter {
         palettesAddress,
       ) ||
       paletteIndex < 0 ||
-      paletteIndex >= NUM_PALS_TOTAL
+      paletteIndex >=
+        NUM_PALS_TOTAL
     ) {
       return null;
     }
@@ -1363,6 +1457,21 @@ export class Gen3StateAdapter {
         GBA_PALETTE_COLORS *
         GBA_PALETTE_COLOR_BYTES;
 
+    const bytes =
+      this.memoryReader.readRange(
+        paletteAddress,
+        GBA_PALETTE_COLORS *
+          GBA_PALETTE_COLOR_BYTES,
+      );
+
+    if (
+      bytes.length !==
+      GBA_PALETTE_COLORS *
+        GBA_PALETTE_COLOR_BYTES
+    ) {
+      return null;
+    }
+
     const colors = [];
 
     for (
@@ -1370,10 +1479,14 @@ export class Gen3StateAdapter {
       i < GBA_PALETTE_COLORS;
       i++
     ) {
+      const offset =
+        i * 2;
+
       const raw =
-        this.memoryReader.readU16(
-          paletteAddress +
-            i * GBA_PALETTE_COLOR_BYTES,
+        bytes[offset] |
+        (
+          bytes[offset + 1] <<
+          8
         );
 
       const r5 =
@@ -1388,9 +1501,15 @@ export class Gen3StateAdapter {
       colors.push({
         index: i,
         raw,
-        r: (r5 << 3) | (r5 >> 2),
-        g: (g5 << 3) | (g5 >> 2),
-        b: (b5 << 3) | (b5 >> 2),
+        r:
+          (r5 << 3) |
+          (r5 >> 2),
+        g:
+          (g5 << 3) |
+          (g5 >> 2),
+        b:
+          (b5 << 3) |
+          (b5 >> 2),
       });
     }
 
@@ -1806,6 +1925,27 @@ export class Gen3StateAdapter {
         4,
       );
 
+    const count =
+      sampleWidth *
+      sampleHeight;
+
+    if (
+      count <= 0
+    ) {
+      return [];
+    }
+
+    const bytes =
+      this.memoryReader.readRange(
+        mapDataAddress,
+        (
+          (
+            sampleHeight - 1
+          ) * width +
+          sampleWidth
+        ) * 2,
+      );
+
     const sample:
       MapBlockState[] = [];
 
@@ -1819,41 +1959,36 @@ export class Gen3StateAdapter {
         x < sampleWidth;
         x++
       ) {
-        const address =
-          mapDataAddress +
+        const offset =
           (
-            (y * width + x) *
-            2
-          );
+            y * width +
+            x
+          ) * 2;
 
         const raw =
-          this.memoryReader.readU16(
-            address,
+          bytes[offset] |
+          (
+            bytes[offset + 1] <<
+            8
           );
-
-        const metatileId =
-          raw &
-          MAPGRID_METATILE_ID_MASK;
-
-        const collision =
-          (
-            raw &
-            MAPGRID_COLLISION_MASK
-          ) >>
-          MAPGRID_COLLISION_SHIFT;
-
-        const elevation =
-          (
-            raw &
-            MAPGRID_ELEVATION_MASK
-          ) >>
-          MAPGRID_ELEVATION_SHIFT;
 
         sample.push({
           raw,
-          metatileId,
-          collision,
-          elevation,
+          metatileId:
+            raw &
+            MAPGRID_METATILE_ID_MASK,
+          collision:
+            (
+              raw &
+              MAPGRID_COLLISION_MASK
+            ) >>
+            MAPGRID_COLLISION_SHIFT,
+          elevation:
+            (
+              raw &
+              MAPGRID_ELEVATION_MASK
+            ) >>
+            MAPGRID_ELEVATION_SHIFT,
         });
       }
     }
@@ -1878,6 +2013,15 @@ export class Gen3StateAdapter {
         metatilesAddress: 0,
         metatileAttributesAddress: 0,
       };
+    }
+
+    const cached =
+      this.tilesetCache.get(
+        tilesetAddress,
+      );
+
+    if (cached) {
+      return cached;
     }
 
     const isCompressed =
@@ -1922,35 +2066,29 @@ export class Gen3StateAdapter {
           metatileAttributesOffset,
       );
 
-    return {
+    const result: TilesetState = {
       address:
         tilesetAddress,
-
       isCompressed,
-
       isSecondary,
-
       tilesAddress:
         this.isValidRomPointer(
           tilesAddress,
         )
           ? tilesAddress
           : 0,
-
       palettesAddress:
         this.isValidRomPointer(
           palettesAddress,
         )
           ? palettesAddress
           : 0,
-
       metatilesAddress:
         this.isValidRomPointer(
           metatilesAddress,
         )
           ? metatilesAddress
           : 0,
-
       metatileAttributesAddress:
         this.isValidRomPointer(
           metatileAttributesAddress,
@@ -1958,6 +2096,13 @@ export class Gen3StateAdapter {
           ? metatileAttributesAddress
           : 0,
     };
+
+    this.tilesetCache.set(
+      tilesetAddress,
+      result,
+    );
+
+    return result;
   }
 
   private readMetatile(
@@ -1978,56 +2123,68 @@ export class Gen3StateAdapter {
       return null;
     }
 
-    const metatileAddress =
-      tileset.metatilesAddress +
-      metatileId *
-        METATILE_TILE_COUNT *
-        2;
+    const metatileBytes =
+      this.memoryReader.readRange(
+        tileset.metatilesAddress +
+          metatileId *
+            METATILE_TILE_COUNT *
+            2,
+        METATILE_TILE_COUNT * 2,
+      );
+
+    if (
+      metatileBytes.length !==
+      METATILE_TILE_COUNT * 2
+    ) {
+      return null;
+    }
 
     const tiles:
-      MetatileTileState[] = [];
+      MetatileTileState[] =
+      new Array(
+        METATILE_TILE_COUNT,
+      );
 
     for (
       let i = 0;
       i < METATILE_TILE_COUNT;
       i++
     ) {
+      const offset =
+        i * 2;
+
       const rawTile =
-        this.memoryReader.readU16(
-          metatileAddress +
-            i * 2,
+        metatileBytes[offset] |
+        (
+          metatileBytes[
+            offset + 1
+          ] <<
+          8
         );
 
-      const tileId =
-        rawTile &
-        TILE_ID_MASK;
-
-      const hFlip =
-        (
+      tiles[i] = {
+        raw:
+          rawTile,
+        tileId:
           rawTile &
-          TILE_HFLIP_MASK
-        ) !== 0;
-
-      const vFlip =
-        (
-          rawTile &
-          TILE_VFLIP_MASK
-        ) !== 0;
-
-      const palette =
-        (
-          rawTile &
-          TILE_PALETTE_MASK
-        ) >>
-        TILE_PALETTE_SHIFT;
-
-      tiles.push({
-        raw: rawTile,
-        tileId,
-        hFlip,
-        vFlip,
-        palette,
-      });
+          TILE_ID_MASK,
+        hFlip:
+          (
+            rawTile &
+            TILE_HFLIP_MASK
+          ) !== 0,
+        vFlip:
+          (
+            rawTile &
+            TILE_VFLIP_MASK
+          ) !== 0,
+        palette:
+          (
+            rawTile &
+            TILE_PALETTE_MASK
+          ) >>
+          TILE_PALETTE_SHIFT,
+      };
     }
 
     let rawAttribute = 0;
@@ -2076,7 +2233,8 @@ export class Gen3StateAdapter {
     }
 
     return {
-      id: metatileId,
+      id:
+        metatileId,
       tiles,
       rawAttribute,
       behavior,
@@ -2109,6 +2267,267 @@ export class Gen3StateAdapter {
       metatileAttributesAddress:
         `0x${tileset.metatileAttributesAddress.toString(16)}`,
     };
+  }
+
+  private isFireRedFamily(): boolean {
+    return (
+      this.profile?.id ===
+        'firered' ||
+      this.profile?.id ===
+        'leafgreen'
+    );
+  }
+
+  private findFireRedCinnabarLayout():
+    {
+      mapHeaderAddress: number;
+      mapLayoutAddress: number;
+      mapLayoutId: number;
+    } | null {
+    if (
+      this.fireRedCinnabarLookupCompleted
+    ) {
+      return this.fireRedCinnabarResolved;
+    }
+
+    this.fireRedCinnabarLookupCompleted =
+      true;
+
+    const romBytes =
+      this.romBytes;
+
+    const dataView =
+      this.romDataView;
+
+    if (
+      !romBytes ||
+      !dataView ||
+      !this.isFireRedFamily()
+    ) {
+      return null;
+    }
+
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          0x1c;
+      offset += 4
+    ) {
+      const mapHeaderAddress =
+        GBA_ROM_BASE +
+        offset;
+
+      const mapLayoutAddress =
+        dataView.getUint32(
+          offset,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          mapLayoutAddress,
+        )
+      ) {
+        continue;
+      }
+
+      const layoutOffset =
+        mapLayoutAddress -
+        GBA_ROM_BASE;
+
+      if (
+        layoutOffset < 0 ||
+        layoutOffset + 0x18 >
+          romBytes.length
+      ) {
+        continue;
+      }
+
+      const width =
+        dataView.getUint32(
+          layoutOffset,
+          true,
+        );
+
+      const height =
+        dataView.getUint32(
+          layoutOffset + 4,
+          true,
+        );
+
+      if (
+        width !== 24 ||
+        height !== 20
+      ) {
+        continue;
+      }
+
+      const mapDataAddress =
+        dataView.getUint32(
+          layoutOffset + 0x0c,
+          true,
+        );
+
+      if (
+        mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+      ) {
+        continue;
+      }
+
+      const primaryTilesetAddress =
+        dataView.getUint32(
+          layoutOffset + 0x10,
+          true,
+        );
+
+      const secondaryTilesetAddress =
+        dataView.getUint32(
+          layoutOffset + 0x14,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          mapDataAddress,
+        ) ||
+        !this.isValidRomPointer(
+          primaryTilesetAddress,
+        ) ||
+        !this.isValidRomPointer(
+          secondaryTilesetAddress,
+        )
+      ) {
+        continue;
+      }
+
+      const connectionsAddress =
+        dataView.getUint32(
+          offset + 0x0c,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          connectionsAddress,
+          8,
+        )
+      ) {
+        continue;
+      }
+
+      const connectionsOffset =
+        connectionsAddress -
+        GBA_ROM_BASE;
+
+      const count =
+        dataView.getInt32(
+          connectionsOffset,
+          true,
+        );
+
+      if (
+        count <= 0 ||
+        count > 64
+      ) {
+        continue;
+      }
+
+      const dataAddress =
+        dataView.getUint32(
+          connectionsOffset + 4,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          dataAddress,
+          count * 0x0c,
+        )
+      ) {
+        continue;
+      }
+
+      const dataOffset =
+        dataAddress -
+        GBA_ROM_BASE;
+
+      let hasNorthRoute21 =
+        false;
+
+      let hasEastRoute20 =
+        false;
+
+      for (
+        let index = 0;
+        index < count;
+        index++
+      ) {
+        const entryOffset =
+          dataOffset +
+          index * 0x0c;
+
+        const direction =
+          romBytes[
+            entryOffset
+          ];
+
+        const offsetValue =
+          dataView.getInt32(
+            entryOffset + 4,
+            true,
+          );
+
+        const mapGroup =
+          romBytes[
+            entryOffset + 8
+          ];
+
+        const mapNumber =
+          romBytes[
+            entryOffset + 9
+          ];
+
+        if (
+          direction === 2 &&
+          offsetValue === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 40
+        ) {
+          hasNorthRoute21 = true;
+        }
+
+        if (
+          direction === 4 &&
+          offsetValue === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 38
+        ) {
+          hasEastRoute20 = true;
+        }
+      }
+
+      if (
+        hasNorthRoute21 &&
+        hasEastRoute20
+      ) {
+        this.fireRedCinnabarResolved =
+          {
+            mapHeaderAddress,
+            mapLayoutAddress,
+            mapLayoutId:
+              dataView.getUint16(
+                offset + 0x12,
+                true,
+              ),
+          };
+
+        return this.fireRedCinnabarResolved;
+      }
+    }
+
+    return null;
   }
 
   private findMapHeaderAddress(
@@ -2409,9 +2828,33 @@ export class Gen3StateAdapter {
 
   private isValidRomPointer(
     address: number,
+    size = 1,
   ): boolean {
+    if (
+      address < GBA_ROM_BASE
+    ) {
+      return false;
+    }
+
+    const offset =
+      address -
+      GBA_ROM_BASE;
+
+    if (
+      offset < 0 ||
+      size < 0
+    ) {
+      return false;
+    }
+
+    if (this.romBytes) {
+      return (
+        offset + size <=
+        this.romBytes.length
+      );
+    }
+
     return (
-      address >= 0x08000000 &&
       address < 0x0a000000
     );
   }

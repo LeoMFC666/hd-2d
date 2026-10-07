@@ -99,6 +99,23 @@ export class MapWorld {
     this.positions.clear();
   }
 
+  setWorldPosition(
+    mapGroup: number,
+    mapNumber: number,
+    position: WorldMapPosition,
+  ): void {
+    this.positions.set(
+      this.createKey(
+        mapGroup,
+        mapNumber,
+      ),
+      {
+        x: position.x,
+        y: position.y,
+      },
+    );
+  }
+
   buildFrom(
     startMapGroup: number,
     startMapNumber: number,

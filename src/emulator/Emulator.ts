@@ -22,31 +22,141 @@ export class MgbaEmulatorAdapter implements EmulatorAdapter {
       bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 
     try {
-      const loadedEngine = await load({
-        jsUrl: '/mgba/mgba.js',
-        wasmUrl: '/mgba/mgba.wasm',
-        canvasEl: this.canvas,
-        assets: {
-          rom: romBytes,
-        },
-        options: {
-          system: 'auto',
-          aspect: 'native',
-          renderFilter: 'pixelated',
-          skipBios: true,
-          idleOptimization: 'remove',
-          allowOpposingDirections: false,
-          gamepads: true,
-          volume: 0.35,
-          logLevel: 'error',
-        },
-        persist: null,
-      });
+      /*
+       * @wasm-gaming/mgba-wasm 0.1.1 keeps the Emscripten module private
+       * inside load(). The host still needs that exact module for the Gen 3
+       * memory bus, so capture the module at the factory boundary instead of
+       * creating a second emulator instance.
+       */
+      let capturedRuntimeModule:
+        any = null;
 
-      this.engine = loadedEngine;
+      const globalObject =
+        globalThis as any;
+
+      const previousDescriptor =
+        Object.getOwnPropertyDescriptor(
+          globalObject,
+          'createMgbaModule',
+        );
+
+      const existingFactory =
+        typeof globalObject.createMgbaModule ===
+          'function'
+          ? globalObject.createMgbaModule
+          : null;
+
+      let originalFactory =
+        existingFactory;
+
+      const captureFactory =
+        async (
+          ...factoryArgs: any[]
+        ): Promise<any> => {
+          if (
+            typeof originalFactory !==
+              'function'
+          ) {
+            throw new Error(
+              'mGBA createMgbaModule factory was not initialized.',
+            );
+          }
+
+          const runtimeModule =
+            await originalFactory(
+              ...factoryArgs,
+            );
+
+          capturedRuntimeModule =
+            runtimeModule;
+
+          return runtimeModule;
+        };
+
+      if (existingFactory) {
+        globalObject.createMgbaModule =
+          captureFactory;
+      } else {
+        Object.defineProperty(
+          globalObject,
+          'createMgbaModule',
+          {
+            configurable: true,
+            enumerable: true,
+            get() {
+              return captureFactory;
+            },
+            set(value: any) {
+              originalFactory =
+                value;
+            },
+          },
+        );
+      }
+
+      let loadedEngine:
+        Awaited<
+          ReturnType<typeof load>
+        >;
+
+      try {
+        loadedEngine = await load({
+          jsUrl: '/mgba/mgba.js',
+          wasmUrl: '/mgba/mgba.wasm',
+          canvasEl: this.canvas,
+          assets: {
+            rom: romBytes,
+          },
+          options: {
+            system: 'auto',
+            aspect: 'native',
+            renderFilter: 'pixelated',
+            skipBios: true,
+            idleOptimization: 'remove',
+            allowOpposingDirections: false,
+            gamepads: true,
+            volume: 0.35,
+            logLevel: 'error',
+          },
+          persist: null,
+        });
+      } finally {
+        if (previousDescriptor) {
+          Object.defineProperty(
+            globalObject,
+            'createMgbaModule',
+            previousDescriptor,
+          );
+        } else if (
+          originalFactory
+        ) {
+          Object.defineProperty(
+            globalObject,
+            'createMgbaModule',
+            {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value:
+                originalFactory,
+            },
+          );
+        } else {
+          delete globalObject.createMgbaModule;
+        }
+      }
+
+      this.engine =
+        loadedEngine;
 
       this.runtimeModule =
-        (loadedEngine as any).runtimeModule ?? null;
+        capturedRuntimeModule;
+
+      if (!this.runtimeModule) {
+        throw new Error(
+          'mGBA runtime module could not be captured from createMgbaModule.',
+        );
+      }
 
       if (!this.runtimeModule) {
         throw new Error(
