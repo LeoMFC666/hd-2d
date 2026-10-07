@@ -562,6 +562,10 @@ export class TilesetAnimationController {
       const target of
         this.targets.values()
     ) {
+      if (!target.visible) {
+        continue;
+      }
+
       const addPlacements =
         (
           placements:
