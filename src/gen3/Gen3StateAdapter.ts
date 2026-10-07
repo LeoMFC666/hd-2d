@@ -387,6 +387,46 @@ export class Gen3StateAdapter {
     return this.memoryReader;
   }
 
+  private readMapStateKey(
+    saveBlock1Address: number,
+  ): string {
+    const layout =
+      this.profile?.memory.mapState;
+
+    if (
+      !layout ||
+      !this.isValidEwramPointer(
+        saveBlock1Address,
+      )
+    ) {
+      return '';
+    }
+
+    const mapGroup =
+      this.memoryReader.readU8(
+        saveBlock1Address +
+          layout.locationMapGroupOffset,
+      );
+
+    const mapNumber =
+      this.memoryReader.readU8(
+        saveBlock1Address +
+          layout.locationMapNumOffset,
+      );
+
+    const mapLayoutId =
+      this.memoryReader.readU16(
+        saveBlock1Address +
+          layout.mapLayoutIdOffset,
+      );
+
+    return (
+      String(mapGroup) + ':' +
+      String(mapNumber) + ':' +
+      String(mapLayoutId)
+    );
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
