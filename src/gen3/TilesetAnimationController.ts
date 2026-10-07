@@ -191,6 +191,12 @@ export class TilesetAnimationController {
       RgbaColor[]
     >();
 
+  private readonly tilesetPaletteAddressCache =
+    new Map<
+      number,
+      number
+    >();
+
   private readonly liveTiles =
     new Map<
       string,
@@ -314,6 +320,7 @@ export class TilesetAnimationController {
     this.targets.clear();
     this.metatileCache.clear();
     this.paletteCache.clear();
+    this.tilesetPaletteAddressCache.clear();
     this.liveTiles.clear();
     this.animatedTileIndex.clear();
     this.animatedTileIndexDirty =
@@ -697,7 +704,7 @@ export class TilesetAnimationController {
 
         snapshots.set(
           first + tileIndex,
-          bytes.slice(
+          bytes.subarray(
             start,
             start +
               TILE_BYTES,
@@ -1538,22 +1545,30 @@ export class TilesetAnimationController {
     placement: AnimatedTile,
   ):
     RgbaColor[] | null {
-    const primaryPaletteAddress =
-      this.readRomU32(
-        map.primaryTilesetAddress +
-          TILESET_PALETTES_OFFSET,
-      );
-
-    const secondaryPaletteAddress =
-      this.readRomU32(
-        map.secondaryTilesetAddress +
-          TILESET_PALETTES_OFFSET,
-      );
-
-    const palettesAddress =
+    const tilesetAddress =
       placement.secondary
-        ? secondaryPaletteAddress
-        : primaryPaletteAddress;
+        ? map.secondaryTilesetAddress
+        : map.primaryTilesetAddress;
+
+    let palettesAddress =
+      this.tilesetPaletteAddressCache.get(
+        tilesetAddress,
+      );
+
+    if (
+      palettesAddress === undefined
+    ) {
+      palettesAddress =
+        this.readRomU32(
+          tilesetAddress +
+            TILESET_PALETTES_OFFSET,
+        );
+
+      this.tilesetPaletteAddressCache.set(
+        tilesetAddress,
+        palettesAddress,
+      );
+    }
 
     const paletteIndex =
       placement.paletteIndex;
