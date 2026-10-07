@@ -1140,6 +1140,77 @@ export class PlayerRenderer {
     );
   }
 
+  private isForbiddenFireRedMapData(
+    map: MapDefinition,
+  ): boolean {
+    return (
+      map.mapGroup === 3 &&
+      map.mapNumber === 8 &&
+      map.mapDataAddress ===
+        0x08000000 +
+        0x00338378
+    );
+  }
+
+  private createMapSignature(
+    state: GameState,
+  ): string {
+    return (
+      String(state.map.mapLayoutId) +
+      ':' +
+      state.map.mapLayoutAddress.toString(16) +
+      ':' +
+      state.map.mapDataAddress.toString(16) +
+      ':' +
+      state.map.primaryTilesetAddress.toString(16) +
+      ':' +
+      state.map.secondaryTilesetAddress.toString(16) +
+      ':' +
+      state.map.width +
+      'x' +
+      state.map.height
+    );
+  }
+
+  private createMapDefinitionSignature(
+    map: MapDefinition,
+  ): string {
+    return (
+      String(map.mapLayoutId) +
+      ':' +
+      map.mapLayoutAddress.toString(16) +
+      ':' +
+      map.mapDataAddress.toString(16) +
+      ':' +
+      map.primaryTilesetAddress.toString(16) +
+      ':' +
+      map.secondaryTilesetAddress.toString(16) +
+      ':' +
+      map.width +
+      'x' +
+      map.height
+    );
+  }
+
+  private disposeMapVisual(
+    key: string,
+    visual: MapVisual,
+  ): void {
+    this.root.remove(visual.mesh);
+    visual.texture.dispose();
+    visual.geometry.dispose();
+
+    const material = visual.mesh.material;
+    if (Array.isArray(material)) {
+      material.forEach(entry => entry.dispose());
+    } else {
+      material.dispose();
+    }
+
+    this.mapVisuals.delete(key);
+    this.tilesetAnimationController.unregisterMap(key);
+  }
+
   private queueMapBuild(
     map: MapDefinition,
   ): void {
