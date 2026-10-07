@@ -117,7 +117,7 @@ async function auditCinnabar(){
  const originalRender=adapter.getMapRenderData.bind(adapter);
 
  const fake={
-   readState:()=>makeState({
+   readState:()=>stateFor({
      mapLayoutId:id,
      mapHeaderAddress:header,
      mapLayoutAddress:layout,
