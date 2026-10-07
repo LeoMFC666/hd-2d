@@ -38,11 +38,72 @@ export class MgbaMemoryReader implements MemoryReader {
     return runtime?.HEAPU32?.[address >> 2] ?? 0;
   }
 
-  readRange(address: number, length: number): Uint8Array {
-    const bytes = new Uint8Array(length);
-    for (let i = 0; i < length; i++) {
-      bytes[i] = this.readU8(address + i);
+  readRange(
+    address: number,
+    length: number,
+  ): Uint8Array {
+    const bytes =
+      new Uint8Array(length);
+
+    const runtime =
+      this.runtimeModule;
+
+    const read32 =
+      runtime?._mgbawasm_bus_read32;
+
+    let index = 0;
+
+    if (
+      typeof read32 ===
+        'function'
+    ) {
+      while (
+        index < length &&
+        (
+          (address + index) & 3
+        ) !== 0
+      ) {
+        bytes[index] =
+          this.readU8(
+            address + index,
+          );
+
+        index++;
+      }
+
+      while (
+        index + 4 <= length
+      ) {
+        const value =
+          read32.call(
+            runtime,
+            address + index,
+          ) >>> 0;
+
+        bytes[index] =
+          value & 0xff;
+        bytes[index + 1] =
+          (value >>> 8) & 0xff;
+        bytes[index + 2] =
+          (value >>> 16) & 0xff;
+        bytes[index + 3] =
+          (value >>> 24) & 0xff;
+
+        index += 4;
+      }
     }
+
+    for (
+      ;
+      index < length;
+      index++
+    ) {
+      bytes[index] =
+        this.readU8(
+          address + index,
+        );
+    }
+
     return bytes;
   }
 }

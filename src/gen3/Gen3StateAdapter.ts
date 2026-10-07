@@ -278,6 +278,13 @@ export class Gen3StateAdapter {
 
   private currentSecondaryTileset: TilesetState | null = null;
 
+  private cachedMapState:
+    GameState['map'] | null =
+    null;
+
+  private cachedMapStateKey =
+    '';
+
   private metatileGraphicsCache = new Map<
     number,
     Gen3MetatileGraphics | null
@@ -414,6 +421,24 @@ export class Gen3StateAdapter {
           layout.mapLayoutIdOffset,
       );
 
+    const key =
+      String(mapGroup) +
+      ':' +
+      String(mapNumber) +
+      ':' +
+      String(mapLayoutId);
+
+    if (
+      this.cachedMapState &&
+      this.cachedMapStateKey ===
+        key
+    ) {
+      state.map =
+        this.cachedMapState;
+
+      return;
+    }
+
     state.map.mapGroup =
       mapGroup;
 
@@ -429,6 +454,27 @@ export class Gen3StateAdapter {
       mapGroup,
       mapNumber,
     );
+
+    if (
+      state.map.mapLayoutAddress !==
+        0 &&
+      state.map.width > 0 &&
+      state.map.height > 0 &&
+      state.map.mapDataAddress !==
+        0
+    ) {
+      this.cachedMapState =
+        state.map;
+
+      this.cachedMapStateKey =
+        key;
+    } else {
+      this.cachedMapState =
+        null;
+
+      this.cachedMapStateKey =
+        '';
+    }
   }
 
   private readLoadedMapLayout(
@@ -667,6 +713,38 @@ export class Gen3StateAdapter {
 
     state.map.cellCount =
       width * height;
+
+    const currentMapCacheKey =
+      String(
+        state.map.mapGroup,
+      ) +
+      ':' +
+      String(
+        state.map.mapNumber,
+      ) +
+      ':' +
+      String(
+        state.map.mapLayoutId,
+      );
+
+    if (
+      this.cachedMapStateKey !==
+        currentMapCacheKey ||
+      this.cachedMapState?.mapLayoutAddress !==
+        mapLayoutAddress ||
+      this.cachedMapState?.mapDataAddress !==
+        mapDataAddress ||
+      this.cachedMapState?.primaryTilesetAddress !==
+        primaryTilesetAddress ||
+      this.cachedMapState?.secondaryTilesetAddress !==
+        secondaryTilesetAddress
+    ) {
+      this.cachedMapState =
+        null;
+
+      this.cachedMapStateKey =
+        '';
+    }
 
     state.map.blockSample =
       this.readMapSample(

@@ -107,6 +107,9 @@ export class PlayerRenderer {
   private activeMapKey =
     '';
 
+  private activeMapSignature =
+    '';
+
   private frameId =
     0;
 
@@ -254,12 +257,14 @@ export class PlayerRenderer {
       new THREE.WebGLRenderer({
         antialias: false,
         alpha: true,
+        powerPreference:
+          'high-performance',
       });
 
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
-        2,
+        1.5,
       ),
     );
 
@@ -760,13 +765,16 @@ export class PlayerRenderer {
     state: GameState,
   ): void {
     if (
-      !this.isFireRedFamily(state) ||
-      state.map.mapLayoutAddress === 0 ||
+      state.map.mapLayoutAddress ===
+        0 ||
       state.map.width <= 0 ||
       state.map.height <= 0 ||
-      state.map.mapDataAddress === 0 ||
-      state.map.primaryTilesetAddress === 0 ||
-      state.map.secondaryTilesetAddress === 0
+      state.map.mapDataAddress ===
+        0 ||
+      state.map.primaryTilesetAddress ===
+        0 ||
+      state.map.secondaryTilesetAddress ===
+        0
     ) {
       return;
     }
@@ -777,31 +785,49 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
-    if (existing) {
+    const signature =
+      this.createMapSignature(
+        state,
+      );
+
+    if (
+      existing &&
+      this.createMapDefinitionSignature(
+        existing,
+      ) ===
+      signature
+    ) {
       return;
     }
 
-    const definition: MapDefinition = {
-      mapGroup: state.map.mapGroup,
-      mapNumber: state.map.mapNumber,
-      mapLayoutId: state.map.mapLayoutId,
-      mapHeaderAddress: state.map.mapHeaderAddress,
-      mapLayoutAddress: state.map.mapLayoutAddress,
-      mapDataAddress: state.map.mapDataAddress,
+    this.mapCatalog.register({
+      mapGroup:
+        state.map.mapGroup,
+      mapNumber:
+        state.map.mapNumber,
+      mapLayoutId:
+        state.map.mapLayoutId,
+      mapHeaderAddress:
+        state.map.mapHeaderAddress,
+      mapLayoutAddress:
+        state.map.mapLayoutAddress,
+      mapDataAddress:
+        state.map.mapDataAddress,
       primaryTilesetAddress:
         state.map.primaryTilesetAddress,
       secondaryTilesetAddress:
         state.map.secondaryTilesetAddress,
-      width: state.map.width,
-      height: state.map.height,
-      worldX: 0,
-      worldY: 0,
-      connections: [],
-    };
-
-    this.mapCatalog.register(
-      definition,
-    );
+      width:
+        state.map.width,
+      height:
+        state.map.height,
+      worldX:
+        existing?.worldX ?? 0,
+      worldY:
+        existing?.worldY ?? 0,
+      connections:
+        existing?.connections ?? [],
+    });
   }
 
   private repairCinnabarVisual(
@@ -915,16 +941,29 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
-    if (
-      mapKey ===
-      this.activeMapKey
-    ) {
-      const activeMap =
-        this.mapCatalog.get(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        );
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
 
+    const nextSignature =
+      this.createMapSignature(
+        state,
+      );
+
+    const sameMap =
+      mapKey ===
+      this.activeMapKey;
+
+    const sameSignature =
+      nextSignature ===
+      this.activeMapSignature;
+
+    if (
+      sameMap &&
+      sameSignature
+    ) {
       if (
         activeMap &&
         !this.mapVisuals.has(
@@ -942,17 +981,47 @@ export class PlayerRenderer {
       return;
     }
 
+    if (
+      sameMap &&
+      !sameSignature
+    ) {
+      const existingVisual =
+        this.mapVisuals.get(
+          mapKey,
+        );
+
+      if (existingVisual) {
+        this.disposeMapVisual(
+          mapKey,
+          existingVisual,
+        );
+      }
+
+      this.queuedMaps.delete(
+        mapKey,
+      );
+
+      this.buildQueue =
+        this.buildQueue.filter(
+          map =>
+            this.createMapKey(
+              map.mapGroup,
+              map.mapNumber,
+            ) !== mapKey,
+        );
+    }
+
     this.activeMapKey =
       mapKey;
 
-    const alreadyPositioned =
-      this.mapWorld.hasPosition(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
+    this.activeMapSignature =
+      nextSignature;
 
     if (
-      !alreadyPositioned
+      !this.mapWorld.hasPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      )
     ) {
       this.buildQueue.length =
         0;
@@ -961,38 +1030,24 @@ export class PlayerRenderer {
 
       this.mapWorld.clearPositions();
 
+      this.mapWorld.setWorldPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+        {
+          x: 0,
+          y: 0,
+        },
+      );
+
       this.mapWorld.buildFrom(
         state.map.mapGroup,
         state.map.mapNumber,
       );
-
-      if (
-        this.isFireRedFamily(state) &&
-        !this.mapWorld.hasPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        )
-      ) {
-        this.mapWorld.setWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-          {
-            x: 0,
-            y: 0,
-          },
-        );
-      }
     }
 
     const maps =
       this.mapWorld
         .getPositionedMaps();
-
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
 
     if (activeMap) {
       this.queueMapBuild(
@@ -1015,25 +1070,118 @@ export class PlayerRenderer {
     this.updateWorldVisibility(
       maps,
     );
+  }
 
-    console.log(
-      'Active World:',
-      {
-        maps:
-          maps.length,
-
-        current:
-          mapKey,
-
-        rebuilt:
-          !alreadyPositioned,
-      },
+  private createMapSignature(
+    state: GameState,
+  ): string {
+    return (
+      String(state.map.mapLayoutId) +
+      ':' +
+      state.map.mapLayoutAddress.toString(16) +
+      ':' +
+      state.map.mapDataAddress.toString(16) +
+      ':' +
+      state.map.primaryTilesetAddress.toString(16) +
+      ':' +
+      state.map.secondaryTilesetAddress.toString(16) +
+      ':' +
+      state.map.width +
+      'x' +
+      state.map.height
     );
+  }
+
+  private createMapDefinitionSignature(
+    map: MapDefinition,
+  ): string {
+    return (
+      String(map.mapLayoutId) +
+      ':' +
+      map.mapLayoutAddress.toString(16) +
+      ':' +
+      map.mapDataAddress.toString(16) +
+      ':' +
+      map.primaryTilesetAddress.toString(16) +
+      ':' +
+      map.secondaryTilesetAddress.toString(16) +
+      ':' +
+      map.width +
+      'x' +
+      map.height
+    );
+  }
+
+  private disposeMapVisual(
+    key: string,
+    visual: MapVisual,
+  ): void {
+    this.root.remove(
+      visual.baseMesh,
+    );
+
+    this.root.remove(
+      visual.overlayMesh,
+    );
+
+    visual.baseTexture.dispose();
+    visual.overlayTexture.dispose();
+    visual.geometry.dispose();
+    visual.overlayMesh.geometry.dispose();
+
+    const baseMaterial =
+      visual.baseMesh.material;
+
+    if (
+      Array.isArray(
+        baseMaterial,
+      )
+    ) {
+      baseMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      baseMaterial.dispose();
+    }
+
+    const overlayMaterial =
+      visual.overlayMesh.material;
+
+    if (
+      Array.isArray(
+        overlayMaterial,
+      )
+    ) {
+      overlayMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      overlayMaterial.dispose();
+    }
+
+    this.mapVisuals.delete(
+      key,
+    );
+
+    this.tilesetAnimationController
+      .unregisterMap(
+        key,
+      );
   }
 
   private queueMapBuild(
     map: MapDefinition,
   ): void {
+    if (
+      this.isForbiddenFireRedMapData(
+        map,
+      )
+    ) {
+      return;
+    }
+
     const key =
       this.createMapKey(
         map.mapGroup,
@@ -1197,6 +1345,13 @@ export class PlayerRenderer {
   private buildMapVisual(
     map: MapDefinition,
   ): void {
+    if (
+      this.isForbiddenFireRedMapData(
+        map,
+      )
+    ) {
+      return;
+    }
     type MapRenderData =
       NonNullable<
         ReturnType<
