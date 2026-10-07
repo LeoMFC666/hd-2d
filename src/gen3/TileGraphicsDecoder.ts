@@ -13,9 +13,6 @@ export class TileGraphicsDecoder {
   private readonly romBytes:
     Uint8Array | null;
 
-  private readonly romDataView:
-    DataView | null;
-
   private readonly decompressedTilesCache =
     new Map<string, Uint8Array>();
 
@@ -180,7 +177,7 @@ export class TileGraphicsDecoder {
       romOffset >= 0 &&
       this.romBytes
     ) {
-      return this.romBytes.slice(
+      return this.romBytes.subarray(
         romOffset,
         romOffset + length,
       );
