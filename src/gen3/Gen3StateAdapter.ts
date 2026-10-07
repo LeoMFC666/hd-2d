@@ -292,7 +292,7 @@ export class Gen3StateAdapter {
     );
 
   private metatileGraphicsCache = new Map<
-    number,
+    string,
     Gen3MetatileGraphics | null
   >();
 
@@ -1018,11 +1018,6 @@ export class Gen3StateAdapter {
     const previousSecondary =
       this.currentSecondaryTileset;
 
-    const previousCache =
-      new Map(
-        this.metatileGraphicsCache,
-      );
-
     try {
       const primaryTileset =
         this.readTileset(
@@ -1046,8 +1041,6 @@ export class Gen3StateAdapter {
 
       this.currentSecondaryTileset =
         secondaryTileset;
-
-      this.metatileGraphicsCache.clear();
 
       const blocks =
         this.readMapBlocks(
@@ -1096,19 +1089,7 @@ export class Gen3StateAdapter {
       this.currentSecondaryTileset =
         previousSecondary;
 
-      this.metatileGraphicsCache.clear();
-
-      for (
-        const [
-          key,
-          value,
-        ] of previousCache
-      ) {
-        this.metatileGraphicsCache.set(
-          key,
-          value,
-        );
-      }
+      // Persistent graphics cache is keyed by both tilesets and metatile ID.
     }
   }
   
@@ -1127,14 +1108,19 @@ export class Gen3StateAdapter {
       return null;
     }
 
+    const cacheKey =
+      this.createMetatileGraphicsCacheKey(
+        metatileId,
+      );
+
     if (
       this.metatileGraphicsCache.has(
-        metatileId,
+        cacheKey,
       )
     ) {
       return (
         this.metatileGraphicsCache.get(
-          metatileId,
+          cacheKey,
         ) ?? null
       );
     }
@@ -1146,7 +1132,7 @@ export class Gen3StateAdapter {
 
     if (!source) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1194,7 +1180,7 @@ export class Gen3StateAdapter {
     };
 
     this.metatileGraphicsCache.set(
-      metatileId,
+      cacheKey,
       graphics,
     );
 
@@ -1435,6 +1421,54 @@ export class Gen3StateAdapter {
     };
   }
 
+  private createMetatileGraphicsCacheKey(
+    metatileId: number,
+  ): string {
+    return (
+      String(
+        this.currentPrimaryTileset?.address ??
+        0,
+      ) +
+      ':' +
+      String(
+        this.currentSecondaryTileset?.address ??
+        0,
+      ) +
+      ':' +
+      String(metatileId)
+    );
+  }
+
+  private readRomU16(
+    address: number,
+  ): number {
+    if (
+      !this.romDataView ||
+      address < 0x08000000
+    ) {
+      return this.memoryReader.readU16(
+        address,
+      );
+    }
+
+    const offset =
+      address -
+      0x08000000;
+
+    if (
+      offset < 0 ||
+      offset + 2 >
+        this.romDataView.byteLength
+    ) {
+      return 0;
+    }
+
+    return this.romDataView.getUint16(
+      offset,
+      true,
+    );
+  }
+
   private readPalette(
     palettesAddress: number,
     paletteIndex: number,
@@ -1469,7 +1503,7 @@ export class Gen3StateAdapter {
       i++
     ) {
       const raw =
-        this.memoryReader.readU16(
+        this.readRomU16(
           paletteAddress +
             i * GBA_PALETTE_COLOR_BYTES,
         );
