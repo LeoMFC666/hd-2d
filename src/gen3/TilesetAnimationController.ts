@@ -196,6 +196,15 @@ export class TilesetAnimationController {
       Uint8Array
     >();
 
+  private readonly animatedTileIndex =
+    new Map<
+      string,
+      number[]
+    >();
+
+  private animatedTileIndexDirty =
+    true;
+
   private activePrimaryTilesetAddress =
     0;
 
@@ -291,6 +300,9 @@ export class TilesetAnimationController {
     this.patchCurrentSnapshots(
       target,
     );
+
+    this.animatedTileIndexDirty =
+      true;
   }
 
   unregisterMap(
@@ -299,6 +311,9 @@ export class TilesetAnimationController {
     this.targets.delete(
       key,
     );
+
+    this.animatedTileIndexDirty =
+      true;
   }
 
   clear(): void {
@@ -306,6 +321,9 @@ export class TilesetAnimationController {
     this.metatileCache.clear();
     this.paletteCache.clear();
     this.liveTiles.clear();
+    this.animatedTileIndex.clear();
+    this.animatedTileIndexDirty =
+      true;
     this.activePrimaryTilesetAddress = 0;
     this.activeSecondaryTilesetAddress = 0;
     this.frameCounter = 0;
@@ -521,50 +539,105 @@ export class TilesetAnimationController {
     secondary:
       boolean,
   ): number[] {
-    const ids =
-      new Set<number>();
+    const indexKey =
+      this.liveTileKey(
+        tilesetAddress,
+        secondary ? 1 : 0,
+      );
+
+    if (
+      !this.animatedTileIndexDirty
+    ) {
+      return (
+        this.animatedTileIndex.get(
+          indexKey,
+        ) ?? []
+      );
+    }
+
+    this.animatedTileIndex.clear();
 
     for (
       const target of
         this.targets.values()
     ) {
-      const matches =
-        secondary
-          ? target.map
-              .secondaryTilesetAddress ===
-            tilesetAddress
-          : target.map
-              .primaryTilesetAddress ===
-            tilesetAddress;
+      const addPlacements =
+        (
+          placements:
+            Map<
+              number,
+              AnimatedTile[]
+            >,
+          address:
+            number,
+          isSecondary:
+            boolean,
+        ): void => {
+          const ids =
+            new Set<number>(
+              this.animatedTileIndex.get(
+                this.liveTileKey(
+                  address,
+                  isSecondary
+                    ? 1
+                    : 0,
+                ),
+              ) ?? [],
+            );
 
-      if (!matches) {
-        continue;
-      }
+          for (
+            const [tileId, entries] of
+              placements
+          ) {
+            if (
+              entries.some(
+                entry =>
+                  entry.secondary ===
+                  isSecondary,
+              )
+            ) {
+              ids.add(
+                tileId,
+              );
+            }
+          }
 
-      for (
-        const [tileId, placements] of
-          target.placementsByTile
-      ) {
-        const applies =
-          placements.some(
-            placement =>
-              placement.secondary ===
-              secondary,
+          this.animatedTileIndex.set(
+            this.liveTileKey(
+              address,
+              isSecondary
+                ? 1
+                : 0,
+            ),
+            Array.from(
+              ids,
+            ).sort(
+              (a, b) =>
+                a - b,
+            ),
           );
+        };
 
-        if (applies) {
-          ids.add(
-            tileId,
-          );
-        }
-      }
+      addPlacements(
+        target.placementsByTile,
+        target.map.primaryTilesetAddress,
+        false,
+      );
+
+      addPlacements(
+        target.placementsByTile,
+        target.map.secondaryTilesetAddress,
+        true,
+      );
     }
 
-    return Array.from(
-      ids,
-    ).sort(
-      (a, b) =>
-        a - b,
+    this.animatedTileIndexDirty =
+      false;
+
+    return (
+      this.animatedTileIndex.get(
+        indexKey,
+      ) ?? []
     );
   }
 
