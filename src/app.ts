@@ -552,12 +552,58 @@ export function setupApp(): void {
 
   resetButton.addEventListener(
     'click',
-    () => {
-      emulator.reset();
+    async () => {
+      if (
+        !currentRomBytes
+      ) {
+        updateStatus(
+          'Load a .gba ROM before resetting.',
+        );
 
-      updateStatus(
-        'Emulator reset.',
-      );
+        return;
+      }
+
+      try {
+        emulator.pause();
+
+        destroyScene();
+
+        emulator.reset();
+
+        emulator.resume();
+
+        await waitForStableGameplayState();
+
+        createScene();
+
+        updateStatus(
+          'Emulator reset.',
+        );
+      } catch (
+        error
+      ) {
+        emulator.resume();
+
+        try {
+          if (
+            currentRomBytes &&
+            !scene
+          ) {
+            createScene();
+          }
+        } catch {
+          // Keep the reset error visible.
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown emulator reset error.';
+
+        updateStatus(
+          `Reset failed: ${message}`,
+        );
+      }
     },
   );
 
