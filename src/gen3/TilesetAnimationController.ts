@@ -126,7 +126,7 @@ interface AnimatedMapTarget {
   baseTexture:
     THREE.DataTexture;
 
-  overlayTexture:
+  texture:
     THREE.DataTexture;
 
   placementsByTile:
@@ -253,9 +253,7 @@ export class TilesetAnimationController {
   attachMap(
     key: string,
     map: MapDefinition,
-    baseTexture:
-      THREE.DataTexture,
-    overlayTexture:
+    texture:
       THREE.DataTexture,
     placementsByTile:
       Map<number, AnimatedTile[]>,
@@ -263,8 +261,7 @@ export class TilesetAnimationController {
     const target: AnimatedMapTarget = {
       key,
       map,
-      baseTexture,
-      overlayTexture,
+      texture,
       placementsByTile,
     };
 
@@ -820,10 +817,7 @@ export class TilesetAnimationController {
       }
 
       const texture =
-        placement.target ===
-        'base'
-          ? target.baseTexture
-          : target.overlayTexture;
+        target.texture;
 
       const textureData =
         texture.image
@@ -1503,7 +1497,7 @@ export class TilesetAnimationController {
       ) ||
       (
         localId >= 496 &&
-        localId < 508
+          localId < 512
       )
     );
   }
