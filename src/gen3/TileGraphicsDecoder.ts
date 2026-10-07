@@ -28,15 +28,6 @@ export class TileGraphicsDecoder {
 
     this.romBytes =
       romBytes ?? null;
-
-    this.romDataView =
-      romBytes
-        ? new DataView(
-            romBytes.buffer,
-            romBytes.byteOffset,
-            romBytes.byteLength,
-          )
-        : null;
   }
 
   readTile(
