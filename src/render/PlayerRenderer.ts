@@ -259,9 +259,6 @@ export class PlayerRenderer {
           'high-performance',
       });
 
-    this.renderer.sortObjects =
-      false;
-
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
