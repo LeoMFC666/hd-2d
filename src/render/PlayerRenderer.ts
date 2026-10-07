@@ -682,6 +682,13 @@ export class PlayerRenderer {
           layoutOffset + 0x0c,
         );
 
+      if (
+        mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+      ) {
+        continue;
+      }
+
       const primaryTilesetAddress =
         readU32(
           layoutOffset + 0x10,
