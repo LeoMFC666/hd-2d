@@ -1409,6 +1409,12 @@ export class PlayerRenderer {
 
       visual.overlayMesh.visible =
         visible;
+
+      this.tilesetAnimationController
+        .setMapVisibility(
+          key,
+          visible,
+        );
     }
   }
 
@@ -1745,6 +1751,12 @@ export class PlayerRenderer {
 
     overlayMesh.visible =
       visible;
+
+    this.tilesetAnimationController
+      .setMapVisibility(
+        mapKey,
+        visible,
+      );
   }
 
   private createMapTexture(
