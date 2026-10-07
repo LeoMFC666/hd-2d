@@ -21,13 +21,6 @@ const GBA_VRAM_BASE =
 const ANIMATED_PRIMARY_TILE_START =
   416;
 
-const ANIMATED_PRIMARY_TILE_END =
-  512;
-
-const ANIMATED_PRIMARY_TILE_COUNT =
-  ANIMATED_PRIMARY_TILE_END -
-  ANIMATED_PRIMARY_TILE_START;
-
 const TILE_BYTES =
   32;
 
@@ -194,6 +187,30 @@ export class TilesetAnimationController {
   private activeSecondaryTilesetAddress =
     0;
 
+  private readonly primaryAnimatedTilesByTileset =
+    new Map<
+      number,
+      Set<number>
+    >();
+
+  private readonly secondaryAnimatedTilesByTileset =
+    new Map<
+      number,
+      Set<number>
+    >();
+
+  private readonly primaryTargetsByAnimation =
+    new Map<
+      string,
+      Set<string>
+    >();
+
+  private readonly secondaryTargetsByAnimation =
+    new Map<
+      string,
+      Set<string>
+    >();
+
   private frameCounter =
     0;
 
@@ -257,21 +274,109 @@ export class TilesetAnimationController {
     );
 
     for (
-      const placements of
-        placementsByTile.values()
+      const [tileId] of
+        placementsByTile
     ) {
+      const placements =
+        placementsByTile.get(
+          tileId,
+        );
+
+      if (!placements) {
+        continue;
+      }
+
+      let hasPrimary =
+        false;
+
+      let hasSecondary =
+        false;
+
       for (
         const placement of
           placements
       ) {
-        placement.restorePixels =
-          placement.target ===
-          'base'
-            ? this.captureBaseRestorePixels(
-                target,
-                placement,
-              )
-            : null;
+        if (placement.secondary) {
+          hasSecondary = true;
+        } else {
+          hasPrimary = true;
+        }
+      }
+
+      if (hasPrimary) {
+        const tileSet =
+          this.primaryAnimatedTilesByTileset.get(
+            map.primaryTilesetAddress,
+          ) ??
+          new Set<number>();
+
+        tileSet.add(
+          tileId,
+        );
+
+        this.primaryAnimatedTilesByTileset.set(
+          map.primaryTilesetAddress,
+          tileSet,
+        );
+
+        const animationKey =
+          this.createAnimationKey(
+            map.primaryTilesetAddress,
+            tileId,
+          );
+
+        const targetSet =
+          this.primaryTargetsByAnimation.get(
+            animationKey,
+          ) ??
+          new Set<string>();
+
+        targetSet.add(
+          key,
+        );
+
+        this.primaryTargetsByAnimation.set(
+          animationKey,
+          targetSet,
+        );
+      }
+
+      if (hasSecondary) {
+        const tileSet =
+          this.secondaryAnimatedTilesByTileset.get(
+            map.secondaryTilesetAddress,
+          ) ??
+          new Set<number>();
+
+        tileSet.add(
+          tileId,
+        );
+
+        this.secondaryAnimatedTilesByTileset.set(
+          map.secondaryTilesetAddress,
+          tileSet,
+        );
+
+        const animationKey =
+          this.createAnimationKey(
+            map.secondaryTilesetAddress,
+            tileId,
+          );
+
+        const targetSet =
+          this.secondaryTargetsByAnimation.get(
+            animationKey,
+          ) ??
+          new Set<string>();
+
+        targetSet.add(
+          key,
+        );
+
+        this.secondaryTargetsByAnimation.set(
+          animationKey,
+          targetSet,
+        );
       }
     }
 
@@ -279,28 +384,26 @@ export class TilesetAnimationController {
       const [tileId, tileBytes] of
         this.liveTiles
     ) {
-      const isPrimarySnapshot =
-        tileId >=
-          ANIMATED_PRIMARY_TILE_START &&
-        tileId <
-          ANIMATED_PRIMARY_TILE_END &&
-        map.primaryTilesetAddress ===
-          this.activePrimaryTilesetAddress;
+      const primaryTargets =
+        this.primaryTargetsByAnimation.get(
+          this.createAnimationKey(
+            map.primaryTilesetAddress,
+            tileId,
+          ),
+        );
 
-      const isSecondarySnapshot =
-        this.isAnimatedSecondaryTile(
-          tileId,
-        ) &&
-        map.secondaryTilesetAddress ===
-          this.activeSecondaryTilesetAddress;
+      const secondaryTargets =
+        this.secondaryTargetsByAnimation.get(
+          this.createAnimationKey(
+            map.secondaryTilesetAddress,
+            tileId,
+          ),
+        );
 
       if (
-        placementsByTile.has(
-          tileId,
-        ) &&
         (
-          isPrimarySnapshot ||
-          isSecondarySnapshot
+          primaryTargets?.has(key) ||
+          secondaryTargets?.has(key)
         )
       ) {
         this.patchTarget(
@@ -315,6 +418,129 @@ export class TilesetAnimationController {
   unregisterMap(
     key: string,
   ): void {
+    const target =
+      this.targets.get(
+        key,
+      );
+
+    if (!target) {
+      return;
+    }
+
+    for (
+      const [tileId] of
+        target.placementsByTile
+    ) {
+      const placements =
+        target.placementsByTile.get(
+          tileId,
+        );
+
+      if (!placements) {
+        continue;
+      }
+
+      const hasPrimary =
+        placements.some(
+          placement =>
+            !placement.secondary,
+        );
+
+      const hasSecondary =
+        placements.some(
+          placement =>
+            placement.secondary,
+        );
+
+      if (hasPrimary) {
+        const animationKey =
+          this.createAnimationKey(
+            target.map.primaryTilesetAddress,
+            tileId,
+          );
+
+        const targetSet =
+          this.primaryTargetsByAnimation.get(
+            animationKey,
+          );
+
+        targetSet?.delete(
+          key,
+        );
+
+        if (
+          !targetSet ||
+          targetSet.size === 0
+        ) {
+          this.primaryTargetsByAnimation.delete(
+            animationKey,
+          );
+
+          const tiles =
+            this.primaryAnimatedTilesByTileset.get(
+              target.map.primaryTilesetAddress,
+            );
+
+          tiles?.delete(
+            tileId,
+          );
+
+          if (
+            !tiles ||
+            tiles.size === 0
+          ) {
+            this.primaryAnimatedTilesByTileset.delete(
+              target.map.primaryTilesetAddress,
+            );
+          }
+        }
+      }
+
+      if (hasSecondary) {
+        const animationKey =
+          this.createAnimationKey(
+            target.map.secondaryTilesetAddress,
+            tileId,
+          );
+
+        const targetSet =
+          this.secondaryTargetsByAnimation.get(
+            animationKey,
+          );
+
+        targetSet?.delete(
+          key,
+        );
+
+        if (
+          !targetSet ||
+          targetSet.size === 0
+        ) {
+          this.secondaryTargetsByAnimation.delete(
+            animationKey,
+          );
+
+          const tiles =
+            this.secondaryAnimatedTilesByTileset.get(
+              target.map.secondaryTilesetAddress,
+            );
+
+          tiles?.delete(
+            tileId,
+          );
+
+          if (
+            !tiles ||
+            tiles.size === 0
+          ) {
+            this.secondaryAnimatedTilesByTileset.delete(
+              target.map.secondaryTilesetAddress,
+            );
+          }
+        }
+      }
+    }
+
     this.targets.delete(
       key,
     );
@@ -329,6 +555,10 @@ export class TilesetAnimationController {
     this.activePrimaryTilesetAddress = 0;
     this.activeSecondaryTilesetAddress = 0;
     this.liveTiles.clear();
+    this.primaryAnimatedTilesByTileset.clear();
+    this.secondaryAnimatedTilesByTileset.clear();
+    this.primaryTargetsByAnimation.clear();
+    this.secondaryTargetsByAnimation.clear();
     this.frameCounter = 0;
   }
 
@@ -362,10 +592,11 @@ export class TilesetAnimationController {
       secondaryTilesetAddress !==
       this.activeSecondaryTilesetAddress;
 
-    if (
-      primaryChanged ||
-      secondaryChanged
-    ) {
+    if (primaryChanged) {
+      this.liveTiles.clear();
+    }
+
+    if (secondaryChanged) {
       this.liveTiles.clear();
     }
 
@@ -385,133 +616,144 @@ export class TilesetAnimationController {
       return;
     }
 
-    const watched =
-      new Set<number>();
-
-    for (
-      const target of
-        this.targets.values()
-    ) {
-      if (
-        target.map.primaryTilesetAddress ===
-          primaryTilesetAddress
-      ) {
-        for (
-          const tileId of
-            target.placementsByTile.keys()
+    const readTiles =
+      (
+        tileIds:
+          Set<number> | undefined,
+      ): void => {
+        if (
+          !tileIds ||
+          tileIds.size === 0
         ) {
-          if (
-            tileId >=
-              ANIMATED_PRIMARY_TILE_START &&
-            tileId <
-              ANIMATED_PRIMARY_TILE_END
-          ) {
-            watched.add(
-              tileId,
-            );
-          }
+          return;
         }
-      }
 
-      if (
-        target.map.secondaryTilesetAddress ===
-          secondaryTilesetAddress
-      ) {
         for (
-          const tileId of
-            target.placementsByTile.keys()
+          const tileId of tileIds
         ) {
-          if (
-            this.isAnimatedSecondaryTile(
-              tileId,
-            )
-          ) {
-            watched.add(
-              tileId,
-            );
-          }
-        }
-      }
-    }
-
-    if (
-      watched.size === 0
-    ) {
-      return;
-    }
-
-    for (
-      const tileId of watched
-    ) {
-      const tileBytes =
-        this.memoryReader.readRange(
-          GBA_VRAM_BASE +
-            tileId *
+          const tileBytes =
+            this.memoryReader.readRange(
+              GBA_VRAM_BASE +
+                tileId *
+                  TILE_BYTES,
               TILE_BYTES,
-          TILE_BYTES,
-        );
+            );
 
-      const previous =
-        this.liveTiles.get(
-          tileId,
-        );
-
-      let changed =
-        previous === undefined;
-
-      if (
-        !changed &&
-        previous
-      ) {
-        changed = false;
-
-        for (
-          let index = 0;
-          index < TILE_BYTES;
-          index++
-        ) {
-          if (
-            tileBytes[index] !==
-            previous[index]
-          ) {
-            changed = true;
-            break;
-          }
-        }
-      }
-
-      if (
-        changed
-      ) {
-        for (
-          const target of
-            this.targets.values()
-        ) {
-          if (
-            target.placementsByTile.has(
+          const previous =
+            this.liveTiles.get(
               tileId,
-            ) &&
-            (
-              target.map.primaryTilesetAddress ===
-                primaryTilesetAddress ||
-              target.map.secondaryTilesetAddress ===
-                secondaryTilesetAddress
-            )
+            );
+
+          if (
+            previous === undefined
           ) {
-            this.patchTarget(
-              target,
+            this.liveTiles.set(
               tileId,
               tileBytes,
             );
-          }
-        }
-      }
 
-      this.liveTiles.set(
-        tileId,
-        tileBytes,
-      );
-    }
+            continue;
+          }
+
+          let changed =
+            false;
+
+          for (
+            let index = 0;
+            index < TILE_BYTES;
+            index++
+          ) {
+            if (
+              tileBytes[index] !==
+              previous[index]
+            ) {
+              changed = true;
+              break;
+            }
+          }
+
+          if (
+            changed
+          ) {
+            const primaryTargets =
+              this.primaryTargetsByAnimation.get(
+                this.createAnimationKey(
+                  primaryTilesetAddress,
+                  tileId,
+                ),
+              );
+
+            if (primaryTargets) {
+              for (
+                const targetKey of
+                  primaryTargets
+              ) {
+                const target =
+                  this.targets.get(
+                    targetKey,
+                  );
+
+                if (
+                  target
+                ) {
+                  this.patchTarget(
+                    target,
+                    tileId,
+                    tileBytes,
+                  );
+                }
+              }
+            }
+
+            const secondaryTargets =
+              this.secondaryTargetsByAnimation.get(
+                this.createAnimationKey(
+                  secondaryTilesetAddress,
+                  tileId,
+                ),
+              );
+
+            if (secondaryTargets) {
+              for (
+                const targetKey of
+                  secondaryTargets
+              ) {
+                const target =
+                  this.targets.get(
+                    targetKey,
+                  );
+
+                if (
+                  target
+                ) {
+                  this.patchTarget(
+                    target,
+                    tileId,
+                    tileBytes,
+                  );
+                }
+              }
+            }
+          }
+
+          this.liveTiles.set(
+            tileId,
+            tileBytes,
+          );
+        }
+      };
+
+    readTiles(
+      this.primaryAnimatedTilesByTileset.get(
+        primaryTilesetAddress,
+      ),
+    );
+
+    readTiles(
+      this.secondaryAnimatedTilesByTileset.get(
+        secondaryTilesetAddress,
+      ),
+    );
   }
 
   private patchTarget(
@@ -873,6 +1115,17 @@ export class TilesetAnimationController {
     return restore;
   }
 
+  private createAnimationKey(
+    tilesetAddress: number,
+    tileId: number,
+  ): string {
+    return (
+      tilesetAddress.toString(16) +
+      ':' +
+      tileId
+    );
+  }
+
   private read4BppPixel(
     tileBytes: Uint8Array,
     x: number,
@@ -983,11 +1236,8 @@ export class TilesetAnimationController {
 
           const animated =
             isPrimary
-              ? (
-                  globalTileId >=
-                    ANIMATED_PRIMARY_TILE_START &&
-                  globalTileId <
-                    ANIMATED_PRIMARY_TILE_END
+              ? this.isAnimatedPrimaryTile(
+                  globalTileId,
                 )
               : this.isAnimatedSecondaryTile(
                   globalTileId,
@@ -1072,44 +1322,104 @@ export class TilesetAnimationController {
     return placementsByTile;
   }
 
+  private isAnimatedPrimaryTile(
+    tileId: number,
+  ): boolean {
+    if (this.isFireRedFamily) {
+      return (
+        (
+          tileId >= 416 &&
+          tileId <= 481
+        ) ||
+        (
+          tileId >= 508 &&
+          tileId <= 511
+        )
+      );
+    }
+
+    return (
+      (
+        tileId >= 432 &&
+        tileId <= 489
+      ) ||
+      (
+        tileId >= 496 &&
+        tileId <= 501
+      ) ||
+      (
+        tileId >= 508 &&
+        tileId <= 511
+      )
+    );
+  }
+
   private isAnimatedSecondaryTile(
     tileId: number,
   ): boolean {
     if (
-      tileId < 512 ||
+      tileId < this.getNumTilesInPrimary() ||
       tileId >= 1024
     ) {
       return false;
     }
 
+    const local =
+      tileId -
+      this.getNumTilesInPrimary();
+
     if (this.isFireRedFamily) {
       return (
         (
-          tileId >= 739 &&
-          tileId <= 751
+          local >= 99 &&
+          local <= 102
         ) ||
         (
-          tileId >= 880 &&
-          tileId <= 886
+          local >= 240 &&
+          local <= 246
         ) ||
         (
-          tileId >= 896 &&
-          tileId <= 903
+          local >= 256 &&
+          local <= 263
         ) ||
         (
-          tileId >= 976 &&
-          tileId <= 983
+          local >= 336 &&
+          local <= 339
         )
       );
     }
 
-    const local =
-      tileId -
-      512;
-
     return (
       (
         local >= 96 &&
+        local <= 124 &&
+        local % 4 === 0
+      ) ||
+      (
+        local >= 128 &&
+        local <= 156 &&
+        local % 4 === 0
+      ) ||
+      (
+        local === 135 ||
+        local === 136 ||
+        local === 137 ||
+        local === 138 ||
+        local === 139 ||
+        local === 140 ||
+        local === 141 ||
+        local === 142
+      ) ||
+      (
+        local >= 144 &&
+        local <= 159
+      ) ||
+      (
+        local >= 151 &&
+        local <= 158
+      ) ||
+      (
+        local >= 160 &&
         local <= 163
       ) ||
       (
@@ -1118,7 +1428,21 @@ export class TilesetAnimationController {
       ) ||
       (
         local >= 218 &&
+        local <= 223
+      ) ||
+      (
+        local >= 224 &&
+        local <= 252 &&
+        local % 4 === 0
+      ) ||
+      (
+        local >= 240 &&
         local <= 335
+      ) ||
+      (
+        local >= 288 &&
+        local <= 292 &&
+        local % 4 === 0
       ) ||
       (
         local >= 416 &&
@@ -1130,9 +1454,12 @@ export class TilesetAnimationController {
       ) ||
       (
         local >= 464 &&
-        local <= 499
+        local <= 493
       ) ||
-      local === 504
+      (
+        local >= 496 &&
+        local <= 507
+      )
     );
   }
 
@@ -1332,9 +1659,10 @@ export class TilesetAnimationController {
         : 6;
 
     const palettesAddress =
-      placement.secondary
-        ? secondaryPaletteAddress
-        : primaryPaletteAddress;
+      placement.paletteIndex <
+        primaryPaletteCount
+        ? primaryPaletteAddress
+        : secondaryPaletteAddress;
 
     if (
       !this.isValidRomPointer(
