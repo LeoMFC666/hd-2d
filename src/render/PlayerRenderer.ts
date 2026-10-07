@@ -289,6 +289,41 @@ export class PlayerRenderer {
       this.resizeHandler,
     );
 
+    if (
+      import.meta.env.DEV
+    ) {
+      (
+        globalThis as any
+      ).__pkmn25dDebug = {
+        getState: () =>
+          this.currentState,
+        getActiveMapKey: () =>
+          this.activeMapKey,
+        getMapVisuals: () =>
+          Array.from(
+            this.mapVisuals.entries(),
+          ).map(
+            ([key, visual]) => ({
+              key,
+              mapDataAddress:
+                visual.mapDataAddress,
+              visible:
+                visual.baseMesh.visible,
+            }),
+          ),
+        getRenderInfo: () => ({
+          calls:
+            this.renderer.info.render.calls,
+          triangles:
+            this.renderer.info.render.triangles,
+          textures:
+            this.renderer.info.memory.textures,
+          geometries:
+            this.renderer.info.memory.geometries,
+        }),
+      };
+    }
+
     this.animate();
   }
 
