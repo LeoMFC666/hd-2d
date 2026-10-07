@@ -306,7 +306,7 @@ export class PlayerRenderer {
               mapDataAddress:
                 visual.mapDataAddress,
               visible:
-                visual.baseMesh.visible,
+                visual.mesh.visible,
             }),
           ),
         getPositionedMapCount: () =>
@@ -1251,68 +1251,28 @@ export class PlayerRenderer {
         textureHeight,
       );
 
-    const overlayTexture =
-      this.createMapTexture(
-        foregroundPixels,
-        textureWidth,
-        textureHeight,
-      );
-
     const geometry =
       new THREE.PlaneGeometry(
         map.width,
         map.height,
       );
 
-    const baseMaterial =
+    const material =
       new THREE.MeshBasicMaterial({
-        map:
-          baseTexture,
-
-        transparent:
-          true,
-
-        depthWrite:
-          true,
-
-        side:
-          THREE.DoubleSide,
+        map: texture,
+        transparent: true,
+        alphaTest: 0.5,
+        depthWrite: true,
+        side: THREE.FrontSide,
       });
 
-    const overlayMaterial =
-      new THREE.MeshBasicMaterial({
-        map:
-          overlayTexture,
-
-        transparent:
-          true,
-
-        depthTest:
-          false,
-
-        depthWrite:
-          false,
-
-        side:
-          THREE.DoubleSide,
-      });
-
-    const baseMesh =
+    const mesh =
       new THREE.Mesh(
         geometry,
-        baseMaterial,
+        material,
       );
 
-    const overlayMesh =
-      new THREE.Mesh(
-        geometry.clone(),
-        overlayMaterial,
-      );
-
-    baseMesh.rotation.x =
-      -Math.PI / 2;
-
-    overlayMesh.rotation.x =
+    mesh.rotation.x =
       -Math.PI / 2;
 
     const position =
