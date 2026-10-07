@@ -28,6 +28,9 @@ import {
 const GBA_METATILE_PIXELS =
   16;
 
+const MAX_DEVICE_PIXEL_RATIO =
+  1.5;
+
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
@@ -109,6 +112,9 @@ export class PlayerRenderer {
 
   private frameId =
     0;
+
+  private renderDirty =
+    true;
 
   private lastPlayerX =
     -1;
@@ -250,22 +256,49 @@ export class PlayerRenderer {
       sun,
     );
 
+    const renderCanvas =
+      document.createElement('canvas');
+
+    const webgl2Context =
+      renderCanvas.getContext(
+        'webgl2',
+        {
+          alpha: false,
+          antialias: false,
+          depth: true,
+          stencil: false,
+          preserveDrawingBuffer: false,
+          powerPreference: 'high-performance',
+          premultipliedAlpha: false,
+        },
+      );
+
+    if (!webgl2Context) {
+      throw new Error(
+        'WebGL2 is required for the 2.5D renderer.',
+      );
+    }
+
     this.renderer =
       new THREE.WebGLRenderer({
+        canvas: renderCanvas,
+        context: webgl2Context,
         antialias: false,
-        alpha: true,
+        alpha: false,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: false,
       });
 
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
-        2,
+        MAX_DEVICE_PIXEL_RATIO,
       ),
     );
 
     this.renderer.setClearColor(
-      0x000000,
-      0,
+      0x0b1220,
+      1,
     );
 
     this.container.appendChild(
@@ -1066,12 +1099,12 @@ export class PlayerRenderer {
   }
 
   private processMapBuildQueue():
-    void {
+    boolean {
     const map =
       this.buildQueue.shift();
 
     if (!map) {
-      return;
+      return false;
     }
 
     const key =
@@ -1089,13 +1122,14 @@ export class PlayerRenderer {
         key,
       )
     ) {
-      return;
+      return false;
     }
 
     try {
       this.buildMapVisual(
         map,
       );
+      return true;
     } catch (error) {
       console.error(
         'Failed to build map visual.',
@@ -1104,6 +1138,7 @@ export class PlayerRenderer {
           error,
         },
       );
+      return false;
     }
   }
 
@@ -1670,12 +1705,6 @@ export class PlayerRenderer {
         state,
       );
 
-    this.player.position.x =
-      position.x;
-
-    this.player.position.z =
-      position.z;
-
     const directionMap = {
       UP:
         -Math.PI / 2,
@@ -1693,10 +1722,31 @@ export class PlayerRenderer {
       number
     >;
 
-    this.player.rotation.y =
+    const rotation =
       directionMap[
         state.player.direction
       ] ?? 0;
+
+    const changed =
+      this.player.position.x !==
+        position.x ||
+      this.player.position.z !==
+        position.z ||
+      this.player.rotation.y !==
+        rotation;
+
+    this.player.position.x =
+      position.x;
+
+    this.player.position.z =
+      position.z;
+
+    this.player.rotation.y =
+      rotation;
+
+    if (changed) {
+      this.renderDirty = true;
+    }
 
     return position;
   }
@@ -1706,7 +1756,7 @@ export class PlayerRenderer {
       x: number;
       z: number;
     },
-  ): void {
+  ): boolean {
     const targetX =
       position.x;
 
@@ -1721,6 +1771,15 @@ export class PlayerRenderer {
 
     const cameraTargetZ =
       targetZ + 11;
+
+    const previousX =
+      this.camera.position.x;
+
+    const previousY =
+      this.camera.position.y;
+
+    const previousZ =
+      this.camera.position.z;
 
     this.camera.position.x +=
       (
@@ -1740,11 +1799,23 @@ export class PlayerRenderer {
         this.camera.position.z
       ) * 0.12;
 
-    this.camera.lookAt(
-      targetX,
-      0,
-      targetZ,
-    );
+    const changed =
+      previousX !==
+        this.camera.position.x ||
+      previousY !==
+        this.camera.position.y ||
+      previousZ !==
+        this.camera.position.z;
+
+    if (changed) {
+      this.camera.lookAt(
+        targetX,
+        0,
+        targetZ,
+      );
+    }
+
+    return changed;
   }
 
   private updateDebug(
@@ -1838,6 +1909,9 @@ export class PlayerRenderer {
           this.animate,
         );
 
+      let dirty =
+        this.renderDirty;
+
       const state =
         this.stateAdapter
           .readState();
@@ -1871,29 +1945,38 @@ export class PlayerRenderer {
         );
       }
 
-      this.processMapBuildQueue();
+      dirty =
+        this.processMapBuildQueue() ||
+        dirty;
 
-      this.tilesetAnimationController.update(
-        state.map.primaryTilesetAddress,
-      );
+      dirty =
+        this.tilesetAnimationController.update(
+          state.map.primaryTilesetAddress,
+        ) || dirty;
 
       const playerPosition =
         this.updatePlayer(
           state,
         );
 
-      this.updateCamera(
-        playerPosition,
-      );
+      dirty =
+        this.updateCamera(
+          playerPosition,
+        ) || dirty;
 
       this.updateDebug(
         state,
       );
 
-      this.renderer.render(
-        this.scene,
-        this.camera,
-      );
+      if (dirty) {
+        this.renderer.render(
+          this.scene,
+          this.camera,
+        );
+
+        this.renderDirty =
+          false;
+      }
     };
 
   destroy(): void {
