@@ -760,7 +760,6 @@ export class PlayerRenderer {
     state: GameState,
   ): void {
     if (
-      !this.isFireRedFamily(state) ||
       state.map.mapLayoutAddress === 0 ||
       state.map.width <= 0 ||
       state.map.height <= 0 ||
@@ -777,31 +776,48 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
-    if (existing) {
+    if (
+      existing &&
+      existing.mapLayoutAddress ===
+        state.map.mapLayoutAddress &&
+      existing.mapDataAddress ===
+        state.map.mapDataAddress &&
+      existing.primaryTilesetAddress ===
+        state.map.primaryTilesetAddress &&
+      existing.secondaryTilesetAddress ===
+        state.map.secondaryTilesetAddress
+    ) {
       return;
     }
 
-    const definition: MapDefinition = {
-      mapGroup: state.map.mapGroup,
-      mapNumber: state.map.mapNumber,
-      mapLayoutId: state.map.mapLayoutId,
-      mapHeaderAddress: state.map.mapHeaderAddress,
-      mapLayoutAddress: state.map.mapLayoutAddress,
-      mapDataAddress: state.map.mapDataAddress,
+    this.mapCatalog.register({
+      mapGroup:
+        state.map.mapGroup,
+      mapNumber:
+        state.map.mapNumber,
+      mapLayoutId:
+        state.map.mapLayoutId,
+      mapHeaderAddress:
+        state.map.mapHeaderAddress,
+      mapLayoutAddress:
+        state.map.mapLayoutAddress,
+      mapDataAddress:
+        state.map.mapDataAddress,
       primaryTilesetAddress:
         state.map.primaryTilesetAddress,
       secondaryTilesetAddress:
         state.map.secondaryTilesetAddress,
-      width: state.map.width,
-      height: state.map.height,
-      worldX: 0,
-      worldY: 0,
-      connections: [],
-    };
-
-    this.mapCatalog.register(
-      definition,
-    );
+      width:
+        state.map.width,
+      height:
+        state.map.height,
+      worldX:
+        0,
+      worldY:
+        0,
+      connections:
+        existing?.connections ?? [],
+    });
   }
 
   private repairCinnabarVisual(
@@ -961,27 +977,19 @@ export class PlayerRenderer {
 
       this.mapWorld.clearPositions();
 
+      this.mapWorld.setWorldPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+        {
+          x: 0,
+          y: 0,
+        },
+      );
+
       this.mapWorld.buildFrom(
         state.map.mapGroup,
         state.map.mapNumber,
       );
-
-      if (
-        this.isFireRedFamily(state) &&
-        !this.mapWorld.hasPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        )
-      ) {
-        this.mapWorld.setWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-          {
-            x: 0,
-            y: 0,
-          },
-        );
-      }
     }
 
     const maps =
@@ -1849,14 +1857,14 @@ export class PlayerRenderer {
         state,
       );
 
+      this.ensureCurrentMapDefinition(
+        state,
+      );
+
       if (
         this.isFireRedFamily(state)
       ) {
         this.ensureFireRedCinnabarDefinition(
-          state,
-        );
-
-        this.ensureCurrentMapDefinition(
           state,
         );
 
