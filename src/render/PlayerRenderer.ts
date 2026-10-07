@@ -1520,6 +1520,8 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         geometry,
+        mapDataAddress:
+          map.mapDataAddress,
       };
 
     const mapKey =
