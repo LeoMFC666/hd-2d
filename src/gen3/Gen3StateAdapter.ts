@@ -303,14 +303,6 @@ export class Gen3StateAdapter {
     this.memoryReader =
       memoryReader;
 
-    this.profile =
-      this.detectProfile();
-
-    this.tileGraphicsDecoder =
-      new TileGraphicsDecoder(
-        memoryReader,
-      );
-
     this.romBytes =
       romBytes ?? null;
 
@@ -322,6 +314,15 @@ export class Gen3StateAdapter {
             romBytes.byteLength,
           )
         : null;
+
+    this.profile =
+      this.detectProfile();
+
+    this.tileGraphicsDecoder =
+      new TileGraphicsDecoder(
+        memoryReader,
+        this.romBytes ?? undefined,
+      );
   }
 
   readState(): GameState {
