@@ -518,50 +518,50 @@ export class TilesetAnimationController {
       return;
     }
 
-    const snapshots =
-      this.readAnimatedTileSnapshots(
-        tileIds,
-      );
-
     const primaryCount =
       this.getNumTilesInPrimary();
 
-    for (
-      const [tileId, tileBytes] of
-        snapshots
-    ) {
-      const tilesetAddress =
-        tileId >= primaryCount
-          ? target.map
-              .secondaryTilesetAddress
-          : target.map
-              .primaryTilesetAddress;
-
-      const key =
-        this.liveTileKey(
-          tilesetAddress,
-          tileId,
-        );
-
-      if (
-        this.tileDiffersFromRenderedTarget(
-          target,
-          tileId,
-          tileBytes,
-        )
-      ) {
-        this.patchTarget(
-          target,
-          tileId,
-          tileBytes,
-        );
-      }
-
-      this.liveTiles.set(
-        key,
+    this.forEachAnimatedTileSnapshot(
+      tileIds,
+      (
+        tileId,
         tileBytes,
-      );
-    }
+      ) => {
+        const tilesetAddress =
+          tileId >= primaryCount
+            ? target.map
+                .secondaryTilesetAddress
+            : target.map
+                .primaryTilesetAddress;
+
+        const key =
+          this.liveTileKey(
+            tilesetAddress,
+            tileId,
+          );
+
+        if (
+          this.tileDiffersFromRenderedTarget(
+            target,
+            tileId,
+            tileBytes,
+          )
+        ) {
+          this.patchTarget(
+            target,
+            tileId,
+            tileBytes,
+          );
+        }
+
+        this.liveTiles.set(
+          key,
+          new Uint8Array(
+            tileBytes,
+          ),
+        );
+      },
+    );
   }
 
   private tileDiffersFromRenderedTarget(
