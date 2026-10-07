@@ -1067,7 +1067,7 @@ export class TilesetAnimationController {
           RGBA_CHANNEL_COUNT,
       );
 
-    const textureData = target.baseTexture.image.data as TextureData;
+    const textureData = target.texture.image.data as TextureData;
 
     const textureWidth =
       target.map.width *
@@ -1322,25 +1322,9 @@ export class TilesetAnimationController {
     'base' |
     'overlay' |
     null {
-    const isTopLayer =
-      tileIndex >= 4;
-
-    if (
-      layerType === 1
-    ) {
-      return 'base';
-    }
-
-    if (
-      layerType === 0 ||
-      layerType === 2
-    ) {
-      return isTopLayer
-        ? 'overlay'
-        : 'base';
-    }
-
-    return null;
+    return layerType >= 0
+      ? 'base'
+      : null;
   }
 
   private isAnimatedTileForGame(
