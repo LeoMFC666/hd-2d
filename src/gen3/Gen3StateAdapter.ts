@@ -285,6 +285,12 @@ export class Gen3StateAdapter {
   private cachedMapStateKey =
     '';
 
+  private readonly runtimeState:
+    GameState =
+    structuredClone(
+      EMPTY_GAME_STATE,
+    );
+
   private metatileGraphicsCache = new Map<
     number,
     Gen3MetatileGraphics | null
@@ -320,9 +326,7 @@ export class Gen3StateAdapter {
 
   readState(): GameState {
     const state =
-      structuredClone(
-        EMPTY_GAME_STATE,
-      );
+      this.runtimeState;
 
     if (!this.profile) {
       return state;
@@ -374,7 +378,8 @@ export class Gen3StateAdapter {
         ),
     };
 
-    this.previous = state;
+    this.previous =
+      state;
 
     return state;
   }
@@ -438,6 +443,11 @@ export class Gen3StateAdapter {
 
       return;
     }
+
+    state.map =
+      structuredClone(
+        EMPTY_GAME_STATE.map,
+      );
 
     state.map.mapGroup =
       mapGroup;
