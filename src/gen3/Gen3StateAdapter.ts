@@ -267,6 +267,12 @@ export class Gen3StateAdapter {
 
   private mapBlocks: MapBlockState[] = [];
 
+  private cachedMapState:
+    MapState | null = null;
+
+  private cachedMapStateKey =
+    '';
+
   private mapBlocksWidth = 0;
 
   private mapBlocksHeight = 0;
