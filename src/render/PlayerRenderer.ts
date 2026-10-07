@@ -2030,6 +2030,7 @@ export class PlayerRenderer {
 
       this.tilesetAnimationController.update(
         state.map.primaryTilesetAddress,
+        state.map.secondaryTilesetAddress,
       );
 
       const playerPosition =
