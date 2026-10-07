@@ -290,6 +290,74 @@ export class PlayerRenderer {
       this.resizeHandler,
     );
 
+    if (
+      import.meta.env.DEV
+    ) {
+      (
+        globalThis as any
+      ).__pkmn25dDebug = {
+        getState: () =>
+          this.currentState,
+        getActiveMapKey: () =>
+          this.activeMapKey,
+        getMapVisuals: () =>
+          Array.from(
+            this.mapVisuals.entries(),
+          ).map(
+            ([key, visual]) => ({
+              key,
+              mapDataAddress:
+                visual.mapDataAddress,
+              visible:
+                visual.baseMesh.visible,
+              width:
+                (
+                  visual.baseMesh.geometry
+                    as THREE.BufferGeometry
+                ).parameters?.width ?? null,
+              height:
+                (
+                  visual.baseMesh.geometry
+                    as THREE.BufferGeometry
+                ).parameters?.height ?? null,
+            }),
+          ),
+        getPositionedMaps: () =>
+          this.mapWorld
+            .getPositionedMaps()
+            .map(
+              map => ({
+                key:
+                  this.createMapKey(
+                    map.mapGroup,
+                    map.mapNumber,
+                  ),
+                width:
+                  map.width,
+                height:
+                  map.height,
+                mapDataAddress:
+                  map.mapDataAddress,
+                world:
+                  this.mapWorld.getWorldPosition(
+                    map.mapGroup,
+                    map.mapNumber,
+                  ),
+              }),
+            ),
+        getRenderInfo: () => ({
+          calls:
+            this.renderer.info.render.calls,
+          triangles:
+            this.renderer.info.render.triangles,
+          textures:
+            this.renderer.info.memory.textures,
+          geometries:
+            this.renderer.info.memory.geometries,
+        }),
+      };
+    }
+
     this.animate();
   }
 
