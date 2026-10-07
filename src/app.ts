@@ -92,12 +92,144 @@ export function setupApp(): void {
     PlayerRenderer | null =
     null;
 
+  let currentRomBytes:
+    Uint8Array | null =
+    null;
+
   const updateStatus =
     (
       message: string,
     ): void => {
       statusEl.textContent =
         message;
+    };
+
+  const destroyScene =
+    (): void => {
+      scene?.destroy();
+      scene = null;
+    };
+
+  const createScene =
+    (): void => {
+      if (
+        !currentRomBytes
+      ) {
+        throw new Error(
+          'No ROM is loaded.',
+        );
+      }
+
+      destroyScene();
+
+      const memoryReader =
+        emulator.getMemoryReader();
+
+      const stateAdapter =
+        new Gen3StateAdapter(
+          memoryReader,
+          currentRomBytes,
+        );
+
+      scene =
+        new PlayerRenderer(
+          sceneContainer,
+          stateAdapter,
+          currentRomBytes,
+        );
+    };
+
+  const waitForStableGameplayState =
+    async (
+      timeoutMs = 3000,
+    ): Promise<boolean> => {
+      if (
+        !currentRomBytes
+      ) {
+        return false;
+      }
+
+      const stateAdapter =
+        new Gen3StateAdapter(
+          emulator.getMemoryReader(),
+          currentRomBytes,
+        );
+
+      const startedAt =
+        performance.now();
+
+      let previousKey =
+        '';
+
+      let stableReads =
+        0;
+
+      while (
+        performance.now() -
+          startedAt <
+        timeoutMs
+      ) {
+        const state =
+          stateAdapter.readState();
+
+        const validMap =
+          state.map.mapLayoutAddress !== 0 &&
+          state.map.mapDataAddress !== 0 &&
+          state.map.primaryTilesetAddress !== 0 &&
+          state.map.secondaryTilesetAddress !== 0 &&
+          state.map.width > 0 &&
+          state.map.height > 0;
+
+        if (
+          validMap
+        ) {
+          const key =
+            [
+              state.map.mapGroup,
+              state.map.mapNumber,
+              state.map.mapLayoutId,
+              state.map.mapLayoutAddress,
+              state.map.mapDataAddress,
+              state.map.width,
+              state.map.height,
+            ].join(':');
+
+          if (
+            key ===
+            previousKey
+          ) {
+            stableReads++;
+          } else {
+            previousKey =
+              key;
+            stableReads =
+              1;
+          }
+
+          if (
+            stableReads >=
+            3
+          ) {
+            return true;
+          }
+        } else {
+          previousKey =
+            '';
+          stableReads =
+            0;
+        }
+
+        await new Promise<void>(
+          resolve => {
+            window.setTimeout(
+              resolve,
+              50,
+            );
+          },
+        );
+      }
+
+      return false;
     };
 
   const readRomFile =
@@ -111,16 +243,11 @@ export function setupApp(): void {
           ?.toLowerCase();
 
       if (
-        !extension ||
-        ![
-          'gba',
-          'gb',
-          'gbc',
-          'zip',
-        ].includes(extension)
+        extension !==
+        'gba'
       ) {
         updateStatus(
-          'Unsupported ROM format. Please select a .gba or compatible cartridge image.',
+          'Please extract the ROM and select the .gba file.',
         );
 
         return;
@@ -139,27 +266,22 @@ export function setupApp(): void {
             buffer,
           );
 
+        emulator.pause();
+        destroyScene();
+
+        currentRomBytes =
+          null;
+
         await emulator.loadRom(
           romBytes,
         );
 
-        scene?.destroy();
+        currentRomBytes =
+          romBytes;
 
-        const memoryReader =
-          emulator.getMemoryReader();
+        await waitForStableGameplayState();
 
-        const stateAdapter =
-          new Gen3StateAdapter(
-            memoryReader,
-            romBytes,
-          );
-
-        scene =
-          new PlayerRenderer(
-            sceneContainer,
-            stateAdapter,
-            romBytes,
-          );
+        createScene();
 
         updateStatus(
           `ROM loaded: ${file.name}`,
@@ -167,6 +289,11 @@ export function setupApp(): void {
       } catch (
         error
       ) {
+        currentRomBytes =
+          null;
+
+        destroyScene();
+
         const message =
           error instanceof Error
             ? error.message
@@ -209,9 +336,27 @@ export function setupApp(): void {
         const buffer =
           await file.arrayBuffer();
 
+        if (
+          !currentRomBytes
+        ) {
+          throw new Error(
+            'Load a .gba ROM before importing a save.',
+          );
+        }
+
+        emulator.pause();
+
+        destroyScene();
+
         await emulator.importSave(
           buffer,
         );
+
+        emulator.resume();
+
+        await waitForStableGameplayState();
+
+        createScene();
 
         updateStatus(
           `Save loaded: ${file.name}`,
@@ -219,6 +364,19 @@ export function setupApp(): void {
       } catch (
         error
       ) {
+        emulator.resume();
+
+        try {
+          if (
+            currentRomBytes &&
+            !scene
+          ) {
+            createScene();
+          }
+        } catch {
+          // Keep the original save error visible.
+        }
+
         const message =
           error instanceof Error
             ? error.message
@@ -406,7 +564,7 @@ export function setupApp(): void {
   window.addEventListener(
     'beforeunload',
     () => {
-      scene?.destroy();
+      destroyScene();
       emulator.destroy();
     },
   );
