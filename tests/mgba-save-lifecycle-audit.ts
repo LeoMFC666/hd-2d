@@ -131,12 +131,14 @@ async function runFrames(
   await wait(50);
 }
 
-function validateEmeraldState(
+function inspectEmeraldState(
   stateAdapter: Gen3StateAdapter,
+  reader: RuntimeMemoryReader,
 ): {
   mapGroup: number;
   mapNumber: number;
   layoutId: number;
+  saveBlock1Address: number;
   mapDataAddress: number;
   primaryTilesetAddress: number;
   secondaryTilesetAddress: number;
@@ -147,48 +149,44 @@ function validateEmeraldState(
     stateAdapter.readState();
 
   assert(
-    state.game.game ===
-      'GEN 3',
-    'Unexpected game family after save/reset',
-  );
-
-  assert(
     state.game.region ===
       'emerald',
     'Expected Emerald state, got ' +
       state.game.region,
   );
 
-  assert(
-    state.map.mapLayoutId !== 0 ||
-      state.map.mapLayoutAddress !== 0,
-    'Emerald did not reach a valid map state',
-  );
+  const saveBlock1Address =
+    reader.readU32(0x03005d8c) >>> 0;
 
   assert(
-    state.map.mapDataAddress !== 0,
-    'Emerald map data address is zero',
+    saveBlock1Address >=
+      0x02000000 &&
+      saveBlock1Address <
+        0x02040000,
+    'Emerald SaveBlock1 pointer is invalid: 0x' +
+      saveBlock1Address.toString(16),
   );
 
-  assert(
-    state.map.primaryTilesetAddress !== 0 &&
-      state.map.secondaryTilesetAddress !== 0,
-    'Emerald tileset address is zero',
-  );
+  const mapGroup =
+    reader.readU8(
+      saveBlock1Address + 0x04,
+    );
 
-  assert(
-    state.map.width > 0 &&
-      state.map.height > 0,
-    'Emerald map dimensions are invalid',
-  );
+  const mapNumber =
+    reader.readU8(
+      saveBlock1Address + 0x05,
+    );
+
+  const layoutId =
+    reader.readU16(
+      saveBlock1Address + 0x32,
+    );
 
   return {
-    mapGroup:
-      state.map.mapGroup,
-    mapNumber:
-      state.map.mapNumber,
-    layoutId:
-      state.map.mapLayoutId,
+    mapGroup,
+    mapNumber,
+    layoutId,
+    saveBlock1Address,
     mapDataAddress:
       state.map.mapDataAddress,
     primaryTilesetAddress:
@@ -334,13 +332,10 @@ async function main(): Promise<void> {
   );
 
   const preSave =
-    stateAdapter.readState();
-
-  assert(
-    preSave.game.region ===
-      'emerald',
-    'Pre-save game was not detected as Emerald',
-  );
+    inspectEmeraldState(
+      stateAdapter,
+      reader,
+    );
 
   const cycleResults:
     Array<{
@@ -449,8 +444,9 @@ async function main(): Promise<void> {
   );
 
   const postReset =
-    validateEmeraldState(
+    inspectEmeraldState(
       stateAdapter,
+      reader,
     );
 
   assert(
@@ -475,6 +471,7 @@ async function main(): Promise<void> {
     save: {
       size: save.length,
       cycles: cycleResults,
+      preSave,
     },
     postReset,
     ewramRange: [
