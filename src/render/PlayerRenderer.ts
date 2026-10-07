@@ -1487,86 +1487,56 @@ export class PlayerRenderer {
         pixels.length,
       );
 
-    const drawPixels = (
-      destination:
-        Uint8ClampedArray,
-      graphics:
-        Gen3MetatileGraphics,
-      sourceY: number,
-      sourceX: number,
-      destinationX: number,
-      destinationY: number,
-    ): void => {
-      const sourceOffset =
-        (
-          sourceY *
-            GBA_METATILE_PIXELS +
-          sourceX
-        ) * 4;
+    const rowBytes =
+      GBA_METATILE_PIXELS * 4;
 
-      const destinationOffset =
-        (
-          destinationY *
-            textureWidth +
-          destinationX
-        ) * 4;
+    const drawMetatile =
+      (
+        graphics:
+          Gen3MetatileGraphics,
+        destinationX:
+          number,
+        destinationY:
+          number,
+      ): void => {
+        for (
+          let sourceY = 0;
+          sourceY < GBA_METATILE_PIXELS;
+          sourceY++
+        ) {
+          const sourceOffset =
+            sourceY * rowBytes;
 
-      destination[
-        destinationOffset
-      ] =
-        graphics.basePixels[
-          sourceOffset
-        ];
+          const destinationOffset =
+            (
+              destinationY +
+              (
+                GBA_METATILE_PIXELS -
+                1 -
+                sourceY
+              )
+            ) *
+              textureWidth *
+              4 +
+            destinationX * 4;
 
-      destination[
-        destinationOffset + 1
-      ] =
-        graphics.basePixels[
-          sourceOffset + 1
-        ];
+          pixels.set(
+            graphics.basePixels.subarray(
+              sourceOffset,
+              sourceOffset + rowBytes,
+            ),
+            destinationOffset,
+          );
 
-      destination[
-        destinationOffset + 2
-      ] =
-        graphics.basePixels[
-          sourceOffset + 2
-        ];
-
-      destination[
-        destinationOffset + 3
-      ] =
-        graphics.basePixels[
-          sourceOffset + 3
-        ];
-
-      foregroundPixels[
-        destinationOffset
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset
-        ];
-
-      foregroundPixels[
-        destinationOffset + 1
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 1
-        ];
-
-      foregroundPixels[
-        destinationOffset + 2
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 2
-        ];
-
-      foregroundPixels[
-        destinationOffset + 3
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 3
-        ];
-    };
+          foregroundPixels.set(
+            graphics.foregroundPixels.subarray(
+              sourceOffset,
+              sourceOffset + rowBytes,
+            ),
+            destinationOffset,
+          );
+        }
+      };
 
     for (
       let y = 0;
@@ -1596,44 +1566,15 @@ export class PlayerRenderer {
           continue;
         }
 
-        for (
-          let sourceY = 0;
-          sourceY <
-            GBA_METATILE_PIXELS;
-          sourceY++
-        ) {
-          const destinationY =
-            (
-              map.height -
-              1 -
-              y
-            ) *
-              GBA_METATILE_PIXELS +
-            GBA_METATILE_PIXELS -
+        drawMetatile(
+          graphics,
+          x * GBA_METATILE_PIXELS,
+          (
+            map.height -
             1 -
-            sourceY;
-
-          for (
-            let sourceX = 0;
-            sourceX <
-              GBA_METATILE_PIXELS;
-            sourceX++
-          ) {
-            const destinationX =
-              x *
-                GBA_METATILE_PIXELS +
-              sourceX;
-
-            drawPixels(
-              pixels,
-              graphics,
-              sourceY,
-              sourceX,
-              destinationX,
-              destinationY,
-            );
-          }
-        }
+            y
+          ) * GBA_METATILE_PIXELS,
+        );
       }
     }
 
@@ -1698,7 +1639,7 @@ export class PlayerRenderer {
 
     const overlayMesh =
       new THREE.Mesh(
-        geometry.clone(),
+        geometry,
         overlayMaterial,
       );
 
@@ -1721,8 +1662,6 @@ export class PlayerRenderer {
       overlayTexture.dispose();
       baseMaterial.dispose();
       overlayMaterial.dispose();
-      overlayMesh.geometry.dispose();
-
       return;
     }
 
