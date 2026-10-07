@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/e25-definitive-gen3-render-v2
+      - perf/threejs-60fps-no-animations
   workflow_dispatch:
 
 jobs:
