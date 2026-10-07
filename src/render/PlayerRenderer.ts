@@ -28,6 +28,21 @@ import {
 const GBA_METATILE_PIXELS =
   16;
 
+const PLAYER_DIRECTION_ROTATION:
+  Record<
+    string,
+    number
+  > = {
+  UP:
+    -Math.PI / 2,
+  DOWN:
+    Math.PI / 2,
+  LEFT:
+    Math.PI,
+  RIGHT:
+    0,
+};
+
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
@@ -78,6 +93,11 @@ export class PlayerRenderer {
 
   private readonly player:
     THREE.Mesh;
+
+  private readonly playerWorldPosition = {
+    x: 0,
+    z: 0,
+  };
 
   private readonly mapVisuals =
     new Map<
@@ -1892,28 +1912,28 @@ export class PlayerRenderer {
         );
 
     if (!mapPosition) {
-      return {
-        x:
-          state.player.x +
-          0.5,
+      this.playerWorldPosition.x =
+        state.player.x +
+        0.5;
 
-        z:
-          state.player.y +
-          0.5,
-      };
+      this.playerWorldPosition.z =
+        state.player.y +
+        0.5;
+
+      return this.playerWorldPosition;
     }
 
-    return {
-      x:
-        mapPosition.x +
-        state.player.x +
-        0.5,
+    this.playerWorldPosition.x =
+      mapPosition.x +
+      state.player.x +
+      0.5;
 
-      z:
-        mapPosition.y +
-        state.player.y +
-        0.5,
-    };
+    this.playerWorldPosition.z =
+      mapPosition.y +
+      state.player.y +
+      0.5;
+
+    return this.playerWorldPosition;
   }
 
   private updatePlayer(
@@ -1933,25 +1953,8 @@ export class PlayerRenderer {
     this.player.position.z =
       position.z;
 
-    const directionMap = {
-      UP:
-        -Math.PI / 2,
-
-      DOWN:
-        Math.PI / 2,
-
-      LEFT:
-        Math.PI,
-
-      RIGHT:
-        0,
-    } satisfies Record<
-      string,
-      number
-    >;
-
     const nextRotation =
-      directionMap[
+      PLAYER_DIRECTION_ROTATION[
         state.player.direction
       ] ?? 0;
 
