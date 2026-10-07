@@ -1341,6 +1341,14 @@ export class TilesetAnimationController {
     return (
       (
         tileId >= 432 &&
+        tileId <= 461
+      ) ||
+      (
+        tileId >= 464 &&
+        tileId <= 473
+      ) ||
+      (
+        tileId >= 480 &&
         tileId <= 489
       ) ||
       (
@@ -1384,7 +1392,7 @@ export class TilesetAnimationController {
         ) ||
         (
           local >= 336 &&
-          local <= 339
+          local <= 343
         )
       );
     }
