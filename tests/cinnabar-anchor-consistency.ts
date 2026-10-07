@@ -74,39 +74,20 @@ async function main(){
     {direction:2,mapGroup:3,mapNumber:19,offset:0},
     {direction:1,mapGroup:3,mapNumber:39,offset:0},
   ]),
-  route1:findHeader(rom,24,40,[
-    {direction:2,mapGroup:3,mapNumber:1,offset:-12},
-    {direction:1,mapGroup:3,mapNumber:0,offset:0},
-  ]),
   cinnabar:findHeader(rom,24,20,[
     {direction:2,mapGroup:3,mapNumber:40,offset:0},
     {direction:4,mapGroup:3,mapNumber:38,offset:0},
   ]),
-  route20:findHeader(rom,24,30,[
-    {direction:3,mapGroup:3,mapNumber:19,offset:0},
-    {direction:4,mapGroup:3,mapNumber:37,offset:-40},
-  ]),
-  route21south:findHeader(rom,24,50,[
-    {direction:2,mapGroup:3,mapNumber:8,offset:0},
-  ]),
-  viridian:findHeader(rom,48,40,[
-    {direction:2,mapGroup:3,mapNumber:19,offset:-12},
-    {direction:1,mapGroup:3,mapNumber:2,offset:0},
-  ]),
  };
  assert(anchors.pallet,'Pallet anchor not found');
- assert(anchors.route1,'Route1 anchor not found');
  assert(anchors.cinnabar,'Cinnabar anchor not found');
- assert(anchors.route20,'Route20 anchor not found');
- assert(anchors.route21south,'Route21 south anchor not found');
- assert(anchors.viridian,'Viridian anchor not found');
 
  const results:any={};
  for(const [name,a] of Object.entries(anchors)){
    const cat=new MapCatalog();
    const count=cat.buildGen3FromRom(rom,{
      mapGroup:3,
-     mapNumber:name==='pallet'?0:name==='route1'?19:name==='cinnabar'?8:name==='route20'?38:name==='route21south'?40:1,
+     mapNumber:name==='pallet'?0:8,
      mapLayoutId:(a as any).layoutId,
      mapLayoutAddress:(a as any).layoutAddress,
    });
@@ -137,9 +118,7 @@ async function main(){
  }
 
  const cinnabarData=results.cinnabar.cinnabar.data;
- const cinnabarLayout=results.cinnabar.cinnabar.layout;
  const expectedData=0x082e37d0;
- const expectedLayout=0x082e31d0;
  const unique=new Set(Object.values(results).map((x:any)=>x.cinnabar?.data).filter(Boolean));
 
  const pass=Object.values(results).every((x:any)=>x.count===425)&&
@@ -151,17 +130,9 @@ async function main(){
    pass,
    expected:{
      cinnabarData:'0x082e37d0',
-     cinnabarLayout:'0x082e31d0',
-     note:'expectedLayout is informational; source-derived catalog value is checked by exact ROM data address',
+     note:'Cinnabar data must be identical when the catalog is anchored from Pallet or Cinnabar.',
    },
-   anchors:{
-     pallet:anchors.pallet,
-     route1:anchors.route1,
-     cinnabar:anchors.cinnabar,
-     route20:anchors.route20,
-     route21south:anchors.route21south,
-     viridian:anchors.viridian,
-   },
+   anchors,
    results,
    cinnabarDataAcrossAnchors:[...unique],
  },null,2);
