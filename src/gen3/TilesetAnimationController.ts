@@ -123,9 +123,6 @@ interface AnimatedMapTarget {
   map:
     MapDefinition;
 
-  baseTexture:
-    THREE.DataTexture;
-
   texture:
     THREE.DataTexture;
 
@@ -799,8 +796,6 @@ export class TilesetAnimationController {
     let baseDirty =
       false;
 
-    let overlayDirty =
-      false;
 
     for (
       const placement of
@@ -962,25 +957,13 @@ export class TilesetAnimationController {
               255;
           }
 
-          if (
-            placement.target ===
-            'base'
-          ) {
-            baseDirty = true;
-          } else {
-            overlayDirty = true;
-          }
+          baseDirty = true;
         }
       }
     }
 
     if (baseDirty) {
-      target.baseTexture.needsUpdate =
-        true;
-    }
-
-    if (overlayDirty) {
-      target.overlayTexture.needsUpdate =
+      target.texture.needsUpdate =
         true;
     }
   }
@@ -1278,14 +1261,7 @@ export class TilesetAnimationController {
             4;
 
           const target =
-            this.resolveTextureTarget(
-              metatile.layerType,
-              tileIndex,
-            );
-
-          if (!target) {
-            continue;
-          }
+            'base';
 
           const placement:
             AnimatedTile = {
