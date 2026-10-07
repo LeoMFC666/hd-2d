@@ -21,21 +21,12 @@ import {
   MapWorld,
 } from '../gen3/world/MapWorld';
 
-import {
-  TilesetAnimationController,
-} from '../gen3/TilesetAnimationController';
-
 const GBA_METATILE_PIXELS =
   16;
 
 interface MapVisual {
   baseMesh: THREE.Mesh;
-  overlayMesh: THREE.Mesh;
-
   baseTexture:
-    THREE.DataTexture;
-
-  overlayTexture:
     THREE.DataTexture;
 
   geometry:
@@ -60,9 +51,6 @@ export class PlayerRenderer {
 
   private readonly mapWorld:
     MapWorld;
-
-  private readonly tilesetAnimationController:
-    TilesetAnimationController;
 
   private readonly scene:
     THREE.Scene;
@@ -113,6 +101,12 @@ export class PlayerRenderer {
   private frameId =
     0;
 
+  private lastFrameTimestamp =
+    -Infinity;
+
+  private readonly targetFrameInterval =
+    1000 / 60;
+
   private lastPlayerX =
     -1;
 
@@ -157,13 +151,6 @@ export class PlayerRenderer {
     this.mapWorld =
       new MapWorld(
         this.mapCatalog,
-      );
-
-    this.tilesetAnimationController =
-      new TilesetAnimationController(
-        this.romBytes,
-        this.stateAdapter
-          .getMemoryReader(),
       );
 
     this.scene =
@@ -261,12 +248,7 @@ export class PlayerRenderer {
           'high-performance',
       });
 
-    this.renderer.setPixelRatio(
-      Math.min(
-        window.devicePixelRatio,
-        1.5,
-      ),
-    );
+    this.renderer.setPixelRatio(1);
 
     this.renderer.setClearColor(
       0x000000,
@@ -315,13 +297,6 @@ export class PlayerRenderer {
           this.mapWorld
             .getPositionedMaps()
             .length,
-        getAnimationPlacements: (
-          key?: string,
-        ) =>
-          this.tilesetAnimationController
-            .getDebugAnimationPlacements(
-              key,
-            ),
         getRenderInfo: () => ({
           calls:
             this.renderer.info.render.calls,
@@ -887,91 +862,32 @@ export class PlayerRenderer {
       return;
     }
 
-    const definition =
-      this.mapCatalog.get(
-        3,
-        8,
-      );
-
-    const visual =
-      this.mapVisuals.get(
-        '3:8',
-      );
+    const definition = this.mapCatalog.get(3, 8);
+    const visual = this.mapVisuals.get('3:8');
 
     if (
       !definition ||
       !visual ||
-      visual.mapDataAddress ===
-        definition.mapDataAddress
+      visual.mapDataAddress === definition.mapDataAddress
     ) {
       return;
     }
 
-    this.root.remove(
-      visual.baseMesh,
-    );
-
-    this.root.remove(
-      visual.overlayMesh,
-    );
-
+    this.root.remove(visual.baseMesh);
     visual.baseTexture.dispose();
-    visual.overlayTexture.dispose();
     visual.geometry.dispose();
-    visual.overlayMesh.geometry.dispose();
 
-    const baseMaterial =
-      visual.baseMesh.material;
-
-    if (
-      Array.isArray(
-        baseMaterial,
-      )
-    ) {
-      baseMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
+    const baseMaterial = visual.baseMesh.material;
+    if (Array.isArray(baseMaterial)) {
+      baseMaterial.forEach(material => material.dispose());
     } else {
       baseMaterial.dispose();
     }
 
-    const overlayMaterial =
-      visual.overlayMesh.material;
-
-    if (
-      Array.isArray(
-        overlayMaterial,
-      )
-    ) {
-      overlayMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      overlayMaterial.dispose();
-    }
-
-    this.mapVisuals.delete(
-      '3:8',
-    );
-
-    this.tilesetAnimationController
-      .unregisterMap(
-        '3:8',
-      );
-
-    this.queuedMaps.delete(
-      '3:8',
-    );
-
-    this.buildQueue.push(
-      definition,
-    );
-
-    this.queuedMaps.add(
-      '3:8',
-    );
+    this.mapVisuals.delete('3:8');
+    this.queuedMaps.delete('3:8');
+    this.buildQueue.push(definition);
+    this.queuedMaps.add('3:8');
   }
 
   private updateActiveWorld(
@@ -1181,59 +1097,18 @@ export class PlayerRenderer {
     key: string,
     visual: MapVisual,
   ): void {
-    this.root.remove(
-      visual.baseMesh,
-    );
-
-    this.root.remove(
-      visual.overlayMesh,
-    );
-
+    this.root.remove(visual.baseMesh);
     visual.baseTexture.dispose();
-    visual.overlayTexture.dispose();
     visual.geometry.dispose();
-    visual.overlayMesh.geometry.dispose();
 
-    const baseMaterial =
-      visual.baseMesh.material;
-
-    if (
-      Array.isArray(
-        baseMaterial,
-      )
-    ) {
-      baseMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
+    const baseMaterial = visual.baseMesh.material;
+    if (Array.isArray(baseMaterial)) {
+      baseMaterial.forEach(material => material.dispose());
     } else {
       baseMaterial.dispose();
     }
 
-    const overlayMaterial =
-      visual.overlayMesh.material;
-
-    if (
-      Array.isArray(
-        overlayMaterial,
-      )
-    ) {
-      overlayMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      overlayMaterial.dispose();
-    }
-
-    this.mapVisuals.delete(
-      key,
-    );
-
-    this.tilesetAnimationController
-      .unregisterMap(
-        key,
-      );
+    this.mapVisuals.delete(key);
   }
 
   private queueMapBuild(
@@ -1363,11 +1238,6 @@ export class PlayerRenderer {
         centerZ,
       );
 
-      visual.overlayMesh.position.set(
-        centerX,
-        0.002,
-        centerZ,
-      );
     }
   }
 
@@ -1402,8 +1272,6 @@ export class PlayerRenderer {
       visual.baseMesh.visible =
         visible;
 
-      visual.overlayMesh.visible =
-        visible;
     }
   }
 
@@ -1632,16 +1500,26 @@ export class PlayerRenderer {
       }
     }
 
+    // Static foreground is baked once into the base texture.
+    // This removes the second Three.js draw call and all tile animation work.
+    for (
+      let index = 0;
+      index < pixels.length;
+      index += 4
+    ) {
+      if (foregroundPixels[index + 3] === 0) {
+        continue;
+      }
+
+      pixels[index] = foregroundPixels[index];
+      pixels[index + 1] = foregroundPixels[index + 1];
+      pixels[index + 2] = foregroundPixels[index + 2];
+      pixels[index + 3] = foregroundPixels[index + 3];
+    }
+
     const baseTexture =
       this.createMapTexture(
         pixels,
-        textureWidth,
-        textureHeight,
-      );
-
-    const overlayTexture =
-      this.createMapTexture(
-        foregroundPixels,
         textureWidth,
         textureHeight,
       );
@@ -1656,31 +1534,10 @@ export class PlayerRenderer {
       new THREE.MeshBasicMaterial({
         map:
           baseTexture,
-
         transparent:
           true,
-
         depthWrite:
           true,
-
-        side:
-          THREE.DoubleSide,
-      });
-
-    const overlayMaterial =
-      new THREE.MeshBasicMaterial({
-        map:
-          overlayTexture,
-
-        transparent:
-          true,
-
-        depthTest:
-          false,
-
-        depthWrite:
-          false,
-
         side:
           THREE.DoubleSide,
       });
@@ -1691,16 +1548,7 @@ export class PlayerRenderer {
         baseMaterial,
       );
 
-    const overlayMesh =
-      new THREE.Mesh(
-        geometry.clone(),
-        overlayMaterial,
-      );
-
     baseMesh.rotation.x =
-      -Math.PI / 2;
-
-    overlayMesh.rotation.x =
       -Math.PI / 2;
 
     const position =
@@ -1713,21 +1561,12 @@ export class PlayerRenderer {
     if (!position) {
       geometry.dispose();
       baseTexture.dispose();
-      overlayTexture.dispose();
       baseMaterial.dispose();
-      overlayMaterial.dispose();
-      overlayMesh.geometry.dispose();
-
       return;
     }
 
-    const centerX =
-      position.x +
-      map.width / 2;
-
-    const centerZ =
-      position.y +
-      map.height / 2;
+    const centerX = position.x + map.width / 2;
+    const centerZ = position.y + map.height / 2;
 
     baseMesh.position.set(
       centerX,
@@ -1735,22 +1574,7 @@ export class PlayerRenderer {
       centerZ,
     );
 
-    overlayMesh.position.set(
-      centerX,
-      0.002,
-      centerZ,
-    );
-
-    overlayMesh.renderOrder =
-      2;
-
-    this.root.add(
-      baseMesh,
-    );
-
-    this.root.add(
-      overlayMesh,
-    );
+    this.root.add(baseMesh);
 
     const mapKey =
       this.createMapKey(
@@ -1758,19 +1582,10 @@ export class PlayerRenderer {
         map.mapNumber,
       );
 
-    const animatedPlacements =
-      this.tilesetAnimationController
-        .createPlacements(
-          map,
-          renderData.blocks,
-        );
-
     const visual:
       MapVisual = {
         baseMesh,
-        overlayMesh,
         baseTexture,
-        overlayTexture,
         geometry,
         mapDataAddress:
           map.mapDataAddress,
@@ -1781,15 +1596,6 @@ export class PlayerRenderer {
       visual,
     );
 
-    this.tilesetAnimationController
-      .attachMap(
-        mapKey,
-        map,
-        baseTexture,
-        overlayTexture,
-        animatedPlacements,
-      );
-
     const visible =
       this.mapWorld.hasPosition(
         map.mapGroup,
@@ -1797,9 +1603,6 @@ export class PlayerRenderer {
       );
 
     baseMesh.visible =
-      visible;
-
-    overlayMesh.visible =
       visible;
   }
 
@@ -1927,43 +1730,28 @@ export class PlayerRenderer {
       z: number;
     },
   ): void {
-    const targetX =
-      position.x;
+    // No interpolation: map transitions and interiors snap immediately.
+    const cameraX = position.x;
+    const cameraZ = position.z + 11;
 
-    const targetZ =
-      position.z;
+    if (
+      this.camera.position.x === cameraX &&
+      this.camera.position.y === 10 &&
+      this.camera.position.z === cameraZ
+    ) {
+      return;
+    }
 
-    const cameraTargetX =
-      targetX;
-
-    const cameraTargetY =
-      10;
-
-    const cameraTargetZ =
-      targetZ + 11;
-
-    this.camera.position.x +=
-      (
-        cameraTargetX -
-        this.camera.position.x
-      ) * 0.12;
-
-    this.camera.position.y +=
-      (
-        cameraTargetY -
-        this.camera.position.y
-      ) * 0.12;
-
-    this.camera.position.z +=
-      (
-        cameraTargetZ -
-        this.camera.position.z
-      ) * 0.12;
+    this.camera.position.set(
+      cameraX,
+      10,
+      cameraZ,
+    );
 
     this.camera.lookAt(
-      targetX,
+      position.x,
       0,
-      targetZ,
+      position.z,
     );
   }
 
@@ -2052,11 +1840,21 @@ export class PlayerRenderer {
   }
 
   private animate =
-    (): void => {
+    (timestamp = performance.now()): void => {
       this.frameId =
         requestAnimationFrame(
           this.animate,
         );
+
+      if (
+        timestamp - this.lastFrameTimestamp <
+        this.targetFrameInterval
+      ) {
+        return;
+      }
+
+      this.lastFrameTimestamp =
+        timestamp;
 
       const state =
         this.stateAdapter
@@ -2087,12 +1885,7 @@ export class PlayerRenderer {
 
       this.processMapBuildQueue();
 
-      this.tilesetAnimationController.update(
-        state.map.primaryTilesetAddress,
-        state.map.secondaryTilesetAddress,
-      );
-
-      const playerPosition =
+        const playerPosition =
         this.updatePlayer(
           state,
         );
@@ -2112,89 +1905,35 @@ export class PlayerRenderer {
     };
 
   destroy(): void {
-    cancelAnimationFrame(
-      this.frameId,
-    );
+    cancelAnimationFrame(this.frameId);
 
     window.removeEventListener(
       'resize',
       this.resizeHandler,
     );
 
-    for (
-      const visual of
-        this.mapVisuals.values()
-    ) {
+    for (const visual of this.mapVisuals.values()) {
       visual.baseTexture.dispose();
-      visual.overlayTexture.dispose();
       visual.geometry.dispose();
 
-      visual.overlayMesh
-        .geometry
-        .dispose();
-
-      const baseMaterial =
-        visual.baseMesh.material;
-
-      const overlayMaterial =
-        visual.overlayMesh.material;
-
-      if (
-        Array.isArray(
-          baseMaterial,
-        )
-      ) {
-        baseMaterial.forEach(
-          (
-            material,
-          ) =>
-            material.dispose(),
-        );
+      const baseMaterial = visual.baseMesh.material;
+      if (Array.isArray(baseMaterial)) {
+        baseMaterial.forEach(material => material.dispose());
       } else {
         baseMaterial.dispose();
-      }
-
-      if (
-        Array.isArray(
-          overlayMaterial,
-        )
-      ) {
-        overlayMaterial.forEach(
-          (
-            material,
-          ) =>
-            material.dispose(),
-        );
-      } else {
-        overlayMaterial.dispose();
       }
     }
 
     this.mapVisuals.clear();
-
-    this.tilesetAnimationController
-      .clear();
-
     this.player.geometry.dispose();
 
-    if (
-      Array.isArray(
-        this.player.material,
-      )
-    ) {
-      this.player.material.forEach(
-        (
-          material,
-        ) =>
-          material.dispose(),
-      );
+    if (Array.isArray(this.player.material)) {
+      this.player.material.forEach(material => material.dispose());
     } else {
       this.player.material.dispose();
     }
 
     this.renderer.dispose();
-
-    this.container.innerHTML =
-      '';
+    this.container.innerHTML = '';
   }
 }
