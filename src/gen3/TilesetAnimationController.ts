@@ -592,11 +592,10 @@ export class TilesetAnimationController {
       secondaryTilesetAddress !==
       this.activeSecondaryTilesetAddress;
 
-    if (primaryChanged) {
-      this.liveTiles.clear();
-    }
-
-    if (secondaryChanged) {
+    if (
+      primaryChanged ||
+      secondaryChanged
+    ) {
       this.liveTiles.clear();
     }
 
@@ -616,144 +615,200 @@ export class TilesetAnimationController {
       return;
     }
 
-    const readTiles =
-      (
-        tileIds:
-          Set<number> | undefined,
-      ): void => {
-        if (
-          !tileIds ||
-          tileIds.size === 0
-        ) {
-          return;
-        }
-
-        for (
-          const tileId of tileIds
-        ) {
-          const tileBytes =
-            this.memoryReader.readRange(
-              GBA_VRAM_BASE +
-                tileId *
-                  TILE_BYTES,
-              TILE_BYTES,
-            );
-
-          const previous =
-            this.liveTiles.get(
-              tileId,
-            );
-
-          if (
-            previous === undefined
-          ) {
-            this.liveTiles.set(
-              tileId,
-              tileBytes,
-            );
-
-            continue;
-          }
-
-          let changed =
-            false;
-
-          for (
-            let index = 0;
-            index < TILE_BYTES;
-            index++
-          ) {
-            if (
-              tileBytes[index] !==
-              previous[index]
-            ) {
-              changed = true;
-              break;
-            }
-          }
-
-          if (
-            changed
-          ) {
-            const primaryTargets =
-              this.primaryTargetsByAnimation.get(
-                this.createAnimationKey(
-                  primaryTilesetAddress,
-                  tileId,
-                ),
-              );
-
-            if (primaryTargets) {
-              for (
-                const targetKey of
-                  primaryTargets
-              ) {
-                const target =
-                  this.targets.get(
-                    targetKey,
-                  );
-
-                if (
-                  target
-                ) {
-                  this.patchTarget(
-                    target,
-                    tileId,
-                    tileBytes,
-                  );
-                }
-              }
-            }
-
-            const secondaryTargets =
-              this.secondaryTargetsByAnimation.get(
-                this.createAnimationKey(
-                  secondaryTilesetAddress,
-                  tileId,
-                ),
-              );
-
-            if (secondaryTargets) {
-              for (
-                const targetKey of
-                  secondaryTargets
-              ) {
-                const target =
-                  this.targets.get(
-                    targetKey,
-                  );
-
-                if (
-                  target
-                ) {
-                  this.patchTarget(
-                    target,
-                    tileId,
-                    tileBytes,
-                  );
-                }
-              }
-            }
-          }
-
-          this.liveTiles.set(
-            tileId,
-            tileBytes,
-          );
-        }
-      };
-
-    readTiles(
+    this.processAnimatedTiles(
       this.primaryAnimatedTilesByTileset.get(
         primaryTilesetAddress,
       ),
+      primaryTilesetAddress,
+      this.primaryTargetsByAnimation,
     );
 
-    readTiles(
+    this.processAnimatedTiles(
       this.secondaryAnimatedTilesByTileset.get(
         secondaryTilesetAddress,
       ),
+      secondaryTilesetAddress,
+      this.secondaryTargetsByAnimation,
     );
+  }
+
+  private processAnimatedTiles(
+    tileIds:
+      Set<number> | undefined,
+    tilesetAddress:
+      number,
+    targetIndex:
+      Map<string, Set<string>>,
+  ): void {
+    if (
+      tilesetAddress <= 0 ||
+      !tileIds ||
+      tileIds.size === 0
+    ) {
+      return;
+    }
+
+    const snapshots =
+      this.readAnimatedTileSnapshots(
+        tileIds,
+      );
+
+    for (
+      const [tileId, tileBytes] of
+        snapshots
+    ) {
+      const previous =
+        this.liveTiles.get(
+          tileId,
+        );
+
+      if (
+        previous === undefined
+      ) {
+        this.liveTiles.set(
+          tileId,
+          tileBytes,
+        );
+
+        continue;
+      }
+
+      let changed =
+        false;
+
+      for (
+        let index = 0;
+        index < TILE_BYTES;
+        index++
+      ) {
+        if (
+          tileBytes[index] !==
+          previous[index]
+        ) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (!changed) {
+        continue;
+      }
+
+      const animationKey =
+        this.createAnimationKey(
+          tilesetAddress,
+          tileId,
+        );
+
+      const targets =
+        targetIndex.get(
+          animationKey,
+        );
+
+      if (targets) {
+        for (
+          const targetKey of
+            targets
+        ) {
+          const target =
+            this.targets.get(
+              targetKey,
+            );
+
+          if (target) {
+            this.patchTarget(
+              target,
+              tileId,
+              tileBytes,
+            );
+          }
+        }
+      }
+
+      this.liveTiles.set(
+        tileId,
+        tileBytes,
+      );
+    }
+  }
+
+  private readAnimatedTileSnapshots(
+    tileIds:
+      Set<number>,
+  ): Map<number, Uint8Array> {
+    const result =
+      new Map<
+        number,
+        Uint8Array
+      >();
+
+    const ids =
+      Array.from(
+        tileIds,
+      ).sort(
+        (a, b) =>
+          a - b,
+      );
+
+    let index = 0;
+
+    while (
+      index < ids.length
+    ) {
+      const first =
+        ids[index];
+
+      let last =
+        first;
+
+      index++;
+
+      while (
+        index < ids.length &&
+        ids[index] ===
+          last + 1
+      ) {
+        last =
+          ids[index];
+
+        index++;
+      }
+
+      const count =
+        last - first + 1;
+
+      const bytes =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            first *
+              TILE_BYTES,
+          count *
+            TILE_BYTES,
+        );
+
+      for (
+        let offset = 0;
+        offset < count;
+        offset++
+      ) {
+        const tileId =
+          first + offset;
+
+        result.set(
+          tileId,
+          bytes.subarray(
+            offset *
+              TILE_BYTES,
+            (
+              offset + 1
+            ) *
+              TILE_BYTES,
+          ),
+        );
+      }
+    }
+
+    return result;
   }
 
   private patchTarget(
