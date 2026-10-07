@@ -1592,13 +1592,8 @@ export class TilesetAnimationController {
       tileIndex >= 4;
 
     if (
-      layerType === 1
-    ) {
-      return 'base';
-    }
-
-    if (
       layerType === 0 ||
+      layerType === 1 ||
       layerType === 2
     ) {
       return isTopLayer
