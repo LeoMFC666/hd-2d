@@ -295,6 +295,20 @@ export class Gen3StateAdapter {
     number,
     Gen3MetatileGraphics | null
   >();
+  private readonly mapRenderCache =
+    new Map<
+      string,
+      {
+        blocks: MapBlockState[];
+        graphics: Map<
+          number,
+          Gen3MetatileGraphics | null
+        >;
+      }
+    >();
+
+  private readonly mapRenderCacheLimit =
+    8;
 
   constructor(
     memoryReader: MemoryReader,
@@ -1011,16 +1025,34 @@ export class Gen3StateAdapter {
       return null;
     }
 
-    const previousPrimary =
-      this.currentPrimaryTileset;
+    const cacheKey =
+      mapDataAddress.toString(16) +
+      ':' +
+      width +
+      'x' +
+      height +
+      ':' +
+      primaryTilesetAddress.toString(16) +
+      ':' +
+      secondaryTilesetAddress.toString(16);
 
-    const previousSecondary =
-      this.currentSecondaryTileset;
-
-    const previousCache =
-      new Map(
-        this.metatileGraphicsCache,
+    const cached =
+      this.mapRenderCache.get(
+        cacheKey,
       );
+
+    if (cached) {
+      // Refresh LRU position without copying the payload.
+      this.mapRenderCache.delete(
+        cacheKey,
+      );
+      this.mapRenderCache.set(
+        cacheKey,
+        cached,
+      );
+
+      return cached;
+    }
 
     try {
       const primaryTileset =
@@ -1084,30 +1116,43 @@ export class Gen3StateAdapter {
         );
       }
 
-      return {
+      const result = {
         blocks,
         graphics,
       };
-    } finally {
-      this.currentPrimaryTileset =
-        previousPrimary;
 
-      this.currentSecondaryTileset =
-        previousSecondary;
+      this.mapRenderCache.set(
+        cacheKey,
+        result,
+      );
 
-      this.metatileGraphicsCache.clear();
-
-      for (
-        const [
-          key,
-          value,
-        ] of previousCache
+      while (
+        this.mapRenderCache.size >
+        this.mapRenderCacheLimit
       ) {
-        this.metatileGraphicsCache.set(
-          key,
-          value,
+        const oldest =
+          this.mapRenderCache.keys().next().value;
+
+        if (
+          oldest === undefined
+        ) {
+          break;
+        }
+
+        this.mapRenderCache.delete(
+          oldest,
         );
       }
+
+      return result;
+    } finally {
+      this.currentPrimaryTileset =
+        null;
+
+      this.currentSecondaryTileset =
+        null;
+
+      this.metatileGraphicsCache.clear();
     }
   }
   
