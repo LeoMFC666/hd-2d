@@ -278,6 +278,8 @@ export class Gen3StateAdapter {
 
   private mapBlocksSecondaryTilesetAddress = 0;
 
+  private mapBlocksMapDataAddress = 0;
+
   private fireRedCinnabarResolved:
     {
       mapHeaderAddress: number;
@@ -776,6 +778,9 @@ export class Gen3StateAdapter {
       this.mapBlocksWidth =
         width;
 
+      this.mapBlocksMapDataAddress =
+        mapDataAddress;
+
       this.mapBlocksHeight =
         height;
 
@@ -1026,11 +1031,22 @@ export class Gen3StateAdapter {
       this.metatileGraphicsCache.clear();
 
       const blocks =
-        this.readMapBlocks(
-          mapDataAddress,
-          width,
-          height,
-        );
+        mapDataAddress ===
+          this.mapBlocksMapDataAddress &&
+        width ===
+          this.mapBlocksWidth &&
+        height ===
+          this.mapBlocksHeight &&
+        primaryTilesetAddress ===
+          this.mapBlocksPrimaryTilesetAddress &&
+        secondaryTilesetAddress ===
+          this.mapBlocksSecondaryTilesetAddress
+          ? this.mapBlocks
+          : this.readMapBlocks(
+              mapDataAddress,
+              width,
+              height,
+            );
 
       const usedMetatiles =
         new Set<number>();
