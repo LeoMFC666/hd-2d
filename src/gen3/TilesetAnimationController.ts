@@ -264,7 +264,7 @@ export class TilesetAnimationController {
         Array.from(
           { length: ANIMATED_PRIMARY_TILE_COUNT },
           (_, index) =>
-            rangeStartTile +
+            ANIMATED_PRIMARY_TILE_START +
             index,
         );
 
@@ -344,8 +344,15 @@ export class TilesetAnimationController {
           target.map
             .primaryTilesetAddress ===
           primaryTilesetAddress &&
-          target.placementsByTile.size >
-            0,
+          Array.from(
+            target.placementsByTile.keys(),
+          ).some(
+            tileId =>
+              tileId >=
+                ANIMATED_PRIMARY_TILE_START &&
+              tileId <
+                ANIMATED_PRIMARY_TILE_END,
+          ),
       );
 
     const secondaryTarget =
@@ -357,11 +364,19 @@ export class TilesetAnimationController {
           target.map
             .secondaryTilesetAddress ===
           secondaryTilesetAddress &&
-          target.placementsByTile.size >
-            0,
+          Array.from(
+            target.placementsByTile.keys(),
+          ).some(
+            tileId =>
+              tileId >=
+                this.getNumTilesInPrimary(),
+          ),
       );
 
-    if (!primaryTarget && !secondaryTarget) {
+    if (
+      !primaryTarget &&
+      !secondaryTarget
+    ) {
       return;
     }
 
@@ -418,18 +433,22 @@ export class TilesetAnimationController {
             TILE_BYTES,
         );
 
-      changedSecondaryTiles =
-        this.findChangedTiles(
-          secondaryRange,
-          false,
-          secondaryTileStart,
-          secondaryTilesetChanged ||
-            this.liveSecondaryRange === null ||
-            this.liveSecondaryTilesetAddress !==
-              secondaryTilesetAddress
-            ? null
-            : this.liveSecondaryRange,
-        );
+      const previousSecondary =
+        !secondaryTilesetChanged &&
+        this.liveSecondaryTilesetAddress ===
+          secondaryTilesetAddress
+          ? this.liveSecondaryRange
+          : null;
+
+      if (previousSecondary) {
+        changedSecondaryTiles =
+          this.findChangedTiles(
+            secondaryRange,
+            false,
+            secondaryTileStart,
+            previousSecondary,
+          );
+      }
     }
 
     for (
@@ -491,17 +510,24 @@ export class TilesetAnimationController {
     previousRange:
       Uint8Array | null,
   ): number[] {
+    const tileCount =
+      Math.floor(
+        range.length /
+          TILE_BYTES,
+      );
+
     if (
       forceAll ||
-      previousRange === null
+      previousRange === null ||
+      previousRange.length !==
+        range.length
     ) {
       return Array.from(
         {
-          length:
-            ANIMATED_PRIMARY_TILE_COUNT,
+          length: tileCount,
         },
         (_, index) =>
-          ANIMATED_PRIMARY_TILE_START +
+          rangeStartTile +
           index,
       );
     }
@@ -510,8 +536,7 @@ export class TilesetAnimationController {
 
     for (
       let index = 0;
-      index <
-        ANIMATED_PRIMARY_TILE_COUNT;
+      index < tileCount;
       index++
     ) {
       const start =
@@ -529,7 +554,7 @@ export class TilesetAnimationController {
       ) {
         if (
           range[start + byteIndex] !==
-          this.liveRange[
+          previousRange[
             start + byteIndex
           ]
         ) {
@@ -540,7 +565,7 @@ export class TilesetAnimationController {
 
       if (differs) {
         changed.push(
-          ANIMATED_PRIMARY_TILE_START +
+          rangeStartTile +
           index,
         );
       }
