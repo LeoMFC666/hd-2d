@@ -40,9 +40,6 @@ const METATILE_SIZE =
 const METATILE_TILE_COUNT =
   8;
 
-const PRIMARY_METATILE_COUNT =
-  640;
-
 const TILESET_PALETTES_OFFSET =
   0x08;
 
@@ -96,6 +93,12 @@ interface AnimatedTile {
 
   y:
     number;
+
+  secondary:
+    boolean;
+
+  restorePixels:
+    Uint8Array | null;
 }
 
 interface AnimatedMapTarget {
@@ -182,6 +185,15 @@ export class TilesetAnimationController {
   private liveRangeTilesetAddress =
     0;
 
+  private readonly liveTiles =
+    new Map<
+      number,
+      Uint8Array
+    >();
+
+  private activeSecondaryTilesetAddress =
+    0;
+
   private frameCounter =
     0;
 
@@ -231,35 +243,53 @@ export class TilesetAnimationController {
     placementsByTile:
       Map<number, AnimatedTile[]>,
   ): void {
+    const target: AnimatedMapTarget = {
+      key,
+      map,
+      baseTexture,
+      overlayTexture,
+      placementsByTile,
+    };
+
     this.targets.set(
       key,
-      {
-        key,
-        map,
-        baseTexture,
-        overlayTexture,
-        placementsByTile,
-      },
+      target,
     );
 
-    if (
-      this.liveRange &&
-      this.liveRangeTilesetAddress ===
-        map.primaryTilesetAddress
+    for (
+      const placements of
+        placementsByTile.values()
     ) {
-      const changedTiles =
-        Array.from(
-          { length: ANIMATED_PRIMARY_TILE_COUNT },
-          (_, index) =>
-            ANIMATED_PRIMARY_TILE_START +
-            index,
-        );
+      for (
+        const placement of
+          placements
+      ) {
+        placement.restorePixels =
+          placement.target ===
+          'base'
+            ? this.captureBaseRestorePixels(
+                target,
+                placement,
+              )
+            : null;
+      }
+    }
 
-      this.patchTarget(
-        this.targets.get(key)!,
-        changedTiles,
-        this.liveRange,
-      );
+    for (
+      const [tileId, tileBytes] of
+        this.liveTiles
+    ) {
+      if (
+        placementsByTile.has(
+          tileId,
+        )
+      ) {
+        this.patchTarget(
+          target,
+          tileId,
+          tileBytes,
+        );
+      }
     }
   }
 
@@ -281,22 +311,48 @@ export class TilesetAnimationController {
     this.frameCounter = 0;
   }
 
+  suspend(): void {
+    this.liveTiles.clear();
+    this.liveRange = null;
+    this.liveRangeTilesetAddress = 0;
+    this.activePrimaryTilesetAddress = 0;
+    this.activeSecondaryTilesetAddress = 0;
+    this.frameCounter = 0;
+  }
+
   update(
     primaryTilesetAddress:
       number,
+    secondaryTilesetAddress:
+      number,
   ): void {
     if (
-      primaryTilesetAddress <= 0
+      primaryTilesetAddress <= 0 &&
+      secondaryTilesetAddress <= 0
     ) {
       return;
     }
 
-    const primaryTilesetChanged =
+    const primaryChanged =
       primaryTilesetAddress !==
       this.activePrimaryTilesetAddress;
 
+    const secondaryChanged =
+      secondaryTilesetAddress !==
+      this.activeSecondaryTilesetAddress;
+
+    if (
+      primaryChanged ||
+      secondaryChanged
+    ) {
+      this.liveTiles.clear();
+    }
+
     this.activePrimaryTilesetAddress =
       primaryTilesetAddress;
+
+    this.activeSecondaryTilesetAddress =
+      secondaryTilesetAddress;
 
     this.frameCounter++;
 
@@ -308,331 +364,358 @@ export class TilesetAnimationController {
       return;
     }
 
-    const hasMatchingTarget =
-      Array.from(
-        this.targets.values(),
-      ).some(
-        target =>
-          target.map
-            .primaryTilesetAddress ===
-          primaryTilesetAddress &&
-          target.placementsByTile.size >
-            0,
-      );
-
-    if (
-      !hasMatchingTarget
-    ) {
-      return;
-    }
-
-    const range =
-      this.memoryReader.readRange(
-        GBA_VRAM_BASE +
-          ANIMATED_PRIMARY_TILE_START *
-            TILE_BYTES,
-        ANIMATED_PRIMARY_TILE_COUNT *
-          TILE_BYTES,
-      );
-
-    const changedTiles =
-      this.findChangedTiles(
-        range,
-        primaryTilesetChanged ||
-          this.liveRange === null ||
-          this.liveRangeTilesetAddress !==
-            primaryTilesetAddress,
-      );
-
-    if (
-      changedTiles.length ===
-      0
-    ) {
-      return;
-    }
+    const watched =
+      new Set<number>();
 
     for (
       const target of
         this.targets.values()
     ) {
       if (
-        target.map.primaryTilesetAddress !==
-        primaryTilesetAddress
+        target.map.primaryTilesetAddress ===
+          primaryTilesetAddress
       ) {
-        continue;
-      }
-
-      this.patchTarget(
-        target,
-        changedTiles,
-        range,
-      );
-    }
-
-    this.liveRange =
-      range.slice();
-
-    this.liveRangeTilesetAddress =
-      primaryTilesetAddress;
-  }
-
-  private findChangedTiles(
-    range: Uint8Array,
-    forceAll:
-      boolean,
-  ): number[] {
-    if (
-      forceAll ||
-      this.liveRange === null
-    ) {
-      return Array.from(
-        {
-          length:
-            ANIMATED_PRIMARY_TILE_COUNT,
-        },
-        (_, index) =>
-          ANIMATED_PRIMARY_TILE_START +
-          index,
-      );
-    }
-
-    const changed: number[] = [];
-
-    for (
-      let index = 0;
-      index <
-        ANIMATED_PRIMARY_TILE_COUNT;
-      index++
-    ) {
-      const start =
-        index *
-        TILE_BYTES;
-
-      let differs =
-        false;
-
-      for (
-        let byteIndex = 0;
-        byteIndex <
-          TILE_BYTES;
-        byteIndex++
-      ) {
-        if (
-          range[start + byteIndex] !==
-          this.liveRange[
-            start + byteIndex
-          ]
+        for (
+          const tileId of
+            target.placementsByTile.keys()
         ) {
-          differs = true;
-          break;
+          if (
+            tileId >=
+              ANIMATED_PRIMARY_TILE_START &&
+            tileId <
+              ANIMATED_PRIMARY_TILE_END
+          ) {
+            watched.add(
+              tileId,
+            );
+          }
         }
       }
 
-      if (differs) {
-        changed.push(
-          ANIMATED_PRIMARY_TILE_START +
-          index,
-        );
+      if (
+        target.map.secondaryTilesetAddress ===
+          secondaryTilesetAddress
+      ) {
+        for (
+          const tileId of
+            target.placementsByTile.keys()
+        ) {
+          if (
+            this.isAnimatedSecondaryTile(
+              tileId,
+            )
+          ) {
+            watched.add(
+              tileId,
+            );
+          }
+        }
       }
     }
 
-    return changed;
+    if (
+      watched.size === 0
+    ) {
+      return;
+    }
+
+    for (
+      const tileId of watched
+    ) {
+      const tileBytes =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            tileId *
+              TILE_BYTES,
+          TILE_BYTES,
+        );
+
+      const previous =
+        this.liveTiles.get(
+          tileId,
+        );
+
+      let changed =
+        previous === undefined;
+
+      if (
+        !changed &&
+        previous
+      ) {
+        changed = false;
+
+        for (
+          let index = 0;
+          index < TILE_BYTES;
+          index++
+        ) {
+          if (
+            tileBytes[index] !==
+            previous[index]
+          ) {
+            changed = true;
+            break;
+          }
+        }
+      }
+
+      if (
+        changed
+      ) {
+        for (
+          const target of
+            this.targets.values()
+        ) {
+          if (
+            target.placementsByTile.has(
+              tileId,
+            ) &&
+            (
+              target.map.primaryTilesetAddress ===
+                primaryTilesetAddress ||
+              target.map.secondaryTilesetAddress ===
+                secondaryTilesetAddress
+            )
+          ) {
+            this.patchTarget(
+              target,
+              tileId,
+              tileBytes,
+            );
+          }
+        }
+      }
+
+      this.liveTiles.set(
+        tileId,
+        tileBytes,
+      );
+    }
   }
 
   private patchTarget(
     target:
       AnimatedMapTarget,
-    changedTiles:
-      readonly number[],
-    liveRange:
+    tileId:
+      number,
+    tileBytes:
       Uint8Array,
   ): void {
+    const placements =
+      target.placementsByTile.get(
+        tileId,
+      );
+
+    if (!placements) {
+      return;
+    }
+
     let baseDirty =
       false;
 
     let overlayDirty =
       false;
 
+    const decodedPixels =
+      new Uint8Array(64);
+
     for (
-      const tileId of
-        changedTiles
+      let sourceY = 0;
+      sourceY < TILE_SIZE;
+      sourceY++
     ) {
-      const placements =
-        target.placementsByTile.get(
-          tileId,
+      for (
+        let sourceX = 0;
+        sourceX < TILE_SIZE;
+        sourceX++
+      ) {
+        decodedPixels[
+          sourceY * TILE_SIZE +
+          sourceX
+        ] =
+          this.read4BppPixel(
+            tileBytes,
+            sourceX,
+            sourceY,
+          );
+      }
+    }
+
+    for (
+      const placement of
+        placements
+    ) {
+      const palette =
+        this.readPaletteForPlacement(
+          target.map,
+          placement,
         );
 
-      if (!placements) {
+      if (!palette) {
         continue;
       }
 
-      const liveTileOffset =
-        (
-          tileId -
-          ANIMATED_PRIMARY_TILE_START
-        ) *
-        TILE_BYTES;
+      const textureData =
+        placement.target ===
+        'base'
+          ? (
+              target.baseTexture
+                .image.data as TextureData
+            )
+          : (
+              target.overlayTexture
+                .image.data as TextureData
+            );
 
-      const tileBytes =
-        liveRange.subarray(
-          liveTileOffset,
-          liveTileOffset +
-            TILE_BYTES,
+      const textureWidth =
+        target.map.width *
+        METATILE_SIZE;
+
+      const blockY =
+        Math.floor(
+          placement.y /
+            METATILE_SIZE,
         );
 
+      const localY =
+        placement.y %
+        METATILE_SIZE;
+
+      const textureBaseY =
+        (
+          target.map.height -
+          1 -
+          blockY
+        ) *
+          METATILE_SIZE +
+        15 -
+        localY;
+
       for (
-        const placement of
-          placements
+        let sourceY = 0;
+        sourceY < TILE_SIZE;
+        sourceY++
       ) {
-        const palette =
-          this.readPaletteForPlacement(
-            target.map,
-            placement,
-          );
+        const pixelY =
+          placement.vFlip
+            ? TILE_SIZE -
+              1 -
+              sourceY
+            : sourceY;
 
-        if (!palette) {
-          continue;
-        }
-
-        const textureData =
-          placement.target ===
-          'base'
-            ? (
-                target.baseTexture
-                  .image.data as TextureData
-              )
-            : (
-                target.overlayTexture
-                  .image.data as TextureData
-              );
-
-        const textureWidth =
-          target.map.width *
-          METATILE_SIZE;
-
-        const blockY =
-          Math.floor(
-            placement.y /
-              METATILE_SIZE,
-          );
-
-        const localY =
-          placement.y %
-          METATILE_SIZE;
-
-        const textureBaseY =
-          (
-            target.map.height -
-            1 -
-            blockY
-          ) *
-            METATILE_SIZE +
-          15 -
-          localY;
+        const destinationY =
+          textureBaseY -
+          pixelY;
 
         for (
-          let sourceY = 0;
-          sourceY < TILE_SIZE;
-          sourceY++
+          let sourceX = 0;
+          sourceX < TILE_SIZE;
+          sourceX++
         ) {
-          const pixelY =
-            placement.vFlip
+          const pixelX =
+            placement.hFlip
               ? TILE_SIZE -
                 1 -
-                sourceY
-              : sourceY;
+                sourceX
+              : sourceX;
 
-          const destinationY =
-            textureBaseY -
-            pixelY;
+          // IMPORTANT: source coordinates index the live GBA tile.
+          // h/v flips affect only the destination coordinate.
+          const paletteIndex =
+            decodedPixels[
+              sourceY *
+                TILE_SIZE +
+              sourceX
+            ];
 
-          for (
-            let sourceX = 0;
-            sourceX < TILE_SIZE;
-            sourceX++
+          const x =
+            placement.x +
+            pixelX;
+
+          const y =
+            destinationY;
+
+          const offset =
+            (
+              y *
+                textureWidth +
+              x
+            ) *
+            RGBA_CHANNEL_COUNT;
+
+          if (
+            offset < 0 ||
+            offset + 3 >=
+              textureData.length
           ) {
-            const pixelX =
-              placement.hFlip
-                ? TILE_SIZE -
-                  1 -
-                  sourceX
-                : sourceX;
+            continue;
+          }
 
-            const paletteIndex =
-              this.read4BppPixel(
-                tileBytes,
-                sourceX,
-                sourceY,
-              );
-
-            const x =
-              placement.x +
-              pixelX;
-
-            const y =
-              destinationY;
-
-            const offset =
-              (
-                y *
-                  textureWidth +
-                x
-              ) *
-              RGBA_CHANNEL_COUNT;
-
+          if (
+            paletteIndex === 0
+          ) {
             if (
-              offset < 0 ||
-              offset +
-                3 >=
-                textureData.length
+              placement.target ===
+                'base' &&
+              placement.restorePixels
             ) {
+              const restoreOffset =
+                (
+                  sourceY *
+                    TILE_SIZE +
+                  sourceX
+                ) *
+                RGBA_CHANNEL_COUNT;
+
+              textureData[offset] =
+                placement.restorePixels[
+                  restoreOffset
+                ];
+              textureData[offset + 1] =
+                placement.restorePixels[
+                  restoreOffset + 1
+                ];
+              textureData[offset + 2] =
+                placement.restorePixels[
+                  restoreOffset + 2
+                ];
+              textureData[offset + 3] =
+                placement.restorePixels[
+                  restoreOffset + 3
+                ];
+            } else {
+              textureData[offset] = 0;
+              textureData[offset + 1] = 0;
+              textureData[offset + 2] = 0;
+              textureData[offset + 3] = 0;
+            }
+          } else {
+            const color =
+              palette[
+                paletteIndex
+              ];
+
+            if (!color) {
               continue;
             }
 
-            if (
-              paletteIndex === 0
-            ) {
-              textureData[offset] = 0;
-              textureData[
-                offset + 1
-              ] = 0;
-              textureData[
-                offset + 2
-              ] = 0;
-              textureData[
-                offset + 3
-              ] = 0;
-            } else {
-              const color =
-                palette[
-                  paletteIndex
-                ];
+            textureData[offset] =
+              color.r;
+            textureData[offset + 1] =
+              color.g;
+            textureData[offset + 2] =
+              color.b;
+            textureData[offset + 3] =
+              255;
+          }
 
-              if (!color) {
-                continue;
-              }
-
-              textureData[offset] =
-                color.r;
-              textureData[
-                offset + 1
-              ] = color.g;
-              textureData[
-                offset + 2
-              ] = color.b;
-              textureData[
-                offset + 3
-              ] = 255;
-            }
-
-            if (
-              placement.target ===
-              'base'
-            ) {
-              baseDirty = true;
-            } else {
-              overlayDirty = true;
-            }
+          if (
+            placement.target ===
+            'base'
+          ) {
+            baseDirty = true;
+          } else {
+            overlayDirty = true;
           }
         }
       }
@@ -647,6 +730,126 @@ export class TilesetAnimationController {
       target.overlayTexture.needsUpdate =
         true;
     }
+  }
+
+  private captureBaseRestorePixels(
+    target:
+      AnimatedMapTarget,
+    placement:
+      AnimatedTile,
+  ): Uint8Array {
+    const restore =
+      new Uint8Array(
+        TILE_SIZE *
+          TILE_SIZE *
+          RGBA_CHANNEL_COUNT,
+      );
+
+    const textureData =
+      target.baseTexture
+        .image.data as TextureData;
+
+    const textureWidth =
+      target.map.width *
+      METATILE_SIZE;
+
+    const blockY =
+      Math.floor(
+        placement.y /
+          METATILE_SIZE,
+      );
+
+    const localY =
+      placement.y %
+      METATILE_SIZE;
+
+    const textureBaseY =
+      (
+        target.map.height -
+        1 -
+        blockY
+      ) *
+        METATILE_SIZE +
+      15 -
+      localY;
+
+    for (
+      let sourceY = 0;
+      sourceY < TILE_SIZE;
+      sourceY++
+    ) {
+      const pixelY =
+        placement.vFlip
+          ? TILE_SIZE -
+            1 -
+            sourceY
+          : sourceY;
+
+      const destinationY =
+        textureBaseY -
+        pixelY;
+
+      for (
+        let sourceX = 0;
+        sourceX < TILE_SIZE;
+        sourceX++
+      ) {
+        const pixelX =
+          placement.hFlip
+            ? TILE_SIZE -
+              1 -
+              sourceX
+            : sourceX;
+
+        const x =
+          placement.x +
+          pixelX;
+
+        const y =
+          destinationY;
+
+        const destinationOffset =
+          (
+            y *
+              textureWidth +
+            x
+          ) *
+            RGBA_CHANNEL_COUNT;
+
+        const restoreOffset =
+          (
+            sourceY *
+              TILE_SIZE +
+            sourceX
+          ) *
+            RGBA_CHANNEL_COUNT;
+
+        if (
+          destinationOffset >= 0 &&
+          destinationOffset + 3 <
+            textureData.length
+        ) {
+          restore[restoreOffset] =
+            textureData[
+              destinationOffset
+            ];
+          restore[restoreOffset + 1] =
+            textureData[
+              destinationOffset + 1
+            ];
+          restore[restoreOffset + 2] =
+            textureData[
+              destinationOffset + 2
+            ];
+          restore[restoreOffset + 3] =
+            textureData[
+              destinationOffset + 3
+            ];
+        }
+      }
+    }
+
+    return restore;
   }
 
   private read4BppPixel(
@@ -681,6 +884,12 @@ export class TilesetAnimationController {
         AnimatedTile[]
       >();
 
+    const primaryMetatileCount =
+      this.getNumMetatilesInPrimary();
+
+    const primaryTileCount =
+      this.getNumTilesInPrimary();
+
     for (
       let blockY = 0;
       blockY < map.height;
@@ -697,23 +906,38 @@ export class TilesetAnimationController {
             blockX
           ];
 
-        if (
-          !block ||
-          block.metatileId >=
-            PRIMARY_METATILE_COUNT
-        ) {
+        if (!block) {
           continue;
         }
 
+        const isPrimary =
+          block.metatileId <
+            primaryMetatileCount;
+
+        const tilesetAddress =
+          isPrimary
+            ? map.primaryTilesetAddress
+            : map.secondaryTilesetAddress;
+
+        const localMetatileId =
+          isPrimary
+            ? block.metatileId
+            : block.metatileId -
+              primaryMetatileCount;
+
         const metatile =
           this.readPrimaryMetatile(
-            map.primaryTilesetAddress,
-            block.metatileId,
+            tilesetAddress,
+            localMetatileId,
           );
 
         if (!metatile) {
           continue;
         }
+
+        const layerTileIndex =
+          (tileIndex: number) =>
+            tileIndex % 4;
 
         for (
           let tileIndex = 0;
@@ -726,41 +950,66 @@ export class TilesetAnimationController {
               tileIndex
             ];
 
-          if (
-            tile.tileId <
-              ANIMATED_PRIMARY_TILE_START ||
-            tile.tileId >=
-              ANIMATED_PRIMARY_TILE_END
-          ) {
+          if (!tile) {
+            continue;
+          }
+
+          const globalTileId =
+            isPrimary
+              ? tile.tileId
+              : primaryTileCount +
+                tile.tileId;
+
+          const animated =
+            isPrimary
+              ? (
+                  globalTileId >=
+                    ANIMATED_PRIMARY_TILE_START &&
+                  globalTileId <
+                    ANIMATED_PRIMARY_TILE_END
+                )
+              : this.isAnimatedSecondaryTile(
+                  globalTileId,
+                );
+
+          if (!animated) {
             continue;
           }
 
           const target =
             this.resolveTextureTarget(
               metatile.layerType,
-              tileIndex,
+              layerTileIndex(
+                tileIndex,
+              ),
             );
 
           if (!target) {
             continue;
           }
 
+          const localTileIndex =
+            layerTileIndex(
+              tileIndex,
+            );
+
           const localX =
             (
-              tileIndex %
+              localTileIndex %
               2
             ) *
             TILE_SIZE;
 
           const localY =
             Math.floor(
-              tileIndex / 2,
+              localTileIndex / 2,
             ) *
             TILE_SIZE;
 
-          const placement: AnimatedTile = {
+          const placement:
+            AnimatedTile = {
             tileId:
-              tile.tileId,
+              globalTileId,
             paletteIndex:
               tile.paletteIndex,
             hFlip:
@@ -776,11 +1025,15 @@ export class TilesetAnimationController {
               blockY *
                 METATILE_SIZE +
               localY,
+            secondary:
+              !isPrimary,
+            restorePixels:
+              null,
           };
 
           const bucket =
             placementsByTile.get(
-              tile.tileId,
+              globalTileId,
             ) ?? [];
 
           bucket.push(
@@ -788,7 +1041,7 @@ export class TilesetAnimationController {
           );
 
           placementsByTile.set(
-            tile.tileId,
+            globalTileId,
             bucket,
           );
         }
@@ -796,6 +1049,70 @@ export class TilesetAnimationController {
     }
 
     return placementsByTile;
+  }
+
+  private isAnimatedSecondaryTile(
+    tileId: number,
+  ): boolean {
+    if (
+      tileId < 512 ||
+      tileId >= 1024
+    ) {
+      return false;
+    }
+
+    if (this.isFireRedFamily) {
+      return (
+        (
+          tileId >= 739 &&
+          tileId <= 751
+        ) ||
+        (
+          tileId >= 880 &&
+          tileId <= 886
+        ) ||
+        (
+          tileId >= 896 &&
+          tileId <= 903
+        ) ||
+        (
+          tileId >= 976 &&
+          tileId <= 983
+        )
+      );
+    }
+
+    const local =
+      tileId -
+      512;
+
+    return (
+      (
+        local >= 96 &&
+        local <= 163
+      ) ||
+      (
+        local >= 170 &&
+        local <= 175
+      ) ||
+      (
+        local >= 218 &&
+        local <= 335
+      ) ||
+      (
+        local >= 416 &&
+        local <= 419
+      ) ||
+      (
+        local >= 448 &&
+        local <= 451
+      ) ||
+      (
+        local >= 464 &&
+        local <= 499
+      ) ||
+      local === 504
+    );
   }
 
   private resolveTextureTarget(
@@ -994,10 +1311,9 @@ export class TilesetAnimationController {
         : 6;
 
     const palettesAddress =
-      placement.paletteIndex <
-        primaryPaletteCount
-        ? primaryPaletteAddress
-        : secondaryPaletteAddress;
+      placement.secondary
+        ? secondaryPaletteAddress
+        : primaryPaletteAddress;
 
     if (
       !this.isValidRomPointer(
