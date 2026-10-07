@@ -211,6 +211,12 @@ export class TilesetAnimationController {
       AnimatedMapTarget
     >();
 
+  private readonly targetsByTile =
+    new Map<
+      string,
+      AnimatedMapTarget[]
+    >();
+
   private readonly metatileCache =
     new Map<
       string,
@@ -306,6 +312,10 @@ export class TilesetAnimationController {
       target,
     );
 
+    this.indexTargetTiles(
+      target,
+    );
+
     for (
       const placements of
         placementsByTile.values()
@@ -333,6 +343,17 @@ export class TilesetAnimationController {
   unregisterMap(
     key: string,
   ): void {
+    const target =
+      this.targets.get(
+        key,
+      );
+
+    if (target) {
+      this.unindexTargetTiles(
+        target,
+      );
+    }
+
     this.targets.delete(
       key,
     );
@@ -343,6 +364,7 @@ export class TilesetAnimationController {
 
   clear(): void {
     this.targets.clear();
+    this.targetsByTile.clear();
     this.metatileCache.clear();
     this.paletteCache.clear();
     this.liveTiles.clear();
@@ -951,6 +973,118 @@ export class TilesetAnimationController {
     return snapshots;
   }
 
+  private indexTargetTiles(
+    target:
+      AnimatedMapTarget,
+  ): void {
+    for (
+      const [tileId, placements] of
+        target.placementsByTile
+    ) {
+      for (
+        const placement of
+          placements
+      ) {
+        const address =
+          placement.secondary
+            ? target.map
+                .secondaryTilesetAddress
+            : target.map
+                .primaryTilesetAddress;
+
+        const key =
+          this.liveTileKey(
+            address,
+            tileId,
+          );
+
+        const targets =
+          this.targetsByTile.get(
+            key,
+          ) ?? [];
+
+        if (
+          !targets.includes(
+            target,
+          )
+        ) {
+          targets.push(
+            target,
+          );
+          this.targetsByTile.set(
+            key,
+            targets,
+          );
+        }
+      }
+    }
+  }
+
+  private unindexTargetTiles(
+    target:
+      AnimatedMapTarget,
+  ): void {
+    for (
+      const [tileId, placements] of
+        target.placementsByTile
+    ) {
+      const addresses =
+        new Set<number>();
+
+      for (
+        const placement of
+          placements
+      ) {
+        addresses.add(
+          placement.secondary
+            ? target.map
+                .secondaryTilesetAddress
+            : target.map
+                .primaryTilesetAddress,
+        );
+      }
+
+      for (
+        const address of
+          addresses
+      ) {
+        const key =
+          this.liveTileKey(
+            address,
+            tileId,
+          );
+
+        const targets =
+          this.targetsByTile.get(
+            key,
+          );
+
+        if (!targets) {
+          continue;
+        }
+
+        const next =
+          targets.filter(
+            entry =>
+              entry !== target,
+          );
+
+        if (
+          next.length === 0
+        ) {
+          this.targetsByTile.delete(
+            key,
+          );
+        } else {
+          this.targetsByTile.set(
+            key,
+            next,
+          );
+        }
+      }
+    }
+  }
+
   private patchTargetsForTile(
     tilesetAddress:
       number,
@@ -959,33 +1093,22 @@ export class TilesetAnimationController {
     tileBytes:
       Uint8Array,
   ): void {
+    const targets =
+      this.targetsByTile.get(
+        this.liveTileKey(
+          tilesetAddress,
+          tileId,
+        ),
+      );
+
+    if (!targets) {
+      return;
+    }
+
     for (
       const target of
-        this.targets.values()
+        targets
     ) {
-      const placements =
-        target.placementsByTile.get(
-          tileId,
-        );
-
-      if (
-        !placements ||
-        placements.length ===
-          0
-      ) {
-        continue;
-      }
-
-      const mapUsesTileset =
-        target.map.primaryTilesetAddress ===
-          tilesetAddress ||
-        target.map.secondaryTilesetAddress ===
-          tilesetAddress;
-
-      if (!mapUsesTileset) {
-        continue;
-      }
-
       this.patchTarget(
         target,
         tileId,
