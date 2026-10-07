@@ -1305,9 +1305,7 @@ export class TilesetAnimationController {
           const target =
             this.resolveTextureTarget(
               metatile.layerType,
-              layerTileIndex(
-                tileIndex,
-              ),
+              tileIndex,
             );
 
           if (!target) {
