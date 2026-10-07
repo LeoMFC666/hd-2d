@@ -1224,46 +1224,58 @@ export class Gen3StateAdapter {
     width: number,
     height: number,
   ): MapBlockState[] {
-    const blocks: MapBlockState[] =
-      new Array(width * height);
+    const count =
+      width * height;
+
+    if (
+      count <= 0
+    ) {
+      return [];
+    }
+
+    const bytes =
+      this.memoryReader.readRange(
+        mapDataAddress,
+        count * 2,
+      );
+
+    const blocks:
+      MapBlockState[] =
+      new Array(count);
 
     for (
-      let y = 0;
-      y < height;
-      y++
+      let index = 0;
+      index < count;
+      index++
     ) {
-      for (
-        let x = 0;
-        x < width;
-        x++
-      ) {
-        const raw =
-          this.memoryReader.readU16(
-            mapDataAddress +
-              (y * width + x) * 2,
-          );
+      const offset =
+        index * 2;
 
-        blocks[
-          y * width + x
-        ] = {
-          raw,
-          metatileId:
+      const raw =
+        bytes[offset] |
+        (
+          bytes[offset + 1] <<
+          8
+        );
+
+      blocks[index] = {
+        raw,
+        metatileId:
+          raw &
+          MAPGRID_METATILE_ID_MASK,
+        collision:
+          (
             raw &
-            MAPGRID_METATILE_ID_MASK,
-          collision:
-            (
-              raw &
-              MAPGRID_COLLISION_MASK
-            ) >>
-            MAPGRID_COLLISION_SHIFT,
-          elevation:
-            (
-              raw &
-              MAPGRID_ELEVATION_MASK
-            ) >>
-            MAPGRID_ELEVATION_SHIFT,
-        };
-      }
+            MAPGRID_COLLISION_MASK
+          ) >>
+          MAPGRID_COLLISION_SHIFT,
+        elevation:
+          (
+            raw &
+            MAPGRID_ELEVATION_MASK
+          ) >>
+          MAPGRID_ELEVATION_SHIFT,
+      };
     }
 
     return blocks;
@@ -1421,7 +1433,8 @@ export class Gen3StateAdapter {
         palettesAddress,
       ) ||
       paletteIndex < 0 ||
-      paletteIndex >= NUM_PALS_TOTAL
+      paletteIndex >=
+        NUM_PALS_TOTAL
     ) {
       return null;
     }
@@ -1432,6 +1445,21 @@ export class Gen3StateAdapter {
         GBA_PALETTE_COLORS *
         GBA_PALETTE_COLOR_BYTES;
 
+    const bytes =
+      this.memoryReader.readRange(
+        paletteAddress,
+        GBA_PALETTE_COLORS *
+          GBA_PALETTE_COLOR_BYTES,
+      );
+
+    if (
+      bytes.length !==
+      GBA_PALETTE_COLORS *
+        GBA_PALETTE_COLOR_BYTES
+    ) {
+      return null;
+    }
+
     const colors = [];
 
     for (
@@ -1439,10 +1467,14 @@ export class Gen3StateAdapter {
       i < GBA_PALETTE_COLORS;
       i++
     ) {
+      const offset =
+        i * 2;
+
       const raw =
-        this.memoryReader.readU16(
-          paletteAddress +
-            i * GBA_PALETTE_COLOR_BYTES,
+        bytes[offset] |
+        (
+          bytes[offset + 1] <<
+          8
         );
 
       const r5 =
@@ -1457,9 +1489,15 @@ export class Gen3StateAdapter {
       colors.push({
         index: i,
         raw,
-        r: (r5 << 3) | (r5 >> 2),
-        g: (g5 << 3) | (g5 >> 2),
-        b: (b5 << 3) | (b5 >> 2),
+        r:
+          (r5 << 3) |
+          (r5 >> 2),
+        g:
+          (g5 << 3) |
+          (g5 >> 2),
+        b:
+          (b5 << 3) |
+          (b5 >> 2),
       });
     }
 
@@ -1875,6 +1913,27 @@ export class Gen3StateAdapter {
         4,
       );
 
+    const count =
+      sampleWidth *
+      sampleHeight;
+
+    if (
+      count <= 0
+    ) {
+      return [];
+    }
+
+    const bytes =
+      this.memoryReader.readRange(
+        mapDataAddress,
+        (
+          (
+            sampleHeight - 1
+          ) * width +
+          sampleWidth
+        ) * 2,
+      );
+
     const sample:
       MapBlockState[] = [];
 
@@ -1888,41 +1947,36 @@ export class Gen3StateAdapter {
         x < sampleWidth;
         x++
       ) {
-        const address =
-          mapDataAddress +
+        const offset =
           (
-            (y * width + x) *
-            2
-          );
+            y * width +
+            x
+          ) * 2;
 
         const raw =
-          this.memoryReader.readU16(
-            address,
+          bytes[offset] |
+          (
+            bytes[offset + 1] <<
+            8
           );
-
-        const metatileId =
-          raw &
-          MAPGRID_METATILE_ID_MASK;
-
-        const collision =
-          (
-            raw &
-            MAPGRID_COLLISION_MASK
-          ) >>
-          MAPGRID_COLLISION_SHIFT;
-
-        const elevation =
-          (
-            raw &
-            MAPGRID_ELEVATION_MASK
-          ) >>
-          MAPGRID_ELEVATION_SHIFT;
 
         sample.push({
           raw,
-          metatileId,
-          collision,
-          elevation,
+          metatileId:
+            raw &
+            MAPGRID_METATILE_ID_MASK,
+          collision:
+            (
+              raw &
+              MAPGRID_COLLISION_MASK
+            ) >>
+            MAPGRID_COLLISION_SHIFT,
+          elevation:
+            (
+              raw &
+              MAPGRID_ELEVATION_MASK
+            ) >>
+            MAPGRID_ELEVATION_SHIFT,
         });
       }
     }
@@ -2047,56 +2101,68 @@ export class Gen3StateAdapter {
       return null;
     }
 
-    const metatileAddress =
-      tileset.metatilesAddress +
-      metatileId *
-        METATILE_TILE_COUNT *
-        2;
+    const metatileBytes =
+      this.memoryReader.readRange(
+        tileset.metatilesAddress +
+          metatileId *
+            METATILE_TILE_COUNT *
+            2,
+        METATILE_TILE_COUNT * 2,
+      );
+
+    if (
+      metatileBytes.length !==
+      METATILE_TILE_COUNT * 2
+    ) {
+      return null;
+    }
 
     const tiles:
-      MetatileTileState[] = [];
+      MetatileTileState[] =
+      new Array(
+        METATILE_TILE_COUNT,
+      );
 
     for (
       let i = 0;
       i < METATILE_TILE_COUNT;
       i++
     ) {
+      const offset =
+        i * 2;
+
       const rawTile =
-        this.memoryReader.readU16(
-          metatileAddress +
-            i * 2,
+        metatileBytes[offset] |
+        (
+          metatileBytes[
+            offset + 1
+          ] <<
+          8
         );
 
-      const tileId =
-        rawTile &
-        TILE_ID_MASK;
-
-      const hFlip =
-        (
+      tiles[i] = {
+        raw:
+          rawTile,
+        tileId:
           rawTile &
-          TILE_HFLIP_MASK
-        ) !== 0;
-
-      const vFlip =
-        (
-          rawTile &
-          TILE_VFLIP_MASK
-        ) !== 0;
-
-      const palette =
-        (
-          rawTile &
-          TILE_PALETTE_MASK
-        ) >>
-        TILE_PALETTE_SHIFT;
-
-      tiles.push({
-        raw: rawTile,
-        tileId,
-        hFlip,
-        vFlip,
-        palette,
-      });
+          TILE_ID_MASK,
+        hFlip:
+          (
+            rawTile &
+            TILE_HFLIP_MASK
+          ) !== 0,
+        vFlip:
+          (
+            rawTile &
+            TILE_VFLIP_MASK
+          ) !== 0,
+        palette:
+          (
+            rawTile &
+            TILE_PALETTE_MASK
+          ) >>
+          TILE_PALETTE_SHIFT,
+      };
     }
 
     let rawAttribute = 0;
@@ -2145,7 +2211,8 @@ export class Gen3StateAdapter {
     }
 
     return {
-      id: metatileId,
+      id:
+        metatileId,
       tiles,
       rawAttribute,
       behavior,
