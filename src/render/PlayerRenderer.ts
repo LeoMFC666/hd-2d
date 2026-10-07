@@ -378,6 +378,13 @@ export class PlayerRenderer {
       return;
     }
 
+    if (
+      state.map.mapGroup === 3 &&
+      state.map.mapNumber === 8
+    ) {
+      return;
+    }
+
     const existing =
       this.mapCatalog.get(
         state.map.mapGroup,
