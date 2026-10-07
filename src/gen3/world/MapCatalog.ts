@@ -315,7 +315,10 @@ export interface Gen3MapCatalogAnchor {
   mapNumber: number;
   mapLayoutId: number;
   mapLayoutAddress: number;
+  mapHeaderAddress?: number;
 }
+
+
 
 export class MapCatalog {
   private readonly maps =
@@ -323,6 +326,14 @@ export class MapCatalog {
       string,
       MapDefinition
     >();
+
+  private romBytes:
+    Uint8Array | null =
+    null;
+
+  private romView:
+    DataView | null =
+    null;
 
   register(
     definition: MapDefinition,
@@ -377,6 +388,16 @@ export class MapCatalog {
     anchor: Gen3MapCatalogAnchor,
   ): number {
     this.clear();
+
+    this.romBytes =
+      romBytes;
+
+    this.romView =
+      new DataView(
+        romBytes.buffer,
+        romBytes.byteOffset,
+        romBytes.byteLength,
+      );
 
     const gameCode =
       this.readAscii(
@@ -471,10 +492,17 @@ export class MapCatalog {
     }
 
     const staticHeader =
-      this.findStaticMapHeader(
+      anchor.mapHeaderAddress &&
+      this.isValidRomPointer(
         romBytes,
-        anchor,
-      );
+        anchor.mapHeaderAddress,
+        MAP_HEADER_SIZE,
+      )
+        ? anchor.mapHeaderAddress
+        : this.findStaticMapHeader(
+            romBytes,
+            anchor,
+          );
 
     if (
       staticHeader === 0
@@ -743,10 +771,17 @@ export class MapCatalog {
     }
 
     const staticHeader =
-      this.findStaticMapHeader(
+      anchor.mapHeaderAddress &&
+      this.isValidRomPointer(
         romBytes,
-        anchor,
-      );
+        anchor.mapHeaderAddress,
+        MAP_HEADER_SIZE,
+      )
+        ? anchor.mapHeaderAddress
+        : this.findStaticMapHeader(
+            romBytes,
+            anchor,
+          );
 
     if (
       staticHeader === 0
@@ -1833,6 +1868,23 @@ export class MapCatalog {
     romBytes: Uint8Array,
     offset: number,
   ): number {
+    const view =
+      this.romView;
+
+    if (
+      view &&
+      this.romBytes ===
+        romBytes &&
+      offset >= 0 &&
+      offset + 2 <=
+        romBytes.byteLength
+    ) {
+      return view.getUint16(
+        offset,
+        true,
+      );
+    }
+
     return (
       this.readU8(
         romBytes,
@@ -1852,6 +1904,23 @@ export class MapCatalog {
     romBytes: Uint8Array,
     offset: number,
   ): number {
+    const view =
+      this.romView;
+
+    if (
+      view &&
+      this.romBytes ===
+        romBytes &&
+      offset >= 0 &&
+      offset + 4 <=
+        romBytes.byteLength
+    ) {
+      return view.getUint32(
+        offset,
+        true,
+      );
+    }
+
     return (
       (
         this.readU8(
