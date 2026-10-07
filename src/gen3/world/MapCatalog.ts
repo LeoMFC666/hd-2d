@@ -7,6 +7,10 @@ import type {
 const GBA_ROM_BASE =
   0x08000000;
 
+const FRLG_BETA_CINNABAR_MAP_DATA =
+  GBA_ROM_BASE +
+  0x00338378;
+
 const GAME_CODE_OFFSET =
   0xac;
 
@@ -637,6 +641,14 @@ export class MapCatalog {
         }
 
         if (
+          mapGroup === 3 &&
+          mapNumber === 8 &&
+          mapDataAddress ===
+            FRLG_BETA_CINNABAR_MAP_DATA
+        ) {
+          continue;
+        }
+        if (
           !this.isValidRomPointer(
             romBytes,
             primaryTilesetAddress,
@@ -909,6 +921,14 @@ export class MapCatalog {
           continue;
         }
 
+        if (
+          mapGroup === 3 &&
+          mapNumber === 8 &&
+          mapDataAddress ===
+            FRLG_BETA_CINNABAR_MAP_DATA
+        ) {
+          continue;
+        }
         const mapLayoutId =
           this.readU16(
             romBytes,
