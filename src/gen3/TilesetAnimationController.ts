@@ -18,9 +18,6 @@ const GBA_ROM_BASE =
 const GBA_VRAM_BASE =
   0x06000000;
 
-const PRIMARY_TILE_COUNT =
-  640;
-
 const ANIMATED_PRIMARY_TILE_START =
   416;
 
@@ -210,57 +207,18 @@ export class TilesetAnimationController {
       gameCode === 'BPGJ';
   }
 
-  registerMap(
-    key: string,
+  createPlacements(
     map: MapDefinition,
     blocks:
       readonly MapBlockState[],
-  ): {
-    baseTexture:
-      THREE.DataTexture;
-
-    overlayTexture:
-      THREE.DataTexture;
-
-    placementsByTile:
-      Map<number, AnimatedTile[]>;
-  } {
-    const placementsByTile =
-      this.buildPlacements(
-        map,
-        blocks,
-      );
-
-    const existing =
-      this.targets.get(
-        key,
-      );
-
-    if (existing) {
-      existing.map =
-        map;
-      existing.placementsByTile =
-        placementsByTile;
-
-      return {
-        baseTexture:
-          existing.baseTexture,
-        overlayTexture:
-          existing.overlayTexture,
-        placementsByTile,
-      };
-    }
-
-    return {
-      baseTexture:
-        null as never,
-      overlayTexture:
-        null as never,
-      placementsByTile,
-    };
+  ): Map<number, AnimatedTile[]> {
+    return this.buildPlacements(
+      map,
+      blocks,
+    );
   }
 
-  attachTextures(
+  attachMap(
     key: string,
     map: MapDefinition,
     baseTexture:
@@ -329,6 +287,10 @@ export class TilesetAnimationController {
       return;
     }
 
+    const primaryTilesetChanged =
+      primaryTilesetAddress !==
+      this.activePrimaryTilesetAddress;
+
     this.activePrimaryTilesetAddress =
       primaryTilesetAddress;
 
@@ -372,8 +334,7 @@ export class TilesetAnimationController {
     const changedTiles =
       this.findChangedTiles(
         range,
-        primaryTilesetAddress !==
-          this.activePrimaryTilesetAddress ||
+        primaryTilesetChanged ||
           this.liveRange === null,
       );
 
@@ -540,6 +501,26 @@ export class TilesetAnimationController {
           target.map.width *
           METATILE_SIZE;
 
+        const blockY =
+          Math.floor(
+            placement.y /
+              METATILE_SIZE,
+          );
+
+        const localY =
+          placement.y %
+          METATILE_SIZE;
+
+        const textureBaseY =
+          (
+            target.map.height -
+            1 -
+            blockY
+          ) *
+            METATILE_SIZE +
+          15 -
+          localY;
+
         for (
           let sourceY = 0;
           sourceY < TILE_SIZE;
@@ -553,23 +534,8 @@ export class TilesetAnimationController {
               : sourceY;
 
           const destinationY =
-            (
-              target.map.height -
-              1 -
-              Math.floor(
-                placement.y /
-                  METATILE_SIZE,
-              )
-            ) *
-              METATILE_SIZE +
-            15 -
-            (
-              (
-                placement.y %
-                METATILE_SIZE
-              ) +
-              sourceY
-            );
+            textureBaseY -
+            pixelY;
 
           for (
             let sourceX = 0;
@@ -595,15 +561,7 @@ export class TilesetAnimationController {
               pixelX;
 
             const y =
-              destinationY +
-              (
-                placement.y %
-                METATILE_SIZE
-              ) -
-              (
-                placement.y %
-                METATILE_SIZE
-              );
+              destinationY;
 
             const offset =
               (
@@ -1021,9 +979,14 @@ export class TilesetAnimationController {
           TILESET_PALETTES_OFFSET,
       );
 
+    const primaryPaletteCount =
+      this.isFireRedFamily
+        ? FRLG_PRIMARY_PALETTE_COUNT
+        : 6;
+
     const palettesAddress =
       placement.paletteIndex <
-        FRLG_PRIMARY_PALETTE_COUNT
+        primaryPaletteCount
         ? primaryPaletteAddress
         : secondaryPaletteAddress;
 
