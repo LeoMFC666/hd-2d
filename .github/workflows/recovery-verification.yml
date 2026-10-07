@@ -1,7 +1,7 @@
 name: Recovery verification
 on:
   push:
-    branches: [diagnose/verify-recover-save-world]
+    branches: [diagnose/final-recovery-browser]
   workflow_dispatch:
 jobs:
   browser:
