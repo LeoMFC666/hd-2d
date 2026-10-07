@@ -25,6 +25,10 @@ const GBA_ROM_HEADER_GAME_CODE =
 const GBA_ROM_BASE =
   0x08000000;
 
+const FRLG_BETA_CINNABAR_MAP_DATA =
+  GBA_ROM_BASE +
+  0x00338378;
+
 const GBA_ROM_HEADER_REVISION =
   0x080000bc;
 
@@ -274,6 +278,17 @@ export class Gen3StateAdapter {
 
   private mapBlocksSecondaryTilesetAddress = 0;
 
+  private fireRedCinnabarResolved:
+    {
+      mapHeaderAddress: number;
+      mapLayoutAddress: number;
+      mapLayoutId: number;
+    } | null =
+    null;
+
+  private fireRedCinnabarLookupCompleted =
+    false;
+
   private currentPrimaryTileset: TilesetState | null = null;
 
   private currentSecondaryTileset: TilesetState | null = null;
@@ -444,6 +459,46 @@ export class Gen3StateAdapter {
       this.mapHeaderMapNumber = -1;
       this.lastMapHeaderLookupKey = '';
       this.lastMapHeaderLookupAt = 0;
+      return;
+    }
+
+    if (
+      this.isFireRedFamily() &&
+      mapGroup === 3 &&
+      mapNumber === 8
+    ) {
+      const cinnabar =
+        this.findFireRedCinnabarLayout();
+
+      if (cinnabar) {
+        state.map.mapLayoutId =
+          cinnabar.mapLayoutId;
+
+        this.mapHeaderAddress =
+          cinnabar.mapHeaderAddress;
+
+        this.mapHeaderLayoutId =
+          cinnabar.mapLayoutId;
+
+        this.mapHeaderMapGroup =
+          3;
+
+        this.mapHeaderMapNumber =
+          8;
+
+        this.readMapLayout(
+          state,
+          cinnabar.mapHeaderAddress,
+          cinnabar.mapLayoutAddress,
+        );
+
+        if (
+          state.map.width > 0
+        ) {
+          return;
+        }
+      }
+
       return;
     }
 
@@ -629,6 +684,16 @@ export class Gen3StateAdapter {
         mapLayoutAddress +
           MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
       );
+
+    if (
+      this.isFireRedFamily() &&
+      state.map.mapGroup === 3 &&
+      state.map.mapNumber === 8 &&
+      mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+    ) {
+      return;
+    }
 
     if (
       !this.isValidRomPointer(
@@ -2113,6 +2178,267 @@ export class Gen3StateAdapter {
       metatileAttributesAddress:
         `0x${tileset.metatileAttributesAddress.toString(16)}`,
     };
+  }
+
+  private isFireRedFamily(): boolean {
+    return (
+      this.profile?.id ===
+        'firered' ||
+      this.profile?.id ===
+        'leafgreen'
+    );
+  }
+
+  private findFireRedCinnabarLayout():
+    {
+      mapHeaderAddress: number;
+      mapLayoutAddress: number;
+      mapLayoutId: number;
+    } | null {
+    if (
+      this.fireRedCinnabarLookupCompleted
+    ) {
+      return this.fireRedCinnabarResolved;
+    }
+
+    this.fireRedCinnabarLookupCompleted =
+      true;
+
+    const romBytes =
+      this.romBytes;
+
+    const dataView =
+      this.romDataView;
+
+    if (
+      !romBytes ||
+      !dataView ||
+      !this.isFireRedFamily()
+    ) {
+      return null;
+    }
+
+    for (
+      let offset = 0;
+      offset <=
+        romBytes.length -
+          0x1c;
+      offset += 4
+    ) {
+      const mapHeaderAddress =
+        GBA_ROM_BASE +
+        offset;
+
+      const mapLayoutAddress =
+        dataView.getUint32(
+          offset,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          mapLayoutAddress,
+        )
+      ) {
+        continue;
+      }
+
+      const layoutOffset =
+        mapLayoutAddress -
+        GBA_ROM_BASE;
+
+      if (
+        layoutOffset < 0 ||
+        layoutOffset + 0x18 >
+          romBytes.length
+      ) {
+        continue;
+      }
+
+      const width =
+        dataView.getUint32(
+          layoutOffset,
+          true,
+        );
+
+      const height =
+        dataView.getUint32(
+          layoutOffset + 4,
+          true,
+        );
+
+      if (
+        width !== 24 ||
+        height !== 20
+      ) {
+        continue;
+      }
+
+      const mapDataAddress =
+        dataView.getUint32(
+          layoutOffset + 0x0c,
+          true,
+        );
+
+      if (
+        mapDataAddress ===
+        FRLG_BETA_CINNABAR_MAP_DATA
+      ) {
+        continue;
+      }
+
+      const primaryTilesetAddress =
+        dataView.getUint32(
+          layoutOffset + 0x10,
+          true,
+        );
+
+      const secondaryTilesetAddress =
+        dataView.getUint32(
+          layoutOffset + 0x14,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          mapDataAddress,
+        ) ||
+        !this.isValidRomPointer(
+          primaryTilesetAddress,
+        ) ||
+        !this.isValidRomPointer(
+          secondaryTilesetAddress,
+        )
+      ) {
+        continue;
+      }
+
+      const connectionsAddress =
+        dataView.getUint32(
+          offset + 0x0c,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          connectionsAddress,
+          8,
+        )
+      ) {
+        continue;
+      }
+
+      const connectionsOffset =
+        connectionsAddress -
+        GBA_ROM_BASE;
+
+      const count =
+        dataView.getInt32(
+          connectionsOffset,
+          true,
+        );
+
+      if (
+        count <= 0 ||
+        count > 64
+      ) {
+        continue;
+      }
+
+      const dataAddress =
+        dataView.getUint32(
+          connectionsOffset + 4,
+          true,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          dataAddress,
+          count * 0x0c,
+        )
+      ) {
+        continue;
+      }
+
+      const dataOffset =
+        dataAddress -
+        GBA_ROM_BASE;
+
+      let hasNorthRoute21 =
+        false;
+
+      let hasEastRoute20 =
+        false;
+
+      for (
+        let index = 0;
+        index < count;
+        index++
+      ) {
+        const entryOffset =
+          dataOffset +
+          index * 0x0c;
+
+        const direction =
+          romBytes[
+            entryOffset
+          ];
+
+        const offsetValue =
+          dataView.getInt32(
+            entryOffset + 4,
+            true,
+          );
+
+        const mapGroup =
+          romBytes[
+            entryOffset + 8
+          ];
+
+        const mapNumber =
+          romBytes[
+            entryOffset + 9
+          ];
+
+        if (
+          direction === 2 &&
+          offsetValue === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 40
+        ) {
+          hasNorthRoute21 = true;
+        }
+
+        if (
+          direction === 4 &&
+          offsetValue === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 38
+        ) {
+          hasEastRoute20 = true;
+        }
+      }
+
+      if (
+        hasNorthRoute21 &&
+        hasEastRoute20
+      ) {
+        this.fireRedCinnabarResolved =
+          {
+            mapHeaderAddress,
+            mapLayoutAddress,
+            mapLayoutId:
+              dataView.getUint16(
+                offset + 0x12,
+                true,
+              ),
+          };
+
+        return this.fireRedCinnabarResolved;
+      }
+    }
+
+    return null;
   }
 
   private findMapHeaderAddress(
