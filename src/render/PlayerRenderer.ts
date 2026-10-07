@@ -234,12 +234,18 @@ export class PlayerRenderer {
       new THREE.WebGLRenderer({
         antialias: false,
         alpha: true,
+        precision: 'mediump',
+        powerPreference:
+          'high-performance',
       });
+
+    this.renderer.sortObjects =
+      false;
 
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
-        2,
+        1.5,
       ),
     );
 
