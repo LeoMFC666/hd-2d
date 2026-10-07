@@ -112,8 +112,6 @@ interface AnimatedTile {
   secondary:
     boolean;
 
-  restorePixels:
-    Uint8Array | null;
 }
 
 interface AnimatedMapTarget {
@@ -128,6 +126,9 @@ interface AnimatedMapTarget {
 
   overlayTexture:
     THREE.DataTexture;
+
+  visible:
+    boolean;
 
   placementsByTile:
     Map<
@@ -265,6 +266,7 @@ export class TilesetAnimationController {
       map,
       baseTexture,
       overlayTexture,
+      visible: true,
       placementsByTile,
     };
 
@@ -272,30 +274,6 @@ export class TilesetAnimationController {
       key,
       target,
     );
-
-    for (
-      const placements of
-        placementsByTile.values()
-    ) {
-      for (
-        const placement of
-          placements
-      ) {
-        if (
-          placement.target ===
-          'base'
-        ) {
-          placement.restorePixels =
-            this.captureRestorePixels(
-              target,
-              placement,
-            );
-        } else {
-          placement.restorePixels =
-            null;
-        }
-      }
-    }
 
     this.patchCurrentSnapshots(
       target,
@@ -314,6 +292,22 @@ export class TilesetAnimationController {
 
     this.animatedTileIndexDirty =
       true;
+  }
+
+  setMapVisibility(
+    key: string,
+    visible: boolean,
+  ): void {
+    const target =
+      this.targets.get(
+        key,
+      );
+
+    if (!target) {
+      return;
+    }
+
+    target.visible = visible;
   }
 
   clear(): void {
@@ -740,6 +734,10 @@ export class TilesetAnimationController {
         continue;
       }
 
+      if (!target.visible) {
+        continue;
+      }
+
       const mapUsesTileset =
         target.map.primaryTilesetAddress ===
           tilesetAddress ||
@@ -910,39 +908,13 @@ export class TilesetAnimationController {
             paletteIndex ===
             0
           ) {
-            if (
-              placement.target ===
-                'base' &&
-              placement.restorePixels
-            ) {
-              const restoreOffset =
-                (
-                  sourceY *
-                    TILE_SIZE +
-                  sourceX
-                ) *
-                RGBA_CHANNEL_COUNT;
-
-              textureData[offset] =
-                placement.restorePixels[
-                  restoreOffset
-                ];
-
-              textureData[offset + 1] =
-                placement.restorePixels[
-                  restoreOffset + 1
-                ];
-
-              textureData[offset + 2] =
-                placement.restorePixels[
-                  restoreOffset + 2
-                ];
-
-              textureData[offset + 3] =
-                placement.restorePixels[
-                  restoreOffset + 3
-                ];
-            } else {
+            // The GBA replaces this tile in VRAM. Do not reveal the
+            // stale static frame underneath transparent pixels.
+            textureData[offset] = 0;
+            textureData[offset + 1] = 0;
+            textureData[offset + 2] = 0;
+            textureData[offset + 3] = 0;
+          } else {
               textureData[offset] = 0;
               textureData[offset + 1] = 0;
               textureData[offset + 2] = 0;
@@ -1075,115 +1047,6 @@ export class TilesetAnimationController {
       : (
           value >> 4
         ) & 0x0f;
-  }
-
-  private captureRestorePixels(
-    target:
-      AnimatedMapTarget,
-    placement:
-      AnimatedTile,
-  ): Uint8Array {
-    const restore =
-      new Uint8Array(
-        TILE_SIZE *
-          TILE_SIZE *
-          RGBA_CHANNEL_COUNT,
-      );
-
-    const textureData = target.baseTexture.image.data as TextureData;
-
-    const textureWidth =
-      target.map.width *
-      METATILE_SIZE;
-
-    const blockY =
-      Math.floor(
-        placement.y /
-          METATILE_SIZE,
-      );
-
-    const localY =
-      placement.y %
-      METATILE_SIZE;
-
-    const textureBaseY =
-      (
-        target.map.height -
-        1 -
-        blockY
-      ) *
-        METATILE_SIZE +
-      15 -
-      localY;
-
-    for (
-      let sourceY = 0;
-      sourceY < TILE_SIZE;
-      sourceY++
-    ) {
-      const pixelY =
-        placement.vFlip
-          ? TILE_SIZE -
-            1 -
-            sourceY
-          : sourceY;
-
-      const destinationY =
-        textureBaseY -
-        pixelY;
-
-      for (
-        let sourceX = 0;
-        sourceX < TILE_SIZE;
-        sourceX++
-      ) {
-        const pixelX =
-          placement.hFlip
-            ? TILE_SIZE -
-              1 -
-              sourceX
-            : sourceX;
-
-        const offset =
-          (
-            (
-              destinationY *
-                textureWidth +
-              placement.x +
-              pixelX
-            ) *
-            RGBA_CHANNEL_COUNT
-          );
-
-        const restoreOffset =
-          (
-            sourceY *
-              TILE_SIZE +
-            sourceX
-          ) *
-          RGBA_CHANNEL_COUNT;
-
-        if (
-          offset >= 0 &&
-          offset + 3 <
-            textureData.length
-        ) {
-          restore[restoreOffset] =
-            textureData[offset];
-
-          restore[restoreOffset + 1] =
-            textureData[offset + 1];
-
-          restore[restoreOffset + 2] =
-            textureData[offset + 2];
-
-          restore[restoreOffset + 3] =
-            textureData[offset + 3];
-        }
-      }
-    }
-
-    return restore;
   }
 
   private buildPlacements(
@@ -1470,11 +1333,7 @@ export class TilesetAnimationController {
 
     return (
       (
-        localId >= 135 &&
-        localId < 143
-      ) ||
-      (
-        localId >= 144 &&
+        localId >= 96 &&
         localId < 164
       ) ||
       (
