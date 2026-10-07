@@ -21,6 +21,10 @@ import {
   MapWorld,
 } from '../gen3/world/MapWorld';
 
+import {
+  TilesetAnimationController,
+} from '../gen3/TilesetAnimationController';
+
 const GBA_METATILE_PIXELS =
   16;
 
@@ -56,6 +60,9 @@ export class PlayerRenderer {
 
   private readonly mapWorld:
     MapWorld;
+
+  private readonly tilesetAnimationController:
+    TilesetAnimationController;
 
   private readonly scene:
     THREE.Scene;
@@ -147,6 +154,13 @@ export class PlayerRenderer {
     this.mapWorld =
       new MapWorld(
         this.mapCatalog,
+      );
+
+    this.tilesetAnimationController =
+      new TilesetAnimationController(
+        this.romBytes,
+        this.stateAdapter
+          .getMemoryReader(),
       );
 
     this.scene =
@@ -870,6 +884,11 @@ export class PlayerRenderer {
       '3:8',
     );
 
+    this.tilesetAnimationController
+      .unregisterMap(
+        '3:8',
+      );
+
     this.queuedMaps.delete(
       '3:8',
     );
@@ -1513,6 +1532,19 @@ export class PlayerRenderer {
       overlayMesh,
     );
 
+    const mapKey =
+      this.createMapKey(
+        map.mapGroup,
+        map.mapNumber,
+      );
+
+    const animatedPlacements =
+      this.tilesetAnimationController
+        .createPlacements(
+          map,
+          renderData.blocks,
+        );
+
     const visual:
       MapVisual = {
         baseMesh,
@@ -1524,16 +1556,19 @@ export class PlayerRenderer {
           map.mapDataAddress,
       };
 
-    const mapKey =
-      this.createMapKey(
-        map.mapGroup,
-        map.mapNumber,
-      );
-
     this.mapVisuals.set(
       mapKey,
       visual,
     );
+
+    this.tilesetAnimationController
+      .attachMap(
+        mapKey,
+        map,
+        baseTexture,
+        overlayTexture,
+        animatedPlacements,
+      );
 
     const visible =
       this.mapWorld.hasPosition(
@@ -1838,6 +1873,10 @@ export class PlayerRenderer {
 
       this.processMapBuildQueue();
 
+      this.tilesetAnimationController.update(
+        state.map.primaryTilesetAddress,
+      );
+
       const playerPosition =
         this.updatePlayer(
           state,
@@ -1917,6 +1956,9 @@ export class PlayerRenderer {
     }
 
     this.mapVisuals.clear();
+
+    this.tilesetAnimationController
+      .clear();
 
     this.player.geometry.dispose();
 
