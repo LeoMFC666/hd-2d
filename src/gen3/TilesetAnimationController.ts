@@ -1184,8 +1184,6 @@ export class TilesetAnimationController {
               ) *
               TILE_SIZE,
             secondary,
-            restorePixels:
-              null,
           };
 
           const bucket =
