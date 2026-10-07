@@ -36,6 +36,9 @@ interface MapVisual {
 
   geometry:
     THREE.PlaneGeometry;
+
+  mapDataAddress:
+    number;
 }
 
 export class PlayerRenderer {
@@ -89,6 +92,9 @@ export class PlayerRenderer {
     false;
 
   private worldCatalogBuildAttempted =
+    false;
+
+  private cinnabarDefinitionChecked =
     false;
 
   private activeMapKey =
@@ -363,6 +369,379 @@ export class PlayerRenderer {
     );
   }
 
+  private ensureFireRedCinnabarDefinition(
+    state: GameState,
+  ): void {
+    if (
+      this.cinnabarDefinitionChecked ||
+      !this.isFireRedFamily(state) ||
+      state.map.mapGroup !== 3 ||
+      state.map.mapNumber !== 8
+    ) {
+      return;
+    }
+
+    const existing =
+      this.mapCatalog.get(
+        3,
+        8,
+      );
+
+    if (!existing) {
+      return;
+    }
+
+    this.cinnabarDefinitionChecked =
+      true;
+
+    const headerSize =
+      0x1c;
+
+    const layoutSize =
+      0x18;
+
+    const romBase =
+      0x08000000;
+
+    const isValidPointer = (
+      address: number,
+      size: number,
+    ): boolean => {
+      if (
+        address <
+        romBase
+      ) {
+        return false;
+      }
+
+      const offset =
+        address -
+        romBase;
+
+      return (
+        offset >= 0 &&
+        offset + size <=
+          this.romBytes.length
+      );
+    };
+
+    const readU8 = (
+      offset: number,
+    ): number => {
+      if (
+        offset < 0 ||
+        offset >=
+          this.romBytes.length
+      ) {
+        return 0;
+      }
+
+      return this.romBytes[offset];
+    };
+
+    const readU16 = (
+      offset: number,
+    ): number => {
+      return (
+        readU8(offset) |
+        (
+          readU8(offset + 1) <<
+          8
+        )
+      );
+    };
+
+    const readU32 = (
+      offset: number,
+    ): number => {
+      return (
+        (
+          readU8(offset) |
+          (
+            readU8(offset + 1) <<
+            8
+          ) |
+          (
+            readU8(offset + 2) <<
+            16
+          ) |
+          (
+            readU8(offset + 3) *
+            0x1000000
+          )
+        ) >>> 0
+      );
+    };
+
+    const readI32 = (
+      offset: number,
+    ): number => {
+      return (
+        readU32(offset) |
+        0
+      );
+    };
+
+    const hasCinnabarConnections = (
+      headerAddress: number,
+    ): boolean => {
+      const headerOffset =
+        headerAddress -
+        romBase;
+
+      const connectionsAddress =
+        readU32(
+          headerOffset +
+          0x0c,
+        );
+
+      if (
+        connectionsAddress === 0
+      ) {
+        return false;
+      }
+
+      if (
+        !isValidPointer(
+          connectionsAddress,
+          8,
+        )
+      ) {
+        return false;
+      }
+
+      const connectionsOffset =
+        connectionsAddress -
+        romBase;
+
+      const count =
+        readI32(
+          connectionsOffset,
+        );
+
+      if (
+        count < 0 ||
+        count > 64
+      ) {
+        return false;
+      }
+
+      if (
+        count === 0
+      ) {
+        return false;
+      }
+
+      const dataAddress =
+        readU32(
+          connectionsOffset +
+          4,
+        );
+
+      if (
+        !isValidPointer(
+          dataAddress,
+          count * 0x0c,
+        )
+      ) {
+        return false;
+      }
+
+      const dataOffset =
+        dataAddress -
+        romBase;
+
+      let north =
+        false;
+
+      let east =
+        false;
+
+      for (
+        let index = 0;
+        index < count;
+        index++
+      ) {
+        const entry =
+          dataOffset +
+          index * 0x0c;
+
+        const direction =
+          readU8(
+            entry,
+          );
+
+        const offset =
+          readI32(
+            entry + 4,
+          );
+
+        const mapGroup =
+          readU8(
+            entry + 8,
+          );
+
+        const mapNumber =
+          readU8(
+            entry + 9,
+          );
+
+        if (
+          direction === 2 &&
+          offset === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 40
+        ) {
+          north = true;
+        }
+
+        if (
+          direction === 4 &&
+          offset === 0 &&
+          mapGroup === 3 &&
+          mapNumber === 38
+        ) {
+          east = true;
+        }
+      }
+
+      return (
+        north &&
+        east
+      );
+    };
+
+    for (
+      let offset = 0;
+      offset <=
+        this.romBytes.length -
+          headerSize;
+      offset += 4
+    ) {
+      const headerAddress =
+        romBase +
+        offset;
+
+      const mapLayoutAddress =
+        readU32(
+          offset,
+        );
+
+      if (
+        !isValidPointer(
+          mapLayoutAddress,
+          layoutSize,
+        )
+      ) {
+        continue;
+      }
+
+      const layoutOffset =
+        mapLayoutAddress -
+        romBase;
+
+      const width =
+        readU32(
+          layoutOffset,
+        );
+
+      const height =
+        readU32(
+          layoutOffset + 4,
+        );
+
+      if (
+        width !== 24 ||
+        height !== 20
+      ) {
+        continue;
+      }
+
+      const mapDataAddress =
+        readU32(
+          layoutOffset + 0x0c,
+        );
+
+      const primaryTilesetAddress =
+        readU32(
+          layoutOffset + 0x10,
+        );
+
+      const secondaryTilesetAddress =
+        readU32(
+          layoutOffset + 0x14,
+        );
+
+      if (
+        !isValidPointer(
+          mapDataAddress,
+          width *
+          height *
+          2,
+        ) ||
+        !isValidPointer(
+          primaryTilesetAddress,
+          4,
+        ) ||
+        !isValidPointer(
+          secondaryTilesetAddress,
+          4,
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        !hasCinnabarConnections(
+          headerAddress,
+        )
+      ) {
+        continue;
+      }
+
+      const mapLayoutId =
+        readU16(
+          offset + 0x12,
+        );
+
+      const corrected: MapDefinition = {
+        ...existing,
+        mapLayoutId,
+        mapHeaderAddress:
+          headerAddress,
+        mapLayoutAddress,
+        mapDataAddress,
+        primaryTilesetAddress,
+        secondaryTilesetAddress,
+        width,
+        height,
+        connections:
+          existing.connections,
+      };
+
+      if (
+        existing.mapHeaderAddress ===
+          corrected.mapHeaderAddress &&
+        existing.mapLayoutAddress ===
+          corrected.mapLayoutAddress &&
+        existing.mapDataAddress ===
+          corrected.mapDataAddress &&
+        existing.primaryTilesetAddress ===
+          corrected.primaryTilesetAddress &&
+        existing.secondaryTilesetAddress ===
+          corrected.secondaryTilesetAddress
+      ) {
+        return;
+      }
+
+      this.mapCatalog.register(
+        corrected,
+      );
+
+      return;
+    }
+  }
+
   private ensureCurrentMapDefinition(
     state: GameState,
   ): void {
@@ -411,9 +790,106 @@ export class PlayerRenderer {
     );
   }
 
+  private repairCinnabarVisual(
+    state: GameState,
+  ): void {
+    if (
+      !this.isFireRedFamily(state) ||
+      state.map.mapGroup !== 3 ||
+      state.map.mapNumber !== 8
+    ) {
+      return;
+    }
+
+    const definition =
+      this.mapCatalog.get(
+        3,
+        8,
+      );
+
+    const visual =
+      this.mapVisuals.get(
+        '3:8',
+      );
+
+    if (
+      !definition ||
+      !visual ||
+      visual.mapDataAddress ===
+        definition.mapDataAddress
+    ) {
+      return;
+    }
+
+    this.root.remove(
+      visual.baseMesh,
+    );
+
+    this.root.remove(
+      visual.overlayMesh,
+    );
+
+    visual.baseTexture.dispose();
+    visual.overlayTexture.dispose();
+    visual.geometry.dispose();
+    visual.overlayMesh.geometry.dispose();
+
+    const baseMaterial =
+      visual.baseMesh.material;
+
+    if (
+      Array.isArray(
+        baseMaterial,
+      )
+    ) {
+      baseMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      baseMaterial.dispose();
+    }
+
+    const overlayMaterial =
+      visual.overlayMesh.material;
+
+    if (
+      Array.isArray(
+        overlayMaterial,
+      )
+    ) {
+      overlayMaterial.forEach(
+        material =>
+          material.dispose(),
+      );
+    } else {
+      overlayMaterial.dispose();
+    }
+
+    this.mapVisuals.delete(
+      '3:8',
+    );
+
+    this.queuedMaps.delete(
+      '3:8',
+    );
+
+    this.buildQueue.push(
+      definition,
+    );
+
+    this.queuedMaps.add(
+      '3:8',
+    );
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
+    this.repairCinnabarVisual(
+      state,
+    );
+
     const mapKey =
       this.createMapKey(
         state.map.mapGroup,
@@ -1044,6 +1520,8 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         geometry,
+        mapDataAddress:
+          map.mapDataAddress,
       };
 
     const mapKey =
@@ -1339,6 +1817,10 @@ export class PlayerRenderer {
       if (
         this.isFireRedFamily(state)
       ) {
+        this.ensureFireRedCinnabarDefinition(
+          state,
+        );
+
         this.ensureCurrentMapDefinition(
           state,
         );
