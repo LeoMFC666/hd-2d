@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - fix/e25-definitive-gen3-render-v2
+      - fix/gen3-animation-mauville
+      - perf/gen3-max-optimization
   workflow_dispatch:
 
 jobs:
