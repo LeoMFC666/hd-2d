@@ -284,11 +284,11 @@ export class TilesetAnimationController {
   update(
     primaryTilesetAddress:
       number,
-  ): void {
+  ): boolean {
     if (
       primaryTilesetAddress <= 0
     ) {
-      return;
+      return false;
     }
 
     const primaryTilesetChanged =
@@ -305,7 +305,7 @@ export class TilesetAnimationController {
         POLL_EVERY_FRAMES !==
       0
     ) {
-      return;
+      return false;
     }
 
     const hasMatchingTarget =
@@ -323,7 +323,7 @@ export class TilesetAnimationController {
     if (
       !hasMatchingTarget
     ) {
-      return;
+      return false;
     }
 
     const range =
@@ -348,7 +348,7 @@ export class TilesetAnimationController {
       changedTiles.length ===
       0
     ) {
-      return;
+      return false;
     }
 
     for (
@@ -374,6 +374,8 @@ export class TilesetAnimationController {
 
     this.liveRangeTilesetAddress =
       primaryTilesetAddress;
+
+    return true;
   }
 
   private findChangedTiles(
