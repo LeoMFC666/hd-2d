@@ -149,6 +149,31 @@ async function main(){
   const expectedDataBytes=reader.readRange(expectedCinnabarData,32);
   const betaBytes=reader.readRange(betaData,32);
 
+  const expectedCinnabarLayout=0x082e3b90;
+  const ewramCandidates=[];
+  const ewramMatches=[];
+  for(let address=EWRAM_START; address<=EWRAM_END-0x1c; address+=2){
+    const layoutAddress=reader.readU32(address);
+    const layoutId=reader.readU16(address+0x12);
+    if(layoutId!==86) continue;
+    const mapDataAddress=reader.readU32(layoutAddress+0x0c);
+    if(
+      layoutAddress>=BASE &&
+      layoutAddress<BASE+rom.length &&
+      mapDataAddress>=BASE &&
+      mapDataAddress<BASE+rom.length
+    ){
+      const item={
+        address:hex(address),
+        layoutAddress:hex(layoutAddress),
+        mapDataAddress:hex(mapDataAddress),
+        connectionsAddress:hex(reader.readU32(address+0x0c)),
+      };
+      ewramCandidates.push(item);
+      if(layoutAddress===expectedCinnabarLayout) ewramMatches.push(item);
+    }
+  }
+
   const catalog=new MapCatalog();
   const catalogCount=catalog.buildGen3FromRom(rom,{
     mapGroup:c.mapGroup,
@@ -230,6 +255,13 @@ async function main(){
       visualCount:intern.mapVisuals.size,
       connectedCount:connected,
       cinnabarWorldPosition:intern.mapWorld.getWorldPosition(3,8),
+    },
+    ewramMapHeaderScan:{
+      expectedCinnabarLayout:hex(expectedCinnabarLayout),
+      candidateCount:ewramCandidates.length,
+      exactCinnabarLayoutMatches:ewramMatches.length,
+      candidates:ewramCandidates.slice(0,50),
+      exactMatches:ewramMatches,
     },
     preSaveState:{
       mapGroup:preState.map.mapGroup,
