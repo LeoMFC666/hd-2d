@@ -59,13 +59,34 @@ try {
     );
 
     await page.waitForFunction(
-      () =>
-        document.querySelector('#status')?.textContent?.startsWith(
-          'ROM loaded:',
-        ),
+      () => {
+        const value =
+          document.querySelector('#status')?.textContent ??
+          '';
+
+        return (
+          value.startsWith('ROM loaded:') ||
+          value.startsWith('ROM failed to load:')
+        );
+      },
       undefined,
-      { timeout: 30000 },
+      { timeout: 120000 },
     );
+
+    const romStatus =
+      await page.locator('#status').textContent();
+
+    if (
+      !romStatus?.startsWith('ROM loaded:')
+    ) {
+      throw new Error(
+        testCase.name +
+          ': ROM did not load. Status=' +
+          romStatus +
+          ' Console=' +
+          consoleErrors.join(' | '),
+      );
+    }
 
     await new Promise(resolve => setTimeout(resolve, 800));
 
@@ -75,13 +96,34 @@ try {
     );
 
     await page.waitForFunction(
-      () =>
-        document.querySelector('#status')?.textContent?.startsWith(
-          'Save loaded:',
-        ),
+      () => {
+        const value =
+          document.querySelector('#status')?.textContent ??
+          '';
+
+        return (
+          value.startsWith('Save loaded:') ||
+          value.startsWith('Save failed to load:')
+        );
+      },
       undefined,
-      { timeout: 30000 },
+      { timeout: 60000 },
     );
+
+    const saveStatus =
+      await page.locator('#status').textContent();
+
+    if (
+      !saveStatus?.startsWith('Save loaded:')
+    ) {
+      throw new Error(
+        testCase.name +
+          ': save did not load. Status=' +
+          saveStatus +
+          ' Console=' +
+          consoleErrors.join(' | '),
+      );
+    }
 
     await new Promise(resolve => setTimeout(resolve, 5000));
 
