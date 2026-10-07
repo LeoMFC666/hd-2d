@@ -303,3 +303,5 @@ main().catch(e=>{
     error:e instanceof Error?e.stack:String(e),
   },null,2);
 });
+
+// browser validation trigger
