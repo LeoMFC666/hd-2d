@@ -930,7 +930,6 @@ export class PlayerRenderer {
     visual.baseTexture.dispose();
     visual.overlayTexture.dispose();
     visual.geometry.dispose();
-    visual.overlayMesh.geometry.dispose();
 
     const baseMaterial =
       visual.baseMesh.material;
@@ -1734,7 +1733,6 @@ export class PlayerRenderer {
       overlayTexture.dispose();
       baseMaterial.dispose();
       overlayMaterial.dispose();
-      overlayMesh.geometry.dispose();
 
       return;
     }
