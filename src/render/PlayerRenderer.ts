@@ -311,6 +311,17 @@ export class PlayerRenderer {
                 visual.baseMesh.visible,
             }),
           ),
+        getPositionedMapCount: () =>
+          this.mapWorld
+            .getPositionedMaps()
+            .length,
+        getAnimationPlacements: (
+          key?: string,
+        ) =>
+          this.tilesetAnimationController
+            .getDebugAnimationPlacements(
+              key,
+            ),
         getRenderInfo: () => ({
           calls:
             this.renderer.info.render.calls,
