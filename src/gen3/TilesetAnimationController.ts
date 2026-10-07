@@ -1090,9 +1090,7 @@ export class TilesetAnimationController {
           RGBA_CHANNEL_COUNT,
       );
 
-    const textureData:
-      TextureData =
-      target.baseTexture.image.data;
+    const textureData = target.baseTexture.image.data as TextureData;
 
     const textureWidth =
       target.map.width *
