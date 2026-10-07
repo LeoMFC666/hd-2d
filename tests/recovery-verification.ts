@@ -64,74 +64,127 @@ function stateFor(map:any):GameState{
 }
 
 async function auditCinnabar(){
- const response=await fetch('/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba');
- const rom=new Uint8Array(await response.arrayBuffer());
- const anchor=scanAnchor(rom,24,20,[
-  {direction:2,mapGroup:3,mapNumber:19,offset:0},
-  {direction:1,mapGroup:3,mapNumber:39,offset:0},
- ]);
- assert(anchor,'Pallet anchor scan failed');
- const catalog=new MapCatalog();
- const count=catalog.buildGen3FromRom(rom,{mapGroup:3,mapNumber:0,mapLayoutId:anchor.layoutId,mapLayoutAddress:anchor.layoutAddress});
- assert(count===425,'FireRed catalog count '+count);
- const correct=catalog.get(3,8)!;
- const ruin=catalog.get(3,61)!;
- assert(correct&&ruin,'FireRed catalog missing Cinnabar/Ruin');
- assert(correct.mapDataAddress!==ruin.mapDataAddress,'Cinnabar map data equals Ruin Valley');
-
+ const rom=new Uint8Array(await (await fetch('/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba')).arrayBuffer());
  const reader=new RomReader(rom);
  const adapter=new Gen3StateAdapter(reader,rom);
- const cData=adapter.getMapRenderData(correct.mapDataAddress,correct.width,correct.height,correct.primaryTilesetAddress,correct.secondaryTilesetAddress);
- const rData=adapter.getMapRenderData(ruin.mapDataAddress,ruin.width,ruin.height,ruin.primaryTilesetAddress,ruin.secondaryTilesetAddress);
- assert(cData&&rData,'Cinnabar/Ruin render data missing');
 
- const realCinnabar=adapter.getMapRenderData(correct.mapDataAddress,correct.width,correct.height,correct.primaryTilesetAddress,correct.secondaryTilesetAddress);
- assert(realCinnabar,'real Cinnabar render missing');
- const directHash=fnv(new Uint8Array(realCinnabar.blocks.flatMap(b=>[b.metatileId&255,b.metatileId>>>8])));
+ let header=0,layout=0,id=0;
+ for(let off=0;off<=rom.length-0x1c;off+=4){
+   const la=reader.readU32(BASE+off);
+   const lo=la-BASE;
+   if(lo<0||lo+0x18>rom.length||reader.readU32(la)!==24||reader.readU32(la+4)!==20)continue;
+
+   const cp=reader.readU32(BASE+off+0x0c);
+   if(!cp)continue;
+
+   const co=cp-BASE;
+   if(co<0||co+8>rom.length)continue;
+
+   const n=reader.readU32(cp)|0;
+   if(n<2||n>64)continue;
+
+   const dp=reader.readU32(cp+4);
+   const d=dp-BASE;
+   if(d<0||d+n*0x0c>rom.length)continue;
+
+   let north=false,east=false;
+   for(let i=0;i<n;i++){
+     const entry=d+i*0x0c;
+     const direction=reader.readU8(BASE+entry);
+     const offset=reader.readU32(BASE+entry+4)|0;
+     const mapGroup=reader.readU8(BASE+entry+8);
+     const mapNumber=reader.readU8(BASE+entry+9);
+
+     if(direction===2&&offset===0&&mapGroup===3&&mapNumber===40)north=true;
+     if(direction===4&&offset===0&&mapGroup===3&&mapNumber===38)east=true;
+   }
+
+   if(north&&east){
+     header=BASE+off;
+     layout=la;
+     id=reader.readU16(BASE+off+0x12);
+     break;
+   }
+ }
+
+ if(!layout)throw new Error('real Cinnabar anchor not found');
+
+ const mapDataAddress=reader.readU32(layout+0x0c);
+ const primaryTilesetAddress=reader.readU32(layout+0x10);
+ const secondaryTilesetAddress=reader.readU32(layout+0x14);
+
+ const renderCalls:{addr:number}[]=[];
+ const originalRender=adapter.getMapRenderData.bind(adapter);
 
  const fake={
-   readState:()=>stateFor(correct),
+   readState:()=>makeState({
+     mapLayoutId:id,
+     mapHeaderAddress:header,
+     mapLayoutAddress:layout,
+     mapDataAddress,
+     primaryTilesetAddress,
+     secondaryTilesetAddress,
+     width:24,
+     height:20,
+   }),
    getMemoryReader:()=>reader,
-   getMapRenderData:adapter.getMapRenderData.bind(adapter),
+   getMapRenderData:(a:number,w:number,h:number,p:number,s:number)=>{
+     renderCalls.push({addr:a});
+     return originalRender(a,w,h,p,s);
+   },
    getMapBlocks:()=>[],
    getMetatileGraphics:adapter.getMetatileGraphics.bind(adapter),
  } as unknown as Gen3StateAdapter;
 
  const container=document.createElement('div');
- container.style.width='640px';container.style.height='480px';
+ container.style.width='1000px';
+ container.style.height='700px';
  document.body.appendChild(container);
+
  const renderer=new PlayerRenderer(container,fake,rom);
- const internal=renderer as unknown as {mapCatalog:MapCatalog;mapWorld:MapWorld;mapVisuals:Map<string,{baseTexture:THREE.DataTexture,mapDataAddress:number}>;worldCatalogBuilt:boolean};
-
- const current=internal.mapCatalog.get(3,8)!;
- internal.mapCatalog.register({
-   ...current,
-   mapDataAddress:ruin.mapDataAddress,
-   primaryTilesetAddress:ruin.primaryTilesetAddress,
-   secondaryTilesetAddress:ruin.secondaryTilesetAddress,
- });
-
- internal.worldCatalogBuilt=true;
+ const internal=renderer as unknown as {
+   mapCatalog:MapCatalog;
+   mapWorld:MapWorld;
+   mapVisuals:Map<string,{baseTexture:THREE.DataTexture;mapDataAddress:number}>;
+ };
 
  for(let i=0;i<60;i++)await new Promise(requestAnimationFrame);
 
- const repaired=internal.mapCatalog.get(3,8)!;
- assert(repaired.mapDataAddress===current.mapDataAddress,'Cinnabar definition was not repaired');
+ const def=internal.mapCatalog.get(3,8);
  const visual=internal.mapVisuals.get('3:8');
- assert(visual,'Cinnabar visual missing after repair');
- assert(visual.mapDataAddress===current.mapDataAddress,'Cinnabar visual still uses wrong map data');
+ if(!def||!visual)throw new Error('Cinnabar visual did not initialize');
 
- const finalHash=fnv((visual.baseTexture.image.data as Uint8Array));
+ const beta=0x08338378;
+ const correct=def.mapDataAddress;
+
+ if(correct===beta)throw new Error('Cinnabar catalog points at beta offset');
+
+ visual.mapDataAddress=beta;
+ (renderer as any).repairCinnabarVisual(fake.readState());
+
+ for(let i=0;i<60;i++)await new Promise(requestAnimationFrame);
+
+ const repaired=internal.mapVisuals.get('3:8');
+ if(!repaired)throw new Error('Cinnabar visual was not rebuilt');
+
+ const positionedCount=internal.mapWorld.getPositionedMaps().length;
+ const catalogCount=internal.mapCatalog.getAll().length;
+
+ if(repaired.mapDataAddress!==correct)throw new Error('Cinnabar visual remained on beta map data');
+ if(catalogCount!==425)throw new Error('Catalog count changed during Cinnabar repair: '+catalogCount);
+ if(positionedCount!==37)throw new Error('Connected world changed during Cinnabar repair: '+positionedCount);
+
  renderer.destroy();
  container.remove();
 
  return {
-   catalogCount:count,
-   correctedMapData:'0x'+correct.mapDataAddress.toString(16),
-   ruinMapData:'0x'+ruin.mapDataAddress.toString(16),
-   directBlockHash:directHash,
-   finalTextureHash:finalHash,
-   repairVerified:true,
+   catalogMapData:'0x'+correct.toString(16),
+   beta:'0x'+beta.toString(16),
+   visualMapData:'0x'+repaired.mapDataAddress.toString(16),
+   catalogCount,
+   positionedCount,
+   renderCalls:renderCalls.slice(-5),
+   repaired:true,
  };
 }
 
