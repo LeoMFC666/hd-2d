@@ -40,9 +40,6 @@ const METATILE_SIZE =
 const METATILE_TILE_COUNT =
   8;
 
-const PRIMARY_METATILE_COUNT =
-  640;
-
 const TILESET_PALETTES_OFFSET =
   0x08;
 
@@ -116,6 +113,9 @@ interface AnimatedMapTarget {
       number,
       AnimatedTile[]
     >;
+
+  blocks:
+    readonly MapBlockState[];
 }
 
 interface CachedMetatile {
@@ -175,11 +175,21 @@ export class TilesetAnimationController {
   private activePrimaryTilesetAddress =
     0;
 
+  private activeSecondaryTilesetAddress =
+    0;
+
   private liveRange:
     Uint8Array | null =
     null;
 
   private liveRangeTilesetAddress =
+    0;
+
+  private liveSecondaryRange:
+    Uint8Array | null =
+    null;
+
+  private liveSecondaryTilesetAddress =
     0;
 
   private frameCounter =
@@ -230,6 +240,8 @@ export class TilesetAnimationController {
       THREE.DataTexture,
     placementsByTile:
       Map<number, AnimatedTile[]>,
+    blocks:
+      readonly MapBlockState[],
   ): void {
     this.targets.set(
       key,
@@ -239,6 +251,7 @@ export class TilesetAnimationController {
         baseTexture,
         overlayTexture,
         placementsByTile,
+        blocks,
       },
     );
 
@@ -251,7 +264,7 @@ export class TilesetAnimationController {
         Array.from(
           { length: ANIMATED_PRIMARY_TILE_COUNT },
           (_, index) =>
-            ANIMATED_PRIMARY_TILE_START +
+            rangeStartTile +
             index,
         );
 
@@ -259,6 +272,7 @@ export class TilesetAnimationController {
         this.targets.get(key)!,
         changedTiles,
         this.liveRange,
+        ANIMATED_PRIMARY_TILE_START,
       );
     }
   }
@@ -277,16 +291,22 @@ export class TilesetAnimationController {
     this.paletteCache.clear();
     this.liveRange = null;
     this.liveRangeTilesetAddress = 0;
+    this.liveSecondaryRange = null;
+    this.liveSecondaryTilesetAddress = 0;
     this.activePrimaryTilesetAddress = 0;
+    this.activeSecondaryTilesetAddress = 0;
     this.frameCounter = 0;
   }
 
   update(
     primaryTilesetAddress:
       number,
+    secondaryTilesetAddress:
+      number,
   ): void {
     if (
-      primaryTilesetAddress <= 0
+      primaryTilesetAddress <= 0 &&
+      secondaryTilesetAddress <= 0
     ) {
       return;
     }
@@ -295,8 +315,15 @@ export class TilesetAnimationController {
       primaryTilesetAddress !==
       this.activePrimaryTilesetAddress;
 
+    const secondaryTilesetChanged =
+      secondaryTilesetAddress !==
+      this.activeSecondaryTilesetAddress;
+
     this.activePrimaryTilesetAddress =
       primaryTilesetAddress;
+
+    this.activeSecondaryTilesetAddress =
+      secondaryTilesetAddress;
 
     this.frameCounter++;
 
@@ -308,7 +335,8 @@ export class TilesetAnimationController {
       return;
     }
 
-    const hasMatchingTarget =
+    const primaryTarget =
+      primaryTilesetAddress > 0 &&
       Array.from(
         this.targets.values(),
       ).some(
@@ -320,35 +348,88 @@ export class TilesetAnimationController {
             0,
       );
 
-    if (
-      !hasMatchingTarget
-    ) {
+    const secondaryTarget =
+      secondaryTilesetAddress > 0 &&
+      Array.from(
+        this.targets.values(),
+      ).some(
+        target =>
+          target.map
+            .secondaryTilesetAddress ===
+          secondaryTilesetAddress &&
+          target.placementsByTile.size >
+            0,
+      );
+
+    if (!primaryTarget && !secondaryTarget) {
       return;
     }
 
-    const range =
-      this.memoryReader.readRange(
-        GBA_VRAM_BASE +
-          ANIMATED_PRIMARY_TILE_START *
+    let primaryRange:
+      Uint8Array | null =
+      null;
+
+    let secondaryRange:
+      Uint8Array | null =
+      null;
+
+    let changedPrimaryTiles:
+      number[] = [];
+
+    let changedSecondaryTiles:
+      number[] = [];
+
+    if (primaryTarget) {
+      primaryRange =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            ANIMATED_PRIMARY_TILE_START *
+              TILE_BYTES,
+          ANIMATED_PRIMARY_TILE_COUNT *
             TILE_BYTES,
-        ANIMATED_PRIMARY_TILE_COUNT *
-          TILE_BYTES,
-      );
+        );
 
-    const changedTiles =
-      this.findChangedTiles(
-        range,
-        primaryTilesetChanged ||
-          this.liveRange === null ||
-          this.liveRangeTilesetAddress !==
-            primaryTilesetAddress,
-      );
+      changedPrimaryTiles =
+        this.findChangedTiles(
+          primaryRange,
+          primaryTilesetChanged ||
+            this.liveRange === null ||
+            this.liveRangeTilesetAddress !==
+              primaryTilesetAddress,
+          ANIMATED_PRIMARY_TILE_START,
+          this.liveRange,
+        );
+    }
 
-    if (
-      changedTiles.length ===
-      0
-    ) {
-      return;
+    if (secondaryTarget) {
+      const secondaryTileStart =
+        this.getNumTilesInPrimary();
+
+      const secondaryTileCount =
+        1024 -
+        secondaryTileStart;
+
+      secondaryRange =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            secondaryTileStart *
+              TILE_BYTES,
+          secondaryTileCount *
+            TILE_BYTES,
+        );
+
+      changedSecondaryTiles =
+        this.findChangedTiles(
+          secondaryRange,
+          false,
+          secondaryTileStart,
+          secondaryTilesetChanged ||
+            this.liveSecondaryRange === null ||
+            this.liveSecondaryTilesetAddress !==
+              secondaryTilesetAddress
+            ? null
+            : this.liveSecondaryRange,
+        );
     }
 
     for (
@@ -356,34 +437,63 @@ export class TilesetAnimationController {
         this.targets.values()
     ) {
       if (
-        target.map.primaryTilesetAddress !==
-        primaryTilesetAddress
+        primaryRange &&
+        target.map.primaryTilesetAddress ===
+          primaryTilesetAddress &&
+        changedPrimaryTiles.length > 0
       ) {
-        continue;
+        this.patchTarget(
+          target,
+          changedPrimaryTiles,
+          primaryRange,
+          ANIMATED_PRIMARY_TILE_START,
+        );
       }
 
-      this.patchTarget(
-        target,
-        changedTiles,
-        range,
-      );
+      if (
+        secondaryRange &&
+        target.map.secondaryTilesetAddress ===
+          secondaryTilesetAddress &&
+        changedSecondaryTiles.length > 0
+      ) {
+        this.patchTarget(
+          target,
+          changedSecondaryTiles,
+          secondaryRange,
+          this.getNumTilesInPrimary(),
+        );
+      }
     }
 
-    this.liveRange =
-      range.slice();
+    if (primaryRange) {
+      this.liveRange =
+        primaryRange.slice();
 
-    this.liveRangeTilesetAddress =
-      primaryTilesetAddress;
+      this.liveRangeTilesetAddress =
+        primaryTilesetAddress;
+    }
+
+    if (secondaryRange) {
+      this.liveSecondaryRange =
+        secondaryRange.slice();
+
+      this.liveSecondaryTilesetAddress =
+        secondaryTilesetAddress;
+    }
   }
 
   private findChangedTiles(
     range: Uint8Array,
     forceAll:
       boolean,
+    rangeStartTile:
+      number,
+    previousRange:
+      Uint8Array | null,
   ): number[] {
     if (
       forceAll ||
-      this.liveRange === null
+      previousRange === null
     ) {
       return Array.from(
         {
@@ -446,6 +556,8 @@ export class TilesetAnimationController {
       readonly number[],
     liveRange:
       Uint8Array,
+    rangeStartTile:
+      number,
   ): void {
     let baseDirty =
       false;
@@ -469,7 +581,7 @@ export class TilesetAnimationController {
       const liveTileOffset =
         (
           tileId -
-          ANIMATED_PRIMARY_TILE_START
+          rangeStartTile
         ) *
         TILE_BYTES;
 
@@ -479,6 +591,31 @@ export class TilesetAnimationController {
           liveTileOffset +
             TILE_BYTES,
         );
+
+      const decodedPixels =
+        new Uint8Array(64);
+
+      for (
+        let sourceY = 0;
+        sourceY < TILE_SIZE;
+        sourceY++
+      ) {
+        for (
+          let sourceX = 0;
+          sourceX < TILE_SIZE;
+          sourceX++
+        ) {
+          decodedPixels[
+            sourceY * TILE_SIZE +
+            sourceX
+          ] =
+            this.read4BppPixel(
+              tileBytes,
+              sourceX,
+              sourceY,
+            );
+        }
+      }
 
       for (
         const placement of
@@ -559,11 +696,10 @@ export class TilesetAnimationController {
                 : sourceX;
 
             const paletteIndex =
-              this.read4BppPixel(
-                tileBytes,
-                sourceX,
-                sourceY,
-              );
+              decodedPixels[
+                pixelY * TILE_SIZE +
+                pixelX
+              ];
 
             const x =
               placement.x +
@@ -681,6 +817,12 @@ export class TilesetAnimationController {
         AnimatedTile[]
       >();
 
+    const primaryMetatileCount =
+      this.getNumMetatilesInPrimary();
+
+    const primaryTileCount =
+      this.getNumTilesInPrimary();
+
     for (
       let blockY = 0;
       blockY < map.height;
@@ -697,18 +839,29 @@ export class TilesetAnimationController {
             blockX
           ];
 
-        if (
-          !block ||
-          block.metatileId >=
-            PRIMARY_METATILE_COUNT
-        ) {
+        if (!block) {
           continue;
         }
 
+        const isPrimary =
+          block.metatileId <
+          primaryMetatileCount;
+
+        const tilesetAddress =
+          isPrimary
+            ? map.primaryTilesetAddress
+            : map.secondaryTilesetAddress;
+
+        const localMetatileId =
+          isPrimary
+            ? block.metatileId
+            : block.metatileId -
+              primaryMetatileCount;
+
         const metatile =
           this.readPrimaryMetatile(
-            map.primaryTilesetAddress,
-            block.metatileId,
+            tilesetAddress,
+            localMetatileId,
           );
 
         if (!metatile) {
@@ -726,11 +879,32 @@ export class TilesetAnimationController {
               tileIndex
             ];
 
+          if (!tile) {
+            continue;
+          }
+
+          const globalTileId =
+            isPrimary
+              ? tile.tileId
+              : primaryTileCount +
+                tile.tileId;
+
+          const primaryAnimated =
+            isPrimary &&
+            globalTileId >=
+              ANIMATED_PRIMARY_TILE_START &&
+            globalTileId <
+              ANIMATED_PRIMARY_TILE_END;
+
+          const secondaryAnimated =
+            !isPrimary &&
+            globalTileId >=
+              primaryTileCount &&
+            globalTileId < 1024;
+
           if (
-            tile.tileId <
-              ANIMATED_PRIMARY_TILE_START ||
-            tile.tileId >=
-              ANIMATED_PRIMARY_TILE_END
+            !primaryAnimated &&
+            !secondaryAnimated
           ) {
             continue;
           }
@@ -758,9 +932,10 @@ export class TilesetAnimationController {
             ) *
             TILE_SIZE;
 
-          const placement: AnimatedTile = {
+          const placement:
+            AnimatedTile = {
             tileId:
-              tile.tileId,
+              globalTileId,
             paletteIndex:
               tile.paletteIndex,
             hFlip:
@@ -780,7 +955,7 @@ export class TilesetAnimationController {
 
           const bucket =
             placementsByTile.get(
-              tile.tileId,
+              globalTileId,
             ) ?? [];
 
           bucket.push(
@@ -788,7 +963,7 @@ export class TilesetAnimationController {
           );
 
           placementsByTile.set(
-            tile.tileId,
+            globalTileId,
             bucket,
           );
         }
@@ -1071,6 +1246,18 @@ export class TilesetAnimationController {
     );
 
     return colors;
+  }
+
+  private getNumTilesInPrimary(): number {
+    return this.isFireRedFamily
+      ? 640
+      : 512;
+  }
+
+  private getNumMetatilesInPrimary(): number {
+    return this.isFireRedFamily
+      ? 640
+      : 512;
   }
 
   private readRomU16(
