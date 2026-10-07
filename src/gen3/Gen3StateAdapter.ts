@@ -26,6 +26,12 @@ const GBA_ROM_HEADER_GAME_CODE =
 const GBA_ROM_BASE =
   0x08000000;
 
+const GBA_VRAM_BASE =
+  0x06000000;
+
+const TILE_BYTES =
+  32;
+
 const GBA_ROM_HEADER_REVISION =
   0x080000bc;
 
@@ -273,6 +279,15 @@ export class Gen3StateAdapter {
   private cachedMapStateKey =
     '';
 
+  private runtimeMapCheckFrame =
+    0;
+
+  private runtimeMapCheckKey =
+    '';
+
+  private runtimeMapCheckResult =
+    false;
+
   private mapBlocksWidth = 0;
 
   private mapBlocksHeight = 0;
@@ -436,6 +451,208 @@ export class Gen3StateAdapter {
 
   getMemoryReader(): MemoryReader {
     return this.memoryReader;
+  }
+
+  isRuntimeMapLoaded(
+    state: GameState,
+  ): boolean {
+    const activeMapHeaderAddress =
+      this.profile?.memory
+        .activeMapHeaderAddress;
+
+    if (
+      activeMapHeaderAddress ===
+        undefined ||
+      state.map.mapLayoutAddress ===
+        0 ||
+      state.map.mapLayoutId ===
+        0 ||
+      !this.isValidEwramPointer(
+        activeMapHeaderAddress,
+      )
+    ) {
+      return false;
+    }
+
+    const runtimeLayoutAddress =
+      this.memoryReader.readU32(
+        activeMapHeaderAddress,
+      );
+
+    const runtimeLayoutId =
+      this.memoryReader.readU16(
+        activeMapHeaderAddress +
+          MAP_HEADER_MAP_LAYOUT_ID_OFFSET,
+      );
+
+    if (
+      runtimeLayoutId !==
+        state.map.mapLayoutId ||
+      runtimeLayoutAddress !==
+        state.map.mapLayoutAddress
+    ) {
+      return false;
+    }
+
+    const key =
+      String(state.map.mapGroup) + ':' +
+      String(state.map.mapNumber) + ':' +
+      String(state.map.mapLayoutId) + ':' +
+      runtimeLayoutAddress.toString(16);
+
+    this.runtimeMapCheckFrame++;
+
+    if (
+      key ===
+        this.runtimeMapCheckKey &&
+      this.runtimeMapCheckFrame %
+        12 !==
+      0
+    ) {
+      return this.runtimeMapCheckResult;
+    }
+
+    this.runtimeMapCheckKey =
+      key;
+
+    const samples:
+      Array<{
+        tileId: number;
+        pixels: Uint8Array;
+      }> = [];
+
+    const collectSample =
+      (
+        metatile: MetatileState | null,
+      ): void => {
+        if (!metatile) {
+          return;
+        }
+
+        for (
+          const tile of metatile.tiles
+        ) {
+          if (
+            tile.tileId <= 0 ||
+            (
+              tile.tileId >=
+                416 &&
+              tile.tileId <
+                512
+            )
+          ) {
+            continue;
+          }
+
+          const source =
+            this.resolveTileSource(
+              tile.tileId,
+            );
+
+          if (!source) {
+            continue;
+          }
+
+          const graphics =
+            this.tileGraphicsDecoder.readTile(
+              source.tileset.tilesAddress,
+              source.localTileId,
+              source.tileset.isCompressed,
+            );
+
+          if (!graphics) {
+            continue;
+          }
+
+          samples.push({
+            tileId:
+              tile.tileId,
+            pixels:
+              graphics.pixels,
+          });
+
+          if (samples.length >= 2) {
+            return;
+          }
+        }
+      };
+
+    collectSample(
+      state.map.primaryMetatileSample,
+    );
+
+    if (samples.length < 2) {
+      collectSample(
+        state.map.secondaryMetatileSample,
+      );
+    }
+
+    if (samples.length === 0) {
+      this.runtimeMapCheckResult = true;
+      return true;
+    }
+
+    for (
+      const sample of samples
+    ) {
+      const live =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            sample.tileId *
+              TILE_BYTES,
+          TILE_BYTES,
+        );
+
+      let matches = true;
+
+      for (
+        let y = 0;
+        y < 8 && matches;
+        y++
+      ) {
+        for (
+          let x = 0;
+          x < 8;
+          x++
+        ) {
+          const value =
+            live[
+              y * 4 +
+              Math.floor(
+                x / 2,
+              )
+            ];
+
+          const livePixel =
+            x % 2 === 0
+              ? value & 0x0f
+              : (
+                  value >> 4
+                ) & 0x0f;
+
+          if (
+            livePixel !==
+            sample.pixels[
+              y * 8 + x
+            ]
+          ) {
+            matches = false;
+            break;
+          }
+        }
+      }
+
+      if (matches) {
+        this.runtimeMapCheckResult =
+          true;
+        return true;
+      }
+    }
+
+    this.runtimeMapCheckResult =
+      false;
+
+    return false;
   }
 
   private readMapStateKey(
