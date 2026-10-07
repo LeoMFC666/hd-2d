@@ -3,6 +3,7 @@ import {
   type Direction,
   type GameState,
   type MapBlockState,
+  type MapState,
   type MetatileState,
   type MetatileTileState,
   type MovementState,
