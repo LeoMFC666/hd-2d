@@ -1,0 +1,35 @@
+name: Gen3 browser regression
+
+on:
+  push:
+    branches:
+      - fix/e25-definitive-gen3-render-v2
+  workflow_dispatch:
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm install --no-save playwright
+      - run: npx playwright install chromium
+      - run: npm run build
+      - name: Start server
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 4173 > server.log 2>&1 &
+          sleep 2
+      - name: Browser test
+        run: node tests/gen3-browser-regression.mjs
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gen3-browser-regression
+          path: |
+            artifacts/
+            server.log
