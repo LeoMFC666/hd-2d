@@ -938,6 +938,201 @@ export class PlayerRenderer {
       );
   }
 
+  private updateActiveWorld(
+    state: GameState,
+  ): void {
+    this.repairCinnabarVisual(
+      state,
+    );
+
+    const mapKey =
+      this.createMapKey(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const activeMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const nextSignature =
+      this.createMapSignature(
+        state,
+      );
+
+    const sameMap =
+      mapKey ===
+      this.activeMapKey;
+
+    const sameSignature =
+      nextSignature ===
+      this.activeMapSignature;
+
+    if (
+      sameMap &&
+      sameSignature
+    ) {
+      if (
+        activeMap &&
+        !this.mapVisuals.has(
+          mapKey,
+        ) &&
+        !this.queuedMaps.has(
+          mapKey,
+        )
+      ) {
+        this.queueMapBuild(
+          activeMap,
+        );
+      }
+
+      return;
+    }
+
+    if (
+      sameMap &&
+      !sameSignature
+    ) {
+      const existingVisual =
+        this.mapVisuals.get(
+          mapKey,
+        );
+
+      if (existingVisual) {
+        this.disposeMapVisual(
+          mapKey,
+          existingVisual,
+        );
+      }
+
+      this.queuedMaps.delete(
+        mapKey,
+      );
+
+      const remainingQueue =
+        this.buildQueue.filter(
+          map =>
+            this.createMapKey(
+              map.mapGroup,
+              map.mapNumber,
+            ) !== mapKey,
+        );
+
+      this.buildQueue.length =
+        0;
+
+      this.buildQueue.push(
+        ...remainingQueue,
+      );
+    }
+
+    this.activeMapKey =
+      mapKey;
+
+    this.activeMapSignature =
+      nextSignature;
+
+    if (
+      !this.mapWorld.hasPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      )
+    ) {
+      this.buildQueue.length =
+        0;
+
+      this.queuedMaps.clear();
+
+      this.mapWorld.clearPositions();
+
+      this.mapWorld.setWorldPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+        {
+          x: 0,
+          y: 0,
+        },
+      );
+
+      this.mapWorld.buildFrom(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+    }
+
+    const maps =
+      this.mapWorld
+        .getPositionedMaps();
+
+    if (activeMap) {
+      this.queueMapBuild(
+        activeMap,
+      );
+    }
+
+    for (
+      const map of maps
+    ) {
+      if (
+        this.isMapWithinStreamDistance(
+          state,
+          map,
+        )
+      ) {
+        this.queueMapBuild(
+          map,
+        );
+      }
+    }
+
+    this.syncMapVisualPositions(
+      maps,
+    );
+
+    this.updateWorldVisibility(
+      maps,
+    );
+  }
+
+  private isMapWithinStreamDistance(
+    state: GameState,
+    map: MapDefinition,
+  ): boolean {
+    const position =
+      this.mapWorld.getWorldPosition(
+        map.mapGroup,
+        map.mapNumber,
+      );
+
+    if (!position) {
+      return false;
+    }
+
+    const playerPosition =
+      this.getPlayerWorldPosition(
+        state,
+      );
+
+    return (
+      playerPosition.x >=
+        position.x -
+          MAP_STREAM_DISTANCE &&
+      playerPosition.x <=
+        position.x +
+          map.width +
+          MAP_STREAM_DISTANCE &&
+      playerPosition.z >=
+        position.y -
+          MAP_STREAM_DISTANCE &&
+      playerPosition.z <=
+        position.y +
+          map.height +
+          MAP_STREAM_DISTANCE
+    );
+  }
+
   private queueMapBuild(
     map: MapDefinition,
   ): void {
@@ -1327,14 +1522,12 @@ export class PlayerRenderer {
 
     const visual:
       MapVisual = {
-        baseMesh,
-        overlayMesh,
-        baseTexture,
-        overlayTexture,
-        geometry,
-        mapDataAddress:
-          map.mapDataAddress,
-      };
+      mesh,
+      texture,
+      geometry,
+      mapDataAddress:
+        map.mapDataAddress,
+    };
 
     this.mapVisuals.set(
       mapKey,
