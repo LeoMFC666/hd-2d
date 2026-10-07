@@ -462,45 +462,45 @@ export class TilesetAnimationController {
       return;
     }
 
-    const snapshots =
-      this.readAnimatedTileSnapshots(
-        watched,
-      );
+    this.forEachAnimatedTileSnapshot(
+      watched,
+      (
+        tileId,
+        tileBytes,
+      ) => {
+        const key =
+          this.liveTileKey(
+            tilesetAddress,
+            tileId,
+          );
 
-    for (
-      const [tileId, tileBytes] of
-        snapshots
-    ) {
-      const key =
-        this.liveTileKey(
-          tilesetAddress,
-          tileId,
-        );
+        const previous =
+          this.liveTiles.get(
+            key,
+          );
 
-      const previous =
-        this.liveTiles.get(
-          key,
-        );
+        if (
+          previous === undefined ||
+          !this.tileBytesEqual(
+            previous,
+            tileBytes,
+          )
+        ) {
+          this.patchTargetsForTile(
+            tilesetAddress,
+            tileId,
+            tileBytes,
+          );
 
-      if (
-        previous === undefined ||
-        !this.tileBytesEqual(
-          previous,
-          tileBytes,
-        )
-      ) {
-        this.patchTargetsForTile(
-          tilesetAddress,
-          tileId,
-          tileBytes,
-        );
-
-        this.liveTiles.set(
-          key,
-          tileBytes,
-        );
-      }
-    }
+          this.liveTiles.set(
+            key,
+            new Uint8Array(
+              tileBytes,
+            ),
+          );
+        }
+      },
+    );
   }
 
   private initializeTargetSnapshots(
@@ -899,19 +899,15 @@ export class TilesetAnimationController {
     );
   }
 
-  private readAnimatedTileSnapshots(
+  private forEachAnimatedTileSnapshot(
     tileIds:
       readonly number[],
-  ): Map<
-    number,
-    Uint8Array
-  > {
-    const snapshots =
-      new Map<
-        number,
-        Uint8Array
-      >();
-
+    callback:
+      (
+        tileId: number,
+        tileBytes: Uint8Array,
+      ) => void,
+  ): void {
     let index = 0;
 
     while (
@@ -959,7 +955,7 @@ export class TilesetAnimationController {
           tileIndex *
           TILE_BYTES;
 
-        snapshots.set(
+        callback(
           first + tileIndex,
           bytes.subarray(
             start,
@@ -969,8 +965,6 @@ export class TilesetAnimationController {
         );
       }
     }
-
-    return snapshots;
   }
 
   private indexTargetTiles(
