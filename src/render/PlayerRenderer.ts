@@ -1711,7 +1711,7 @@ export class PlayerRenderer {
 
     const overlayMesh =
       new THREE.Mesh(
-        geometry.clone(),
+        geometry,
         overlayMaterial,
       );
 
@@ -2117,10 +2117,6 @@ export class PlayerRenderer {
       visual.baseTexture.dispose();
       visual.overlayTexture.dispose();
       visual.geometry.dispose();
-
-      visual.overlayMesh
-        .geometry
-        .dispose();
 
       const baseMaterial =
         visual.baseMesh.material;
