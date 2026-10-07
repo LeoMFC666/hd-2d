@@ -182,6 +182,9 @@ export class TilesetAnimationController {
   private liveRangeTilesetAddress =
     0;
 
+  private readonly observedAnimatedTiles =
+    new Set<number>();
+
   private frameCounter =
     0;
 
@@ -245,19 +248,14 @@ export class TilesetAnimationController {
     if (
       this.liveRange &&
       this.liveRangeTilesetAddress ===
-        map.primaryTilesetAddress
+        map.primaryTilesetAddress &&
+      this.observedAnimatedTiles.size > 0
     ) {
-      const changedTiles =
-        Array.from(
-          { length: ANIMATED_PRIMARY_TILE_COUNT },
-          (_, index) =>
-            ANIMATED_PRIMARY_TILE_START +
-            index,
-        );
-
       this.patchTarget(
         this.targets.get(key)!,
-        changedTiles,
+        Array.from(
+          this.observedAnimatedTiles,
+        ),
         this.liveRange,
       );
     }
@@ -278,6 +276,7 @@ export class TilesetAnimationController {
     this.liveRange = null;
     this.liveRangeTilesetAddress = 0;
     this.activePrimaryTilesetAddress = 0;
+    this.observedAnimatedTiles.clear();
     this.frameCounter = 0;
   }
 
@@ -294,6 +293,12 @@ export class TilesetAnimationController {
     const primaryTilesetChanged =
       primaryTilesetAddress !==
       this.activePrimaryTilesetAddress;
+
+    if (primaryTilesetChanged) {
+      this.liveRange = null;
+      this.liveRangeTilesetAddress = 0;
+      this.observedAnimatedTiles.clear();
+    }
 
     this.activePrimaryTilesetAddress =
       primaryTilesetAddress;
@@ -320,9 +325,7 @@ export class TilesetAnimationController {
             0,
       );
 
-    if (
-      !hasMatchingTarget
-    ) {
+    if (!hasMatchingTarget) {
       return;
     }
 
@@ -335,67 +338,67 @@ export class TilesetAnimationController {
           TILE_BYTES,
       );
 
-    const changedTiles =
-      this.findChangedTiles(
-        range,
-        primaryTilesetChanged ||
-          this.liveRange === null ||
-          this.liveRangeTilesetAddress !==
-            primaryTilesetAddress,
-      );
-
     if (
-      changedTiles.length ===
-      0
+      this.liveRange === null ||
+      this.liveRangeTilesetAddress !==
+        primaryTilesetAddress
     ) {
+      this.liveRange =
+        range.slice();
+
+      this.liveRangeTilesetAddress =
+        primaryTilesetAddress;
+
       return;
     }
 
-    for (
-      const target of
-        this.targets.values()
+    const changedTiles =
+      this.findChangedTiles(
+        range,
+        this.liveRange,
+      );
+
+    if (
+      changedTiles.length > 0
     ) {
-      if (
-        target.map.primaryTilesetAddress !==
-        primaryTilesetAddress
+      for (
+        const tileId of
+          changedTiles
       ) {
-        continue;
+        this.observedAnimatedTiles.add(
+          tileId,
+        );
       }
 
-      this.patchTarget(
-        target,
-        changedTiles,
-        range,
-      );
+      for (
+        const target of
+          this.targets.values()
+      ) {
+        if (
+          target.map
+            .primaryTilesetAddress !==
+          primaryTilesetAddress
+        ) {
+          continue;
+        }
+
+        this.patchTarget(
+          target,
+          changedTiles,
+          range,
+        );
+      }
     }
 
     this.liveRange =
       range.slice();
-
-    this.liveRangeTilesetAddress =
-      primaryTilesetAddress;
   }
 
   private findChangedTiles(
     range: Uint8Array,
-    forceAll:
-      boolean,
+    previousRange:
+      Uint8Array,
   ): number[] {
-    if (
-      forceAll ||
-      this.liveRange === null
-    ) {
-      return Array.from(
-        {
-          length:
-            ANIMATED_PRIMARY_TILE_COUNT,
-        },
-        (_, index) =>
-          ANIMATED_PRIMARY_TILE_START +
-          index,
-      );
-    }
-
     const changed: number[] = [];
 
     for (
@@ -419,7 +422,7 @@ export class TilesetAnimationController {
       ) {
         if (
           range[start + byteIndex] !==
-          this.liveRange[
+          previousRange[
             start + byteIndex
           ]
         ) {
@@ -479,6 +482,31 @@ export class TilesetAnimationController {
           liveTileOffset +
             TILE_BYTES,
         );
+
+      const decodedPixels =
+        new Uint8Array(64);
+
+      for (
+        let sourceY = 0;
+        sourceY < TILE_SIZE;
+        sourceY++
+      ) {
+        for (
+          let sourceX = 0;
+          sourceX < TILE_SIZE;
+          sourceX++
+        ) {
+          decodedPixels[
+            sourceY * TILE_SIZE +
+            sourceX
+          ] =
+            this.read4BppPixel(
+              tileBytes,
+              sourceX,
+              sourceY,
+            );
+        }
+      }
 
       for (
         const placement of
@@ -559,11 +587,10 @@ export class TilesetAnimationController {
                 : sourceX;
 
             const paletteIndex =
-              this.read4BppPixel(
-                tileBytes,
-                sourceX,
-                sourceY,
-              );
+              decodedPixels[
+                pixelY * TILE_SIZE +
+                pixelX
+              ];
 
             const x =
               placement.x +
