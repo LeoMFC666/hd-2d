@@ -1889,6 +1889,8 @@ export class PlayerRenderer {
           state.map.primaryTilesetAddress,
           state.map.secondaryTilesetAddress,
         );
+      } else {
+        this.tilesetAnimationController.suspend();
       }
 
       const playerPosition =
