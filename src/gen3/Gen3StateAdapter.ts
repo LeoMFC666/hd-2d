@@ -3,6 +3,7 @@ import {
   type Direction,
   type GameState,
   type MapBlockState,
+  type MapState,
   type MetatileState,
   type MetatileTileState,
   type MovementState,
@@ -266,6 +267,12 @@ export class Gen3StateAdapter {
 
   private mapBlocks: MapBlockState[] = [];
 
+  private cachedMapState:
+    MapState | null = null;
+
+  private cachedMapStateKey =
+    '';
+
   private mapBlocksWidth = 0;
 
   private mapBlocksHeight = 0;
@@ -324,10 +331,43 @@ export class Gen3StateAdapter {
     const saveBlock1Address =
       this.resolveSaveBlock1Address();
 
-    this.readMapState(
-      state,
-      saveBlock1Address,
-    );
+    const mapStateKey =
+      this.readMapStateKey(
+        saveBlock1Address,
+      );
+
+    if (
+      this.cachedMapState &&
+      mapStateKey ===
+        this.cachedMapStateKey &&
+      this.cachedMapState.mapLayoutAddress !==
+        0
+    ) {
+      state.map =
+        this.cachedMapState;
+    } else {
+      this.readMapState(
+        state,
+        saveBlock1Address,
+      );
+
+      if (
+        state.map.mapLayoutAddress !==
+        0
+      ) {
+        this.cachedMapState =
+          state.map;
+
+        this.cachedMapStateKey =
+          mapStateKey;
+      } else {
+        this.cachedMapState =
+          null;
+
+        this.cachedMapStateKey =
+          mapStateKey;
+      }
+    }
 
     this.readPlayerPositionFromSaveBlock(
       state,
@@ -374,6 +414,44 @@ export class Gen3StateAdapter {
 
   getPrimaryMetatileGraphics(): Gen3MetatileGraphics | null {
     return this.primaryMetatileGraphics;
+  }
+
+  private readMapStateKey(
+    saveBlock1Address: number,
+  ): string {
+    const layout =
+      this.profile?.memory.mapState;
+
+    if (
+      !layout ||
+      !this.isValidEwramPointer(
+        saveBlock1Address,
+      )
+    ) {
+      return '';
+    }
+
+    const mapGroup =
+      this.memoryReader.readU8(
+        saveBlock1Address +
+          layout.locationMapGroupOffset,
+      );
+
+    const mapNumber =
+      this.memoryReader.readU8(
+        saveBlock1Address +
+          layout.locationMapNumOffset,
+      );
+
+    const mapLayoutId =
+      this.memoryReader.readU16(
+        saveBlock1Address +
+          layout.mapLayoutIdOffset,
+      );
+
+    return (
+      `${mapGroup}:${mapNumber}:${mapLayoutId}`
+    );
   }
 
   private readMapState(
