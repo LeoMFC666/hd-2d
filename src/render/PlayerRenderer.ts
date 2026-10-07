@@ -676,6 +676,14 @@ export class PlayerRenderer {
           layoutOffset + 0x0c,
         );
 
+      if (
+        mapDataAddress ===
+        romBase +
+          0x00338378
+      ) {
+        continue;
+      }
+
       const primaryTilesetAddress =
         readU32(
           layoutOffset + 0x10,
