@@ -296,9 +296,15 @@ export class Gen3StateAdapter {
   private currentSecondaryTileset: TilesetState | null = null;
 
   private metatileGraphicsCache = new Map<
-    number,
+    string,
     Gen3MetatileGraphics | null
   >();
+
+  private readonly tilesetCache =
+    new Map<
+      number,
+      TilesetState
+    >();
 
   constructor(
     memoryReader: MemoryReader,
@@ -999,11 +1005,6 @@ export class Gen3StateAdapter {
     const previousSecondary =
       this.currentSecondaryTileset;
 
-    const previousCache =
-      new Map(
-        this.metatileGraphicsCache,
-      );
-
     try {
       const primaryTileset =
         this.readTileset(
@@ -1027,8 +1028,6 @@ export class Gen3StateAdapter {
 
       this.currentSecondaryTileset =
         secondaryTileset;
-
-      this.metatileGraphicsCache.clear();
 
       const blocks =
         mapDataAddress ===
@@ -1086,21 +1085,7 @@ export class Gen3StateAdapter {
         previousPrimary;
 
       this.currentSecondaryTileset =
-        previousSecondary;
-
-      this.metatileGraphicsCache.clear();
-
-      for (
-        const [
-          key,
-          value,
-        ] of previousCache
-      ) {
-        this.metatileGraphicsCache.set(
-          key,
-          value,
-        );
-      }
+        previousSecondary
     }
   }
   
@@ -1119,14 +1104,25 @@ export class Gen3StateAdapter {
       return null;
     }
 
+    const cacheKey =
+      String(
+        this.currentPrimaryTileset
+          ?.address ?? 0,
+      ) + ':' +
+      String(
+        this.currentSecondaryTileset
+          ?.address ?? 0,
+      ) + ':' +
+      String(metatileId);
+
     if (
       this.metatileGraphicsCache.has(
-        metatileId,
+        cacheKey,
       )
     ) {
       return (
         this.metatileGraphicsCache.get(
-          metatileId,
+          cacheKey,
         ) ?? null
       );
     }
@@ -1138,7 +1134,7 @@ export class Gen3StateAdapter {
 
     if (!source) {
       this.metatileGraphicsCache.set(
-        metatileId,
+        cacheKey,
         null,
       );
 
@@ -1186,7 +1182,7 @@ export class Gen3StateAdapter {
     };
 
     this.metatileGraphicsCache.set(
-      metatileId,
+      cacheKey,
       graphics,
     );
 
@@ -2019,6 +2015,15 @@ export class Gen3StateAdapter {
       };
     }
 
+    const cached =
+      this.tilesetCache.get(
+        tilesetAddress,
+      );
+
+    if (cached) {
+      return cached;
+    }
+
     const isCompressed =
       this.memoryReader.readU8(
         tilesetAddress +
@@ -2061,35 +2066,29 @@ export class Gen3StateAdapter {
           metatileAttributesOffset,
       );
 
-    return {
+    const result: TilesetState = {
       address:
         tilesetAddress,
-
       isCompressed,
-
       isSecondary,
-
       tilesAddress:
         this.isValidRomPointer(
           tilesAddress,
         )
           ? tilesAddress
           : 0,
-
       palettesAddress:
         this.isValidRomPointer(
           palettesAddress,
         )
           ? palettesAddress
           : 0,
-
       metatilesAddress:
         this.isValidRomPointer(
           metatilesAddress,
         )
           ? metatilesAddress
           : 0,
-
       metatileAttributesAddress:
         this.isValidRomPointer(
           metatileAttributesAddress,
@@ -2097,6 +2096,13 @@ export class Gen3StateAdapter {
           ? metatileAttributesAddress
           : 0,
     };
+
+    this.tilesetCache.set(
+      tilesetAddress,
+      result,
+    );
+
+    return result;
   }
 
   private readMetatile(
