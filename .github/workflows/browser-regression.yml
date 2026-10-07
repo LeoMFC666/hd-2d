@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/e25-definitive-gen3-render-v1
+  pull_request:
+    branches:
+      - e25c3087
 
 jobs:
   browser:
