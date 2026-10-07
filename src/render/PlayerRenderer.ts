@@ -1846,9 +1846,7 @@ export class PlayerRenderer {
   ): THREE.DataTexture {
     const texture =
       new THREE.DataTexture(
-        new Uint8Array(
-          pixels,
-        ),
+        pixels,
         width,
         height,
         THREE.RGBAFormat,
