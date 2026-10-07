@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Gen3StateAdapter } from '../src/gen3/Gen3StateAdapter';
 import { MapCatalog } from '../src/gen3/world/MapCatalog';
 import { MapWorld } from '../src/gen3/world/MapWorld';
