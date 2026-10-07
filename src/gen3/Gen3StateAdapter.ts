@@ -443,6 +443,49 @@ export class Gen3StateAdapter {
       return;
     }
 
+    const isFireRedCinnabar =
+      (
+        this.profile?.id === 'firered' ||
+        this.profile?.id === 'leafgreen'
+      ) &&
+      mapGroup === 3 &&
+      mapNumber === 8;
+
+    if (isFireRedCinnabar) {
+      const romMapLayoutAddress =
+        this.findMapLayoutAddress(
+          mapLayoutId,
+        );
+
+      if (
+        romMapLayoutAddress !== 0
+      ) {
+        this.mapHeaderAddress =
+          0;
+
+        this.mapHeaderLayoutId =
+          mapLayoutId;
+
+        this.mapHeaderMapGroup =
+          mapGroup;
+
+        this.mapHeaderMapNumber =
+          mapNumber;
+
+        this.readMapLayout(
+          state,
+          0,
+          romMapLayoutAddress,
+        );
+
+        if (
+          state.map.width > 0
+        ) {
+          return;
+        }
+      }
+    }
+
     const activeMapHeaderAddress =
       this.profile?.memory.activeMapHeaderAddress;
 
