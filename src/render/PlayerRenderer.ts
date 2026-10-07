@@ -110,6 +110,9 @@ export class PlayerRenderer {
   private activeMapSignature =
     '';
 
+  private backgroundBuildFrame =
+    0;
+
   private frameId =
     0;
 
@@ -1283,18 +1286,73 @@ export class PlayerRenderer {
 
   private processMapBuildQueue():
     void {
+    if (
+      this.buildQueue.length === 0
+    ) {
+      return;
+    }
+
+    let queueIndex = 0;
+
+    for (
+      let index = 0;
+      index < this.buildQueue.length;
+      index++
+    ) {
+      const candidate =
+        this.buildQueue[index];
+
+      if (
+        this.createMapKey(
+          candidate.mapGroup,
+          candidate.mapNumber,
+        ) === this.activeMapKey
+      ) {
+        queueIndex = index;
+        break;
+      }
+
+      queueIndex = index;
+    }
+
     const map =
-      this.buildQueue.shift();
+      this.buildQueue.splice(
+        queueIndex,
+        1,
+      )[0];
 
     if (!map) {
       return;
     }
 
-    const key =
+    const mapKey =
       this.createMapKey(
         map.mapGroup,
         map.mapNumber,
       );
+
+    if (
+      mapKey !== this.activeMapKey
+    ) {
+      this.backgroundBuildFrame++;
+
+      if (
+        this.backgroundBuildFrame %
+          4 !==
+        0
+      ) {
+        this.buildQueue.unshift(
+          map,
+        );
+        return;
+      }
+    } else {
+      this.backgroundBuildFrame =
+        0;
+    }
+
+    const key =
+      mapKey;
 
     this.queuedMaps.delete(
       key,
