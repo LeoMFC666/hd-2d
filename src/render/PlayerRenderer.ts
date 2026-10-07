@@ -99,6 +99,11 @@ export class PlayerRenderer {
     z: 0,
   };
 
+  private activeMapPosition: {
+    x: number;
+    y: number;
+  } | null = null;
+
   private readonly mapVisuals =
     new Map<
       string,
@@ -1905,11 +1910,7 @@ export class PlayerRenderer {
     z: number;
   } {
     const mapPosition =
-      this.mapWorld
-        .getWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        );
+      this.activeMapPosition;
 
     if (!mapPosition) {
       this.playerWorldPosition.x =
@@ -2077,6 +2078,12 @@ export class PlayerRenderer {
           state.map.width;
         this.lastMapHeight =
           state.map.height;
+
+        this.activeMapPosition =
+          this.mapWorld.getWorldPosition(
+            state.map.mapGroup,
+            state.map.mapNumber,
+          );
       }
 
       this.processMapBuildQueue();
