@@ -223,6 +223,18 @@ export class Gen3StateAdapter {
   private readonly tileGraphicsDecoder:
     TileGraphicsDecoder;
 
+  private readonly mapRenderCache =
+    new Map<
+      string,
+      {
+        blocks: MapBlockState[];
+        graphics: Map<
+          number,
+          Gen3MetatileGraphics | null
+        >;
+      }
+    >();
+
   private previous: GameState =
     structuredClone(
       EMPTY_GAME_STATE,
@@ -1011,6 +1023,26 @@ export class Gen3StateAdapter {
       return null;
     }
 
+    const cacheKey =
+      mapDataAddress.toString(16) +
+      ':' +
+      width +
+      'x' +
+      height +
+      ':' +
+      primaryTilesetAddress.toString(16) +
+      ':' +
+      secondaryTilesetAddress.toString(16);
+
+    const cached =
+      this.mapRenderCache.get(
+        cacheKey,
+      );
+
+    if (cached) {
+      return cached;
+    }
+
     const previousPrimary =
       this.currentPrimaryTileset;
 
@@ -1084,10 +1116,17 @@ export class Gen3StateAdapter {
         );
       }
 
-      return {
+      const result = {
         blocks,
         graphics,
       };
+
+      this.mapRenderCache.set(
+        cacheKey,
+        result,
+      );
+
+      return result;
     } finally {
       this.currentPrimaryTileset =
         previousPrimary;
