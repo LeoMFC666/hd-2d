@@ -376,6 +376,10 @@ export class Gen3StateAdapter {
     return this.primaryMetatileGraphics;
   }
 
+  getMemoryReader(): MemoryReader {
+    return this.memoryReader;
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
