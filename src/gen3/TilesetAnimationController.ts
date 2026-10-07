@@ -179,6 +179,9 @@ export class TilesetAnimationController {
     Uint8Array | null =
     null;
 
+  private liveRangeTilesetAddress =
+    0;
+
   private frameCounter =
     0;
 
@@ -241,7 +244,7 @@ export class TilesetAnimationController {
 
     if (
       this.liveRange &&
-      this.activePrimaryTilesetAddress ===
+      this.liveRangeTilesetAddress ===
         map.primaryTilesetAddress
     ) {
       const changedTiles =
@@ -273,6 +276,7 @@ export class TilesetAnimationController {
     this.metatileCache.clear();
     this.paletteCache.clear();
     this.liveRange = null;
+    this.liveRangeTilesetAddress = 0;
     this.activePrimaryTilesetAddress = 0;
     this.frameCounter = 0;
   }
@@ -335,7 +339,9 @@ export class TilesetAnimationController {
       this.findChangedTiles(
         range,
         primaryTilesetChanged ||
-          this.liveRange === null,
+          this.liveRange === null ||
+          this.liveRangeTilesetAddress !==
+            primaryTilesetAddress,
       );
 
     if (
@@ -365,6 +371,9 @@ export class TilesetAnimationController {
 
     this.liveRange =
       range.slice();
+
+    this.liveRangeTilesetAddress =
+      primaryTilesetAddress;
   }
 
   private findChangedTiles(
