@@ -1,7 +1,7 @@
 name: Direct mGBA Cinnabar audit
 on:
   push:
-    branches: [diagnose/cinnabar-mgba-direct]
+    branches: [diagnose/cinnabar-runtime-layout-fix]
   workflow_dispatch:
 jobs:
   audit:
