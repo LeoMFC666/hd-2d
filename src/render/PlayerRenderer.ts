@@ -28,6 +28,9 @@ import {
 const GBA_METATILE_PIXELS =
   16;
 
+const MAP_STREAM_DISTANCE =
+  64;
+
 interface MapVisual {
   mesh: THREE.Mesh;
 
