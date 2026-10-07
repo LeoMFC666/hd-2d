@@ -1568,6 +1568,10 @@ export class PlayerRenderer {
         ];
     };
 
+    const bytesPerRow =
+      GBA_METATILE_PIXELS *
+      4;
+
     for (
       let y = 0;
       y < map.height;
@@ -1613,26 +1617,36 @@ export class PlayerRenderer {
             1 -
             sourceY;
 
-          for (
-            let sourceX = 0;
-            sourceX <
-              GBA_METATILE_PIXELS;
-            sourceX++
-          ) {
-            const destinationX =
-              x *
-                GBA_METATILE_PIXELS +
-              sourceX;
+          const sourceOffset =
+            sourceY *
+            bytesPerRow;
 
-            drawPixels(
-              pixels,
-              graphics,
-              sourceY,
-              sourceX,
-              destinationX,
-              destinationY,
-            );
-          }
+          const destinationOffset =
+            (
+              destinationY *
+                textureWidth +
+              x *
+                GBA_METATILE_PIXELS
+            ) *
+            4;
+
+          pixels.set(
+            graphics.basePixels.subarray(
+              sourceOffset,
+              sourceOffset +
+                bytesPerRow,
+            ),
+            destinationOffset,
+          );
+
+          foregroundPixels.set(
+            graphics.foregroundPixels.subarray(
+              sourceOffset,
+              sourceOffset +
+                bytesPerRow,
+            ),
+            destinationOffset,
+          );
         }
       }
     }
