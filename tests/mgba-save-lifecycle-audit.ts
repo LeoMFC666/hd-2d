@@ -389,8 +389,9 @@ async function main(): Promise<void> {
     );
 
     const state =
-      validateEmeraldState(
+      inspectEmeraldState(
         stateAdapter,
+        reader,
       );
 
     const header =
