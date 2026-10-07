@@ -264,9 +264,12 @@ export class PlayerRenderer {
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
-        1.5,
+        1,
       ),
     );
+
+    this.renderer.sortObjects =
+      false;
 
     this.renderer.setClearColor(
       0x000000,
@@ -1369,10 +1372,17 @@ export class PlayerRenderer {
         centerZ,
       );
 
-      // Frozen map matrices must be refreshed when the world is re-rooted
-      // after a map transition.
+      // Maps are static until the world is re-rooted.
       visual.baseMesh.updateMatrix();
       visual.overlayMesh.updateMatrix();
+
+      visual.baseMesh.updateMatrixWorld(
+        true,
+      );
+
+      visual.overlayMesh.updateMatrixWorld(
+        true,
+      );
     }
   }
 
@@ -1596,13 +1606,16 @@ export class PlayerRenderer {
           baseTexture,
 
         transparent:
-          true,
+          false,
+
+        alphaTest:
+          0.5,
 
         depthWrite:
           true,
 
         side:
-          THREE.DoubleSide,
+          THREE.FrontSide,
       });
 
     const overlayMaterial =
@@ -1611,7 +1624,10 @@ export class PlayerRenderer {
           overlayTexture,
 
         transparent:
-          true,
+          false,
+
+        alphaTest:
+          0.5,
 
         depthTest:
           false,
@@ -1620,7 +1636,7 @@ export class PlayerRenderer {
           false,
 
         side:
-          THREE.DoubleSide,
+          THREE.FrontSide,
       });
 
     const baseMesh =
@@ -1682,6 +1698,9 @@ export class PlayerRenderer {
     overlayMesh.renderOrder =
       2;
 
+    baseMesh.updateMatrix();
+    overlayMesh.updateMatrix();
+
     this.root.add(
       baseMesh,
     );
@@ -1689,6 +1708,26 @@ export class PlayerRenderer {
     this.root.add(
       overlayMesh,
     );
+
+    baseMesh.updateMatrixWorld(
+      true,
+    );
+
+    overlayMesh.updateMatrixWorld(
+      true,
+    );
+
+    baseMesh.matrixAutoUpdate =
+      false;
+
+    overlayMesh.matrixAutoUpdate =
+      false;
+
+    baseMesh.matrixWorldAutoUpdate =
+      false;
+
+    overlayMesh.matrixWorldAutoUpdate =
+      false;
 
     const mapKey =
       this.createMapKey(
