@@ -29,13 +29,9 @@ const GBA_METATILE_PIXELS =
   16;
 
 interface MapVisual {
-  baseMesh: THREE.Mesh;
-  overlayMesh: THREE.Mesh;
+  mesh: THREE.Mesh;
 
-  baseTexture:
-    THREE.DataTexture;
-
-  overlayTexture:
+  texture:
     THREE.DataTexture;
 
   geometry:
@@ -264,9 +260,11 @@ export class PlayerRenderer {
     this.renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio,
-        1.5,
+        1,
       ),
     );
+
+    this.renderer.sortObjects = false;
 
     this.renderer.setClearColor(
       0x000000,
@@ -908,322 +906,26 @@ export class PlayerRenderer {
     }
 
     this.root.remove(
-      visual.baseMesh,
+      visual.mesh,
     );
 
-    this.root.remove(
-      visual.overlayMesh,
-    );
-
-    visual.baseTexture.dispose();
-    visual.overlayTexture.dispose();
+    visual.texture.dispose();
     visual.geometry.dispose();
-    visual.overlayMesh.geometry.dispose();
 
-    const baseMaterial =
-      visual.baseMesh.material;
-
-    if (
-      Array.isArray(
-        baseMaterial,
-      )
-    ) {
-      baseMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      baseMaterial.dispose();
-    }
-
-    const overlayMaterial =
-      visual.overlayMesh.material;
+    const material =
+      visual.mesh.material;
 
     if (
       Array.isArray(
-        overlayMaterial,
+        material,
       )
     ) {
-      overlayMaterial.forEach(
-        material =>
-          material.dispose(),
+      material.forEach(
+        entry =>
+          entry.dispose(),
       );
     } else {
-      overlayMaterial.dispose();
-    }
-
-    this.mapVisuals.delete(
-      '3:8',
-    );
-
-    this.tilesetAnimationController
-      .unregisterMap(
-        '3:8',
-      );
-
-    this.queuedMaps.delete(
-      '3:8',
-    );
-
-    this.buildQueue.push(
-      definition,
-    );
-
-    this.queuedMaps.add(
-      '3:8',
-    );
-  }
-
-  private updateActiveWorld(
-    state: GameState,
-  ): void {
-    this.repairCinnabarVisual(
-      state,
-    );
-
-    const mapKey =
-      this.createMapKey(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    const activeMap =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    const nextSignature =
-      this.createMapSignature(
-        state,
-      );
-
-    const sameMap =
-      mapKey ===
-      this.activeMapKey;
-
-    const sameSignature =
-      nextSignature ===
-      this.activeMapSignature;
-
-    if (
-      sameMap &&
-      sameSignature
-    ) {
-      if (
-        activeMap &&
-        !this.mapVisuals.has(
-          mapKey,
-        ) &&
-        !this.queuedMaps.has(
-          mapKey,
-        )
-      ) {
-        this.queueMapBuild(
-          activeMap,
-        );
-      }
-
-      return;
-    }
-
-    if (
-      sameMap &&
-      !sameSignature
-    ) {
-      const existingVisual =
-        this.mapVisuals.get(
-          mapKey,
-        );
-
-      if (existingVisual) {
-        this.disposeMapVisual(
-          mapKey,
-          existingVisual,
-        );
-      }
-
-      this.queuedMaps.delete(
-        mapKey,
-      );
-
-      const remainingQueue =
-        this.buildQueue.filter(
-          map =>
-            this.createMapKey(
-              map.mapGroup,
-              map.mapNumber,
-            ) !== mapKey,
-        );
-
-      this.buildQueue.length =
-        0;
-
-      this.buildQueue.push(
-        ...remainingQueue,
-      );
-    }
-
-    this.activeMapKey =
-      mapKey;
-
-    this.activeMapSignature =
-      nextSignature;
-
-    if (
-      !this.mapWorld.hasPosition(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      )
-    ) {
-      this.buildQueue.length =
-        0;
-
-      this.queuedMaps.clear();
-
-      this.mapWorld.clearPositions();
-
-      this.mapWorld.setWorldPosition(
-        state.map.mapGroup,
-        state.map.mapNumber,
-        {
-          x: 0,
-          y: 0,
-        },
-      );
-
-      this.mapWorld.buildFrom(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-    }
-
-    const maps =
-      this.mapWorld
-        .getPositionedMaps();
-
-    if (activeMap) {
-      this.queueMapBuild(
-        activeMap,
-      );
-    }
-
-    for (
-      const map of maps
-    ) {
-      this.queueMapBuild(
-        map,
-      );
-    }
-
-    this.syncMapVisualPositions(
-      maps,
-    );
-
-    this.updateWorldVisibility(
-      maps,
-    );
-  }
-
-  private isForbiddenFireRedMapData(
-    map: MapDefinition,
-  ): boolean {
-    return (
-      map.mapGroup === 3 &&
-      map.mapNumber === 8 &&
-      map.mapDataAddress ===
-        0x08000000 +
-        0x00338378
-    );
-  }
-
-  private createMapSignature(
-    state: GameState,
-  ): string {
-    return (
-      String(state.map.mapLayoutId) +
-      ':' +
-      state.map.mapLayoutAddress.toString(16) +
-      ':' +
-      state.map.mapDataAddress.toString(16) +
-      ':' +
-      state.map.primaryTilesetAddress.toString(16) +
-      ':' +
-      state.map.secondaryTilesetAddress.toString(16) +
-      ':' +
-      state.map.width +
-      'x' +
-      state.map.height
-    );
-  }
-
-  private createMapDefinitionSignature(
-    map: MapDefinition,
-  ): string {
-    return (
-      String(map.mapLayoutId) +
-      ':' +
-      map.mapLayoutAddress.toString(16) +
-      ':' +
-      map.mapDataAddress.toString(16) +
-      ':' +
-      map.primaryTilesetAddress.toString(16) +
-      ':' +
-      map.secondaryTilesetAddress.toString(16) +
-      ':' +
-      map.width +
-      'x' +
-      map.height
-    );
-  }
-
-  private disposeMapVisual(
-    key: string,
-    visual: MapVisual,
-  ): void {
-    this.root.remove(
-      visual.baseMesh,
-    );
-
-    this.root.remove(
-      visual.overlayMesh,
-    );
-
-    visual.baseTexture.dispose();
-    visual.overlayTexture.dispose();
-    visual.geometry.dispose();
-    visual.overlayMesh.geometry.dispose();
-
-    const baseMaterial =
-      visual.baseMesh.material;
-
-    if (
-      Array.isArray(
-        baseMaterial,
-      )
-    ) {
-      baseMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      baseMaterial.dispose();
-    }
-
-    const overlayMaterial =
-      visual.overlayMesh.material;
-
-    if (
-      Array.isArray(
-        overlayMaterial,
-      )
-    ) {
-      overlayMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      overlayMaterial.dispose();
+      material.dispose();
     }
 
     this.mapVisuals.delete(
@@ -1357,22 +1059,13 @@ export class PlayerRenderer {
         position.y +
         map.height / 2;
 
-      visual.baseMesh.position.set(
+      visual.mesh.position.set(
         centerX,
         0,
         centerZ,
       );
 
-      visual.overlayMesh.position.set(
-        centerX,
-        0.002,
-        centerZ,
-      );
-
-      // Frozen map matrices must be refreshed when the world is re-rooted
-      // after a map transition.
-      visual.baseMesh.updateMatrix();
-      visual.overlayMesh.updateMatrix();
+      visual.mesh.updateMatrix();
     }
   }
 
@@ -1404,10 +1097,7 @@ export class PlayerRenderer {
           key,
         );
 
-      visual.baseMesh.visible =
-        visible;
-
-      visual.overlayMesh.visible =
+      visual.mesh.visible =
         visible;
     }
   }
@@ -1482,91 +1172,7 @@ export class PlayerRenderer {
         4,
       );
 
-    const foregroundPixels =
-      new Uint8ClampedArray(
-        pixels.length,
-      );
-
-    const drawPixels = (
-      destination:
-        Uint8ClampedArray,
-      graphics:
-        Gen3MetatileGraphics,
-      sourceY: number,
-      sourceX: number,
-      destinationX: number,
-      destinationY: number,
-    ): void => {
-      const sourceOffset =
-        (
-          sourceY *
-            GBA_METATILE_PIXELS +
-          sourceX
-        ) * 4;
-
-      const destinationOffset =
-        (
-          destinationY *
-            textureWidth +
-          destinationX
-        ) * 4;
-
-      destination[
-        destinationOffset
-      ] =
-        graphics.basePixels[
-          sourceOffset
-        ];
-
-      destination[
-        destinationOffset + 1
-      ] =
-        graphics.basePixels[
-          sourceOffset + 1
-        ];
-
-      destination[
-        destinationOffset + 2
-      ] =
-        graphics.basePixels[
-          sourceOffset + 2
-        ];
-
-      destination[
-        destinationOffset + 3
-      ] =
-        graphics.basePixels[
-          sourceOffset + 3
-        ];
-
-      foregroundPixels[
-        destinationOffset
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset
-        ];
-
-      foregroundPixels[
-        destinationOffset + 1
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 1
-        ];
-
-      foregroundPixels[
-        destinationOffset + 2
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 2
-        ];
-
-      foregroundPixels[
-        destinationOffset + 3
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 3
-        ];
-    };
+    // graphics.pixels is already the correctly composited metatile image.
 
     for (
       let y = 0;
@@ -1613,31 +1219,32 @@ export class PlayerRenderer {
             1 -
             sourceY;
 
-          for (
-            let sourceX = 0;
-            sourceX <
-              GBA_METATILE_PIXELS;
-            sourceX++
-          ) {
-            const destinationX =
-              x *
-                GBA_METATILE_PIXELS +
-              sourceX;
+          const sourceOffset =
+            sourceY *
+            GBA_METATILE_PIXELS *
+            4;
 
-            drawPixels(
-              pixels,
-              graphics,
-              sourceY,
-              sourceX,
-              destinationX,
-              destinationY,
-            );
-          }
+          const destinationOffset =
+            (
+              destinationY *
+                textureWidth +
+              x *
+                GBA_METATILE_PIXELS
+            ) * 4;
+
+          pixels.set(
+            graphics.pixels.subarray(
+              sourceOffset,
+              sourceOffset +
+                GBA_METATILE_PIXELS * 4,
+            ),
+            destinationOffset,
+          );
         }
       }
     }
 
-    const baseTexture =
+    const texture =
       this.createMapTexture(
         pixels,
         textureWidth,
@@ -1734,27 +1341,19 @@ export class PlayerRenderer {
       position.y +
       map.height / 2;
 
-    baseMesh.position.set(
+    mesh.position.set(
       centerX,
       0,
       centerZ,
     );
 
-    overlayMesh.position.set(
-      centerX,
-      0.002,
-      centerZ,
-    );
+    mesh.matrixAutoUpdate =
+      false;
 
-    overlayMesh.renderOrder =
-      2;
+    mesh.updateMatrix();
 
     this.root.add(
-      baseMesh,
-    );
-
-    this.root.add(
-      overlayMesh,
+      mesh,
     );
 
     const mapKey =
@@ -1790,8 +1389,7 @@ export class PlayerRenderer {
       .attachMap(
         mapKey,
         map,
-        baseTexture,
-        overlayTexture,
+        texture,
         animatedPlacements,
       );
 
@@ -1801,10 +1399,7 @@ export class PlayerRenderer {
         map.mapNumber,
       );
 
-    baseMesh.visible =
-      visible;
-
-    overlayMesh.visible =
+    mesh.visible =
       visible;
   }
 
