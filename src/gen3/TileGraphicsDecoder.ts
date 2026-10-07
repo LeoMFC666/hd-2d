@@ -13,6 +13,9 @@ export class TileGraphicsDecoder {
   private readonly decompressedTilesCache =
     new Map<string, Uint8Array>();
 
+  private readonly decodedTileCache =
+    new Map<string, Uint8Array>();
+
   constructor(
     memoryReader: MemoryReader,
   ) {
@@ -30,6 +33,30 @@ export class TileGraphicsDecoder {
       tileId < 0
     ) {
       return null;
+    }
+
+    const cacheKey =
+      String(tilesAddress) +
+      ':' +
+      String(isCompressed) +
+      ':' +
+      String(tileId);
+
+    const cached =
+      this.decodedTileCache.get(
+        cacheKey,
+      );
+
+    if (cached) {
+      return {
+        tileId,
+        width:
+          TILE_WIDTH,
+        height:
+          TILE_HEIGHT,
+        pixels:
+          cached,
+      };
     }
 
     const tiles =
@@ -53,6 +80,11 @@ export class TileGraphicsDecoder {
         tiles,
         tileAddress,
       );
+
+    this.decodedTileCache.set(
+      cacheKey,
+      pixels,
+    );
 
     return {
       tileId,
@@ -116,23 +148,10 @@ export class TileGraphicsDecoder {
   private readRawTiles(
     address: number,
   ): Uint8Array {
-    const bytes =
-      new Uint8Array(
-        1024 * TILE_BYTES,
-      );
-
-    for (
-      let i = 0;
-      i < bytes.length;
-      i++
-    ) {
-      bytes[i] =
-        this.memoryReader.readU8(
-          address + i,
-        );
-    }
-
-    return bytes;
+    return this.memoryReader.readRange(
+      address,
+      1024 * TILE_BYTES,
+    );
   }
 
   private decompressLz77(
