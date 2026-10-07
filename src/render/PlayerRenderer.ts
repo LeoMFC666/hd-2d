@@ -1571,6 +1571,7 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         animatedPlacements,
+        renderData.blocks,
       );
 
     const visible =
@@ -1876,9 +1877,19 @@ export class PlayerRenderer {
 
       this.processMapBuildQueue();
 
-      this.tilesetAnimationController.update(
-        state.map.primaryTilesetAddress,
-      );
+      const runtimeMapLoaded =
+        this.stateAdapter
+          .isRuntimeMapLoaded(state);
+
+      this.player.visible =
+        runtimeMapLoaded;
+
+      if (runtimeMapLoaded) {
+        this.tilesetAnimationController.update(
+          state.map.primaryTilesetAddress,
+          state.map.secondaryTilesetAddress,
+        );
+      }
 
       const playerPosition =
         this.updatePlayer(
@@ -1892,6 +1903,18 @@ export class PlayerRenderer {
       this.updateDebug(
         state,
       );
+
+      if (!runtimeMapLoaded) {
+        for (
+          const visual of
+            this.mapVisuals.values()
+        ) {
+          visual.baseMesh.visible =
+            false;
+          visual.overlayMesh.visible =
+            false;
+        }
+      }
 
       this.renderer.render(
         this.scene,
