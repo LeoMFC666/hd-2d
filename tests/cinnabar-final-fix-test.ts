@@ -53,7 +53,8 @@ async function main(){
    secondaryTilesetAddress:reader.readU32(layout+0x14),
    width:24,height:20,
   }),
-  getMapRenderData:(a:number,w:number,h:number,p:number,s:number)=>{renderCalls.push({addr:a});return temp(a,w,h,p,s)}
+  getMapRenderData:(a:number,w:number,h:number,p:number,s:number)=>{renderCalls.push({addr:a});return temp(a,w,h,p,s)},
+  getMemoryReader:()=>reader,
  } as unknown as Gen3StateAdapter;
  const container=document.createElement('div');
  container.style.width='1000px';container.style.height='700px';document.body.appendChild(container);
