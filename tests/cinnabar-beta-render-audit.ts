@@ -156,7 +156,7 @@ function buildCorrectAnchor(
       mapGroup: 3,
       mapNumber: 0,
       mapLayoutId: reader.readU16(BASE + offset + 0x12),
-      mapLayoutAddress,
+      mapLayoutAddress: layoutAddress,
     };
   }
 
