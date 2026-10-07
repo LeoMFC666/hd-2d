@@ -12,6 +12,10 @@ import type {
   MapDefinition,
 } from './world/MapDefinition';
 
+import {
+  TileGraphicsDecoder,
+} from './TileGraphicsDecoder';
+
 const GBA_ROM_BASE =
   0x08000000;
 
@@ -151,6 +155,9 @@ export class TilesetAnimationController {
   private readonly memoryReader:
     MemoryReader;
 
+  private readonly tileGraphicsDecoder:
+    TileGraphicsDecoder;
+
   private readonly isFireRedFamily:
     boolean;
 
@@ -185,6 +192,12 @@ export class TilesetAnimationController {
   private readonly observedAnimatedTiles =
     new Set<number>();
 
+  private fieldSamples =
+    new Map<
+      number,
+      Uint8Array[]
+    >();
+
   private frameCounter =
     0;
 
@@ -197,6 +210,11 @@ export class TilesetAnimationController {
 
     this.memoryReader =
       memoryReader;
+
+    this.tileGraphicsDecoder =
+      new TileGraphicsDecoder(
+        memoryReader,
+      );
 
     const gameCode =
       this.readRomAscii(
@@ -277,6 +295,7 @@ export class TilesetAnimationController {
     this.liveRangeTilesetAddress = 0;
     this.activePrimaryTilesetAddress = 0;
     this.observedAnimatedTiles.clear();
+    this.fieldSamples.clear();
     this.frameCounter = 0;
   }
 
@@ -326,6 +345,17 @@ export class TilesetAnimationController {
       );
 
     if (!hasMatchingTarget) {
+      return;
+    }
+
+    if (
+      !this.isFieldVramReady(
+        primaryTilesetAddress,
+      )
+    ) {
+      this.liveRange = null;
+      this.liveRangeTilesetAddress = 0;
+      this.observedAnimatedTiles.clear();
       return;
     }
 
@@ -392,6 +422,128 @@ export class TilesetAnimationController {
 
     this.liveRange =
       range.slice();
+  }
+
+  private isFieldVramReady(
+    primaryTilesetAddress:
+      number,
+  ): boolean {
+    let samples =
+      this.fieldSamples.get(
+        primaryTilesetAddress,
+      );
+
+    if (!samples) {
+      const tilesAddress =
+        this.readRomU32(
+          primaryTilesetAddress +
+            0x04,
+        );
+
+      const isCompressed =
+        this.memoryReader.readU8(
+          primaryTilesetAddress,
+        ) !== 0;
+
+      if (
+        tilesAddress < GBA_ROM_BASE ||
+        !this.isValidRomPointer(
+          tilesAddress,
+        )
+      ) {
+        return false;
+      }
+
+      samples = [];
+
+      for (
+        const tileId of [20, 21]
+      ) {
+        const graphics =
+          this.tileGraphicsDecoder.readTile(
+            tilesAddress,
+            tileId,
+            isCompressed,
+          );
+
+        if (!graphics) {
+          return false;
+        }
+
+        samples.push(
+          graphics.pixels.slice(),
+        );
+      }
+
+      this.fieldSamples.set(
+        primaryTilesetAddress,
+        samples,
+      );
+    }
+
+    for (
+      const sample of
+        samples
+    ) {
+      const tileId =
+        sample === samples[0]
+          ? 20
+          : 21;
+
+      const live =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE +
+            tileId *
+              TILE_BYTES,
+          TILE_BYTES,
+        );
+
+      let matches =
+        true;
+
+      for (
+        let y = 0;
+        y < 8 && matches;
+        y++
+      ) {
+        for (
+          let x = 0;
+          x < 8;
+          x++
+        ) {
+          const value =
+            live[
+              y * 4 +
+              Math.floor(
+                x / 2,
+              )
+            ];
+
+          const livePixel =
+            x % 2 === 0
+              ? value & 0x0f
+              : (
+                  value >> 4
+                ) & 0x0f;
+
+          if (
+            livePixel !==
+            sample[
+              y * 8 + x
+            ]
+          ) {
+            matches = false;
+            break;
+          }
+        }
+      }
+
+      if (matches) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private findChangedTiles(
