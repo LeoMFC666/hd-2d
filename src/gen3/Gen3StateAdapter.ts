@@ -345,6 +345,24 @@ export class Gen3StateAdapter {
     ) {
       state.map =
         this.cachedMapState;
+
+      this.mapHeaderAddress =
+        state.map.mapHeaderAddress;
+
+      this.mapHeaderLayoutId =
+        state.map.mapLayoutId;
+
+      this.mapHeaderMapGroup =
+        state.map.mapGroup;
+
+      this.mapHeaderMapNumber =
+        state.map.mapNumber;
+
+      this.currentPrimaryTileset =
+        state.map.primaryTileset;
+
+      this.currentSecondaryTileset =
+        state.map.secondaryTileset;
     } else {
       this.readMapState(
         state,
@@ -453,10 +471,30 @@ export class Gen3StateAdapter {
           layout.mapLayoutIdOffset,
       );
 
+    const activeMapHeaderAddress =
+      this.profile?.memory
+        .activeMapHeaderAddress;
+
+    let runtimeLayoutAddress = 0;
+
+    if (
+      activeMapHeaderAddress !==
+        undefined &&
+      this.isValidEwramPointer(
+        activeMapHeaderAddress,
+      )
+    ) {
+      runtimeLayoutAddress =
+        this.memoryReader.readU32(
+          activeMapHeaderAddress,
+        );
+    }
+
     return (
       String(mapGroup) + ':' +
       String(mapNumber) + ':' +
-      String(mapLayoutId)
+      String(mapLayoutId) + ':' +
+      runtimeLayoutAddress.toString(16)
     );
   }
 
