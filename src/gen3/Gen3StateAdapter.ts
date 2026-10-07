@@ -501,6 +501,30 @@ export class Gen3StateAdapter {
       }
     }
 
+    // During Continue Saved Game, Emerald can expose the save block's
+    // mapLayoutId before the runtime's active gMapHeader has been rebuilt.
+    // Resolve the layout directly from the ROM table first so indoor saves
+    // do not force an expensive full EWRAM scan every lookup window.
+    if (this.profile?.id === 'emerald') {
+      const mapLayoutAddress =
+        this.findMapLayoutAddress(mapLayoutId);
+
+      if (mapLayoutAddress !== 0) {
+        this.readMapLayout(
+          state,
+          0,
+          mapLayoutAddress,
+        );
+
+        if (state.map.width > 0) {
+          this.mapHeaderLayoutId = mapLayoutId;
+          this.mapHeaderMapGroup = mapGroup;
+          this.mapHeaderMapNumber = mapNumber;
+          return;
+        }
+      }
+    }
+
     const now = performance.now();
     const lookupKey =
       `${mapGroup}:${mapNumber}:${mapLayoutId}`;
