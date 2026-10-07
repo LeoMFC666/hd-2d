@@ -40,8 +40,20 @@ const METATILE_SIZE =
 const METATILE_TILE_COUNT =
   8;
 
-const PRIMARY_METATILE_COUNT =
+const FRLG_NUM_TILES_IN_PRIMARY =
   640;
+
+const EMERALD_NUM_TILES_IN_PRIMARY =
+  512;
+
+const FRLG_NUM_METATILES_IN_PRIMARY =
+  640;
+
+const EMERALD_NUM_METATILES_IN_PRIMARY =
+  512;
+
+const NUM_PALS_TOTAL =
+  13;
 
 const TILESET_PALETTES_OFFSET =
   0x08;
@@ -96,6 +108,9 @@ interface AnimatedTile {
 
   y:
     number;
+
+  secondary:
+    boolean;
 }
 
 interface AnimatedMapTarget {
