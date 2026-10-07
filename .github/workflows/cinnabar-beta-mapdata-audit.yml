@@ -1,0 +1,14 @@
+name: Cinnabar beta mapdata audit
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/cinnabar-beta-mapdata]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node tests/cinnabar-beta-mapdata-audit.mjs
