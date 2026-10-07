@@ -1284,12 +1284,8 @@ export class PlayerRenderer {
 
     if (!position) {
       geometry.dispose();
-      baseTexture.dispose();
-      overlayTexture.dispose();
-      baseMaterial.dispose();
-      overlayMaterial.dispose();
-      overlayMesh.geometry.dispose();
-
+      texture.dispose();
+      material.dispose();
       return;
     }
 
@@ -1675,48 +1671,23 @@ export class PlayerRenderer {
       const visual of
         this.mapVisuals.values()
     ) {
-      visual.baseTexture.dispose();
-      visual.overlayTexture.dispose();
+      visual.texture.dispose();
       visual.geometry.dispose();
 
-      visual.overlayMesh
-        .geometry
-        .dispose();
-
-      const baseMaterial =
-        visual.baseMesh.material;
-
-      const overlayMaterial =
-        visual.overlayMesh.material;
+      const material =
+        visual.mesh.material;
 
       if (
         Array.isArray(
-          baseMaterial,
+          material,
         )
       ) {
-        baseMaterial.forEach(
-          (
-            material,
-          ) =>
-            material.dispose(),
+        material.forEach(
+          entry =>
+            entry.dispose(),
         );
       } else {
-        baseMaterial.dispose();
-      }
-
-      if (
-        Array.isArray(
-          overlayMaterial,
-        )
-      ) {
-        overlayMaterial.forEach(
-          (
-            material,
-          ) =>
-            material.dispose(),
-        );
-      } else {
-        overlayMaterial.dispose();
+        material.dispose();
       }
     }
 
