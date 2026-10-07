@@ -1247,46 +1247,51 @@ export class Gen3StateAdapter {
     width: number,
     height: number,
   ): MapBlockState[] {
+    const cellCount =
+      width * height;
+
+    const bytes =
+      this.memoryReader.readRange(
+        mapDataAddress,
+        cellCount * 2,
+      );
+
     const blocks: MapBlockState[] =
-      new Array(width * height);
+      new Array(cellCount);
 
     for (
-      let y = 0;
-      y < height;
-      y++
+      let index = 0;
+      index < cellCount;
+      index++
     ) {
-      for (
-        let x = 0;
-        x < width;
-        x++
-      ) {
-        const raw =
-          this.memoryReader.readU16(
-            mapDataAddress +
-              (y * width + x) * 2,
-          );
+      const offset =
+        index * 2;
 
-        blocks[
-          y * width + x
-        ] = {
-          raw,
-          metatileId:
+      const raw =
+        bytes[offset] |
+        (
+          bytes[offset + 1] <<
+          8
+        );
+
+      blocks[index] = {
+        raw,
+        metatileId:
+          raw &
+          MAPGRID_METATILE_ID_MASK,
+        collision:
+          (
             raw &
-            MAPGRID_METATILE_ID_MASK,
-          collision:
-            (
-              raw &
-              MAPGRID_COLLISION_MASK
-            ) >>
-            MAPGRID_COLLISION_SHIFT,
-          elevation:
-            (
-              raw &
-              MAPGRID_ELEVATION_MASK
-            ) >>
-            MAPGRID_ELEVATION_SHIFT,
-        };
-      }
+            MAPGRID_COLLISION_MASK
+          ) >>
+          MAPGRID_COLLISION_SHIFT,
+        elevation:
+          (
+            raw &
+            MAPGRID_ELEVATION_MASK
+          ) >>
+          MAPGRID_ELEVATION_SHIFT,
+      };
     }
 
     return blocks;
