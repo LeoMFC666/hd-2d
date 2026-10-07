@@ -1368,6 +1368,11 @@ export class PlayerRenderer {
         0.002,
         centerZ,
       );
+
+      // Frozen map matrices must be refreshed when the world is re-rooted
+      // after a map transition.
+      visual.baseMesh.updateMatrix();
+      visual.overlayMesh.updateMatrix();
     }
   }
 
@@ -1913,10 +1918,18 @@ export class PlayerRenderer {
       number
     >;
 
-    this.player.rotation.y =
+    const nextRotation =
       directionMap[
         state.player.direction
       ] ?? 0;
+
+    if (
+      this.player.rotation.y !==
+      nextRotation
+    ) {
+      this.player.rotation.y =
+        nextRotation;
+    }
 
     return position;
   }
@@ -1929,6 +1942,13 @@ export class PlayerRenderer {
   ): void {
     // Snap the camera immediately. Do not interpolate camera movement
     // during normal movement, map transitions, or interior warps.
+    if (
+      this.camera.position.x === position.x &&
+      this.camera.position.z === position.z + 11
+    ) {
+      return;
+    }
+
     this.camera.position.set(
       position.x,
       10,
