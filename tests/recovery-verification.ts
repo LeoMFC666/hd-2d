@@ -67,10 +67,10 @@ async function auditCinnabar(){
  const response=await fetch('/Pokemon - FireRed Version (USA, Europe) (Rev 1).gba');
  const rom=new Uint8Array(await response.arrayBuffer());
  const anchor=scanAnchor(rom,24,20,[
-  {direction:2,mapGroup:3,mapNumber:40,offset:0},
-  {direction:4,mapGroup:3,mapNumber:38,offset:0},
+  {direction:2,mapGroup:3,mapNumber:19,offset:0},
+  {direction:1,mapGroup:3,mapNumber:39,offset:0},
  ]);
- assert(anchor,'Cinnabar anchor scan failed');
+ assert(anchor,'Pallet anchor scan failed');
  const catalog=new MapCatalog();
  const count=catalog.buildGen3FromRom(rom,{mapGroup:3,mapNumber:0,mapLayoutId:anchor.layoutId,mapLayoutAddress:anchor.layoutAddress});
  assert(count===425,'FireRed catalog count '+count);
