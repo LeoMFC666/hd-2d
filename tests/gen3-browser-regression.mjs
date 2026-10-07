@@ -69,9 +69,45 @@ for (const [name, rom, save] of cases) {
       { timeout: 60000 },
     );
 
-    await new Promise(r => setTimeout(r, 2500));
+    let debug = null;
 
-    const debug = await page.evaluate(() => {
+    // SRAM import resets the emulated core to the title screen.
+    // Start the saved game using the real mGBA keyboard path.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await page.locator('#emulator').focus();
+      await page.keyboard.press('a');
+      await page.waitForTimeout(500);
+
+      debug = await page.evaluate(() => {
+        const d = globalThis.__pkmn25dDebug;
+        if (!d) return null;
+        return {
+          state: d.getState?.(),
+          activeMapKey: d.getActiveMapKey?.(),
+          visuals: d.getMapVisuals?.(),
+          renderInfo: d.getRenderInfo?.(),
+        };
+      });
+
+      if (
+        debug?.state?.map?.mapLayoutAddress &&
+        debug.state.map.mapDataAddress &&
+        debug.state.map.width > 0 &&
+        debug.state.map.height > 0 &&
+        debug.activeMapKey &&
+        debug.visuals?.some(
+          visual =>
+            visual.key === debug.activeMapKey &&
+            visual.visible,
+        )
+      ) {
+        break;
+      }
+    }
+
+    await page.waitForTimeout(1200);
+
+    debug = await page.evaluate(() => {
       const d = globalThis.__pkmn25dDebug;
       if (!d) return null;
       return {
