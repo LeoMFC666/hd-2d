@@ -1796,6 +1796,23 @@ export class PlayerRenderer {
     return `${mapGroup}:${mapNumber}`;
   }
 
+  suspend(): void {
+    cancelAnimationFrame(
+      this.frameId,
+    );
+
+    this.frameId =
+      0;
+  }
+
+  resume(): void {
+    if (this.frameId !== 0) {
+      return;
+    }
+
+    this.animate();
+  }
+
   private animate =
     (): void => {
       this.frameId =
