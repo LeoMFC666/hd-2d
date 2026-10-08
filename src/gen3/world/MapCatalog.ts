@@ -456,12 +456,16 @@ export class MapCatalog {
       return 0;
     }
 
-    if (
-      !this.isValidRomPointer(
+    const hasAnchorLayoutAddress =
+      this.isValidRomPointer(
         romBytes,
         anchor.mapLayoutAddress,
         MAP_LAYOUT_SIZE,
-      )
+      );
+
+    if (
+      !hasAnchorLayoutAddress &&
+      anchor.mapLayoutId <= 0
     ) {
       return 0;
     }
@@ -1391,6 +1395,13 @@ export class MapCatalog {
     romBytes: Uint8Array,
     anchor: Gen3MapCatalogAnchor,
   ): number {
+    const hasAnchorLayoutAddress =
+      this.isValidRomPointer(
+        romBytes,
+        anchor.mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      );
+
     for (
       let offset = 0;
       offset <=
@@ -1406,8 +1417,9 @@ export class MapCatalog {
         );
 
       if (
+        hasAnchorLayoutAddress &&
         layoutAddress !==
-        anchor.mapLayoutAddress
+          anchor.mapLayoutAddress
       ) {
         continue;
       }
