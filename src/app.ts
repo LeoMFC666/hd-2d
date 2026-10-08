@@ -92,6 +92,10 @@ export function setupApp(): void {
     PlayerRenderer | null =
     null;
 
+  let stateAdapter:
+    Gen3StateAdapter | null =
+    null;
+
   const updateStatus =
     (
       message: string,
@@ -148,7 +152,7 @@ export function setupApp(): void {
         const memoryReader =
           emulator.getMemoryReader();
 
-        const stateAdapter =
+        stateAdapter =
           new Gen3StateAdapter(
             memoryReader,
             romBytes,
@@ -209,9 +213,22 @@ export function setupApp(): void {
         const buffer =
           await file.arrayBuffer();
 
-        await emulator.importSave(
-          buffer,
-        );
+        scene?.suspend();
+
+        try {
+          await emulator.importSave(
+            buffer,
+          );
+
+          // Do not let the renderer read the transient memory state while
+          // mGBA is executing ContinueSavedGame and rebuilding gMapHeader.
+          // Wait on the actual active-map invariant instead of sleeping a
+          // fixed amount of time; the renderer resumes only when the map
+          // selected by the save is structurally valid in mGBA memory.
+          await stateAdapter?.waitForActiveMapReady();
+        } finally {
+          scene?.resume();
+        }
 
         updateStatus(
           `Save loaded: ${file.name}`,
