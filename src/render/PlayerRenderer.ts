@@ -308,8 +308,11 @@ export class PlayerRenderer {
     }
 
     if (
-      state.map
-        .mapLayoutAddress === 0
+      state.map.mapLayoutAddress === 0 &&
+      !(
+        state.game.region === 'emerald' &&
+        state.map.mapLayoutId > 0
+      )
     ) {
       return;
     }
