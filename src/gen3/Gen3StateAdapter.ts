@@ -501,6 +501,16 @@ export class Gen3StateAdapter {
       }
     }
 
+    // During Emerald Continue Saved Game, the save block already contains the
+    // stable map identity, but the runtime gMapHeader can be temporarily
+    // unavailable while the emulator rebuilds the overworld. Never fall back
+    // to synchronous EWRAM/ROM bus scans here: they stall mGBA during resume.
+    // The renderer can resolve the map from the static ROM catalog using the
+    // same mapGroup/mapNumber/mapLayoutId identity.
+    if (this.profile?.id === 'emerald') {
+      return;
+    }
+
     const now = performance.now();
     const lookupKey =
       `${mapGroup}:${mapNumber}:${mapLayoutId}`;
