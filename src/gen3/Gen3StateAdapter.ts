@@ -380,6 +380,152 @@ export class Gen3StateAdapter {
     return this.memoryReader;
   }
 
+  async waitForActiveMapReady(
+    timeoutMs = 3000,
+  ): Promise<boolean> {
+    const profile =
+      this.profile;
+
+    const mapState =
+      profile?.memory.mapState;
+
+    const activeMapHeaderAddress =
+      profile?.memory.activeMapHeaderAddress;
+
+    if (
+      !mapState ||
+      activeMapHeaderAddress === undefined
+    ) {
+      return true;
+    }
+
+    const deadline =
+      performance.now() +
+      timeoutMs;
+
+    const isReady = (): boolean => {
+      const saveBlock1Address =
+        this.resolveSaveBlock1Address();
+
+      if (
+        !this.isValidEwramPointer(
+          saveBlock1Address,
+        )
+      ) {
+        return false;
+      }
+
+      const mapLayoutId =
+        this.memoryReader.readU16(
+          saveBlock1Address +
+            mapState.mapLayoutIdOffset,
+        );
+
+      if (
+        mapLayoutId <= 0 ||
+        !this.isValidEwramPointer(
+          activeMapHeaderAddress,
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        this.memoryReader.readU16(
+          activeMapHeaderAddress +
+            MAP_HEADER_MAP_LAYOUT_ID_OFFSET,
+        ) !== mapLayoutId
+      ) {
+        return false;
+      }
+
+      const mapLayoutAddress =
+        this.memoryReader.readU32(
+          activeMapHeaderAddress +
+            MAP_HEADER_MAP_LAYOUT_OFFSET,
+        );
+
+      if (
+        !this.isValidRomPointer(
+          mapLayoutAddress,
+        )
+      ) {
+        return false;
+      }
+
+      const width =
+        this.memoryReader.readU32(
+          mapLayoutAddress +
+            MAP_LAYOUT_WIDTH_OFFSET,
+        );
+
+      const height =
+        this.memoryReader.readU32(
+          mapLayoutAddress +
+            MAP_LAYOUT_HEIGHT_OFFSET,
+        );
+
+      if (
+        !this.isValidMapDimension(
+          width,
+        ) ||
+        !this.isValidMapDimension(
+          height,
+        )
+      ) {
+        return false;
+      }
+
+      const mapDataAddress =
+        this.memoryReader.readU32(
+          mapLayoutAddress +
+            MAP_LAYOUT_MAP_OFFSET,
+        );
+
+      const primaryTilesetAddress =
+        this.memoryReader.readU32(
+          mapLayoutAddress +
+            MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+        );
+
+      const secondaryTilesetAddress =
+        this.memoryReader.readU32(
+          mapLayoutAddress +
+            MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+        );
+
+      return (
+        this.isValidRomPointer(
+          mapDataAddress,
+        ) &&
+        this.isValidRomPointer(
+          primaryTilesetAddress,
+        ) &&
+        this.isValidRomPointer(
+          secondaryTilesetAddress,
+        )
+      );
+    };
+
+    while (
+      performance.now() < deadline
+    ) {
+      if (isReady()) {
+        return true;
+      }
+
+      await new Promise<void>(
+        resolve => {
+          requestAnimationFrame(
+            () => resolve(),
+          );
+        },
+      );
+    }
+
+    return isReady();
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
