@@ -209,9 +209,15 @@ export function setupApp(): void {
         const buffer =
           await file.arrayBuffer();
 
-        await emulator.importSave(
-          buffer,
-        );
+        scene?.beginSaveImport();
+
+        try {
+          await emulator.importSave(
+            buffer,
+          );
+        } finally {
+          scene?.endSaveImport();
+        }
 
         updateStatus(
           `Save loaded: ${file.name}`,
