@@ -380,6 +380,29 @@ export class Gen3StateAdapter {
     return this.memoryReader;
   }
 
+  resetTransientState(): void {
+    this.previous = structuredClone(
+      EMPTY_GAME_STATE,
+    );
+
+    this.mapHeaderAddress = 0;
+    this.mapHeaderLayoutId = 0;
+    this.mapHeaderMapGroup = -1;
+    this.mapHeaderMapNumber = -1;
+    this.lastMapHeaderLookupKey = '';
+    this.lastMapHeaderLookupAt = 0;
+
+    this.primaryMetatileGraphics = null;
+    this.mapBlocks = [];
+    this.mapBlocksWidth = 0;
+    this.mapBlocksHeight = 0;
+    this.mapBlocksPrimaryTilesetAddress = 0;
+    this.mapBlocksSecondaryTilesetAddress = 0;
+    this.currentPrimaryTileset = null;
+    this.currentSecondaryTileset = null;
+    this.metatileGraphicsCache.clear();
+  }
+
   private readMapState(
     state: GameState,
     saveBlock1Address: number,
