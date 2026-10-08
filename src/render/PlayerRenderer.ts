@@ -100,6 +100,12 @@ export class PlayerRenderer {
   private activeMapKey =
     '';
 
+  private saveImportInProgress =
+    false;
+
+  private saveImportWarmupFrames =
+    0;
+
   private frameId =
     0;
 
@@ -271,6 +277,28 @@ export class PlayerRenderer {
     );
 
     this.animate();
+  }
+
+  beginSaveImport(): void {
+    this.saveImportInProgress = true;
+  }
+
+  endSaveImport(): void {
+    this.saveImportInProgress = false;
+    this.saveImportWarmupFrames = 4;
+
+    this.stateAdapter.resetTransientState();
+
+    this.buildQueue.length = 0;
+    this.queuedMaps.clear();
+    this.mapWorld.clearPositions();
+    this.activeMapKey = '';
+    this.cinnabarDefinitionChecked = false;
+
+    for (const visual of this.mapVisuals.values()) {
+      visual.baseMesh.visible = false;
+      visual.overlayMesh.visible = false;
+    }
   }
 
   private resize(): void {
@@ -1802,6 +1830,26 @@ export class PlayerRenderer {
         requestAnimationFrame(
           this.animate,
         );
+
+      if (this.saveImportInProgress) {
+        this.renderer.render(
+          this.scene,
+          this.camera,
+        );
+
+        return;
+      }
+
+      if (this.saveImportWarmupFrames > 0) {
+        this.saveImportWarmupFrames -= 1;
+
+        this.renderer.render(
+          this.scene,
+          this.camera,
+        );
+
+        return;
+      }
 
       const state =
         this.stateAdapter
