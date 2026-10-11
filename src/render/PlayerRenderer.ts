@@ -886,17 +886,28 @@ export class PlayerRenderer {
   /**
    * Posiciona o mundo em torno do mapa atual.
    *
-   * Importante: NAO descarta mais a fila de construcao nem as posicoes ja
-   * calculadas. A versao anterior fazia
-   *   buildQueue.length = 0; queuedMaps.clear(); mapWorld.clearPositions();
-   * a cada mapa novo, o que derrubava todos os mapas ja montados e os
-   * reconstruia um a um - era essa varredura visivel que aparecia ao sair
-   * de uma rota. Agora as posicoes sao acumuladas: mapas ja posicionados
-   * permanecem no lugar e apenas os novos entram na fila.
+   * O descarte das posicoes anteriores e OBRIGATORIO e nao pode ser
+   * removido: cada mundo (exterior conectado, interior de casa, centro
+   * pokemon) vive em um espaco de coordenadas proprio, todos ancorados
+   * perto da origem. Se as posicoes antigas sobrevivem, o mundo anterior
+   * continua visivel e ocupa as mesmas coordenadas do novo - os planos
+   * ficam coplanares e o resultado e z-fighting (faixas horizontais e
+   * triangulos pretos) com o mapa errado na tela no lugar do interior.
+   *
+   * Quem evita a reconstrucao desnecessaria ao andar entre mapas
+   * conectados e o chamador: buildFrom ja posiciona os vizinhos, entao
+   * mapas conectados caem em hasPosition() e nunca chegam aqui.
    */
   private rebuildWorldAround(
     state: GameState,
   ): void {
+    this.buildQueue.length =
+      0;
+
+    this.queuedMaps.clear();
+
+    this.mapWorld.clearPositions();
+
     this.mapWorld.buildFrom(
       state.map.mapGroup,
       state.map.mapNumber,
