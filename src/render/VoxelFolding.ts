@@ -26,6 +26,117 @@
  * em coordenadas LOCAIS do mapa (x de 0 a width, z de 0 a height).
  */
 
+export interface FoldBlock {
+  collision: number;
+  elevation: number;
+}
+
+/**
+ * Quais blocos ganham volume.
+ *
+ * Bloco impassavel e candidato (colisao != 0, e nao agua: elevacao 1 na
+ * grade da Gen 3). Mas so ganha volume o GRUPO conectado de candidatos que
+ * encosta em chao andavel (colisao 0, fora da agua) em algum ponto.
+ *
+ * Por que por grupo: pedras no mar sao impassaveis com elevacao 0, iguais
+ * a uma casa - medido em Cinnabar. A diferenca e o entorno: as pedras so
+ * encostam em agua. Uma regra por bloco ("tem vizinho andavel") quebraria
+ * florestas, cuja coluna mais externa so encosta em outras arvores.
+ */
+export function computeFoldMask(
+  width: number,
+  height: number,
+  blockAt: (x: number, y: number) => FoldBlock | undefined,
+): Uint8Array {
+  const WATER_ELEVATION = 1;
+  const MIN_GROUND_ELEVATION = 2;
+  const candidate = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const block = blockAt(x, y);
+
+      if (
+        block &&
+        block.collision !== 0 &&
+        block.elevation !== WATER_ELEVATION
+      ) {
+        candidate[y * width + x] = 1;
+      }
+    }
+  }
+
+  const walkableLand = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return false;
+    }
+
+    const block = blockAt(x, y);
+
+    // Chao andavel = passavel E num nivel de chao (elevacao >= 2; cidades
+    // e rotas usam 3). Elevacao 0 e o nivel de TRANSICAO da Gen 3, que
+    // vale para qualquer altura: em Cinnabar ha blocos passaveis de
+    // elevacao 0 encostados nas pedras do mar, e conta-los como chao fazia
+    // as pedras levantarem como um muro.
+    return (
+      !!block &&
+      block.collision === 0 &&
+      block.elevation >= MIN_GROUND_ELEVATION
+    );
+  };
+
+  const mask = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const steps = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  for (let start = 0; start < candidate.length; start++) {
+    if (!candidate[start] || visited[start]) {
+      continue;
+    }
+
+    const component: number[] = [];
+    const stack = [start];
+    let touchesLand = false;
+    visited[start] = 1;
+
+    while (stack.length > 0) {
+      const index = stack.pop() as number;
+      component.push(index);
+
+      const x = index % width;
+      const y = Math.floor(index / width);
+
+      for (const [dx, dy] of steps) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (walkableLand(nx, ny)) {
+          touchesLand = true;
+        }
+
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+
+        const next = ny * width + nx;
+
+        if (candidate[next] && !visited[next]) {
+          visited[next] = 1;
+          stack.push(next);
+        }
+      }
+    }
+
+    if (touchesLand) {
+      for (const index of component) {
+        mask[index] = 1;
+      }
+    }
+  }
+
+  return mask;
+}
+
 export interface FoldGeometryData {
   positions: Float32Array;
   uvs: Float32Array;

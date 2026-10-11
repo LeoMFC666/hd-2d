@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import { Gen3StateAdapter } from './b4/gen3/Gen3StateAdapter.js';
 import { MapCatalog } from './b4/gen3/world/MapCatalog.js';
-import { buildFoldGeometry } from './b6/VoxelFolding.js';
+import { buildFoldGeometry, computeFoldMask } from './b6/VoxelFolding.js';
 const BASE=0x08000000, PX=16;
 const u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
 function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
@@ -15,19 +15,35 @@ const ad=new Gen3StateAdapter(romReader(rom),rom); const cat=new MapCatalog();
 const groups=cat.findMapGroupsByStructure(rom);
 const hdr=u32(rom,u32(rom,groups-BASE+(+G)*4)-BASE+(+M)*4), lo=u32(rom,hdr-BASE)-BASE;
 const map={width:u32(rom,lo),height:u32(rom,lo+4),data:u32(rom,lo+12),p:u32(rom,lo+16),s:u32(rom,lo+20)};
+const frlg=String.fromCharCode(...rom.slice(0xac,0xaf))==='BPR'||String.fromCharCode(...rom.slice(0xac,0xaf))==='BPG';
+const bw=frlg&&rom[lo+0x18]>=1&&rom[lo+0x18]<=8?rom[lo+0x18]:2, bh=frlg&&rom[lo+0x19]>=1&&rom[lo+0x19]<=8?rom[lo+0x19]:2;
+const borderAddr=u32(rom,lo+8)-BASE, borderIds=[];for(let i=0;i<bw*bh;i++)borderIds.push((rom[borderAddr+i*2]|(rom[borderAddr+i*2+1]<<8))&0x3ff);
 const log=console.log; console.log=()=>{};
-const rd=ad.getMapRenderData(map.data,map.width,map.height,map.p,map.s); console.log=log;
+const rd=ad.getMapRenderData(map.data,map.width,map.height,map.p,map.s,borderIds); console.log=log;
 const TW=map.width*PX, TH=map.height*PX, base=new Uint8Array(TW*TH*4), over=new Uint8Array(TW*TH*4);
 for(let y=0;y<map.height;y++)for(let x=0;x<map.width;x++){const b=rd.blocks[y*map.width+x];const g=b&&rd.graphics.get(b.metatileId);if(!g)continue;
  for(let sy=0;sy<PX;sy++){const dy=(map.height-1-y)*PX+PX-1-sy;for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,d=(dy*TW+x*PX+sx)*4;for(let c=0;c<4;c++){base[d+c]=g.basePixels[so+c];over[d+c]=g.foregroundPixels[so+c];}}}}
 // mesma regra de solidez do app
-const solid=(x,y)=>{const b=rd.blocks[y*map.width+x];return !!b&&b.collision!==0&&b.elevation!==1;};
+const mask=computeFoldMask(map.width,map.height,(x,y)=>rd.blocks[y*map.width+x]); const solid=(x,y)=>mask[y*map.width+x]===1;
 const fold=foldFlag==='0'?{positions:[],uvs:[],indices:[],quadCount:0}:buildFoldGeometry(map.width,map.height,solid,2);
 
+// textura do bloco de borda, de baixo para cima (igual buildPaddingPlane)
+const BTW=bw*PX,BTH=bh*PX,btex=new Uint8Array(BTW*BTH*4);
+for(let ty=0;ty<bh;ty++)for(let tx=0;tx<bw;tx++){const g=rd.graphics.get(borderIds[ty*bw+tx]);if(!g)continue;
+ for(let sy=0;sy<PX;sy++)for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,dy=(bh-1-ty)*PX+PX-1-sy,d=(dy*BTW+tx*PX+sx)*4;for(let c=0;c<4;c++)btex[d+c]=g.basePixels[so+c];}}
+const P=40, mod=(v,n)=>((v%n)+n)%n;
+const rep=[(map.width+2*P)/bw,(map.height+2*P)/bh], off=[mod(-P,bw)/bw,(bh-1-mod(map.height+P-1,bh))/bh];
 // cena: chao + dobra
 const tris=[];
 const addTri=(P,U,ia,ib,ic,tex,bias)=>tris.push({p:[P[ia],P[ib],P[ic]],u:[U[ia],U[ib],U[ic]],tex,bias});
 const gP=[[0,0,map.height],[map.width,0,map.height],[map.width,0,0],[0,0,0]], gU=[[0,0],[1,0],[1,1],[0,1]];
+if(process.argv[9]==='pad'){
+ // plano subdividido em pedacos de 4 tiles (o rasterizador de teste nao recorta triangulos atras da camera)
+ const PW=map.width+2*P, PH=map.height+2*P, S=4;
+ for(let gx=0;gx<PW;gx+=S)for(let gz=0;gz<PH;gz+=S){const x0=-P+gx,x1=Math.min(-P+gx+S,map.width+P),z0=-P+gz,z1=Math.min(-P+gz+S,map.height+P);
+  const uv=(x,z)=>[(x+P)/PW,(map.height+P-z)/PH];
+  const q=[[x0,-0.02,z1],[x1,-0.02,z1],[x1,-0.02,z0],[x0,-0.02,z0]], qu=q.map(v=>uv(v[0],v[2]));
+  tris.push({p:[q[0],q[1],q[2]],u:[qu[0],qu[1],qu[2]],tex:btex,bias:0,pad:true});tris.push({p:[q[0],q[2],q[3]],u:[qu[0],qu[2],qu[3]],tex:btex,bias:0,pad:true});}}
 for(const [tex,bias] of [[base,0],[over,1]]){addTri(gP,gU,0,1,2,tex,bias);addTri(gP,gU,0,2,3,tex,bias);}
 const FP=[],FU=[];for(let i=0;i<fold.positions.length/3;i++){FP.push([fold.positions[i*3],fold.positions[i*3+1],fold.positions[i*3+2]]);FU.push([fold.uvs[i*2],fold.uvs[i*2+1]]);}
 for(const [tex,bias] of [[base,0],[over,1]])for(let i=0;i<fold.indices.length;i+=3)addTri(FP,FU,fold.indices[i],fold.indices[i+1],fold.indices[i+2],tex,bias);
@@ -55,8 +71,9 @@ for(const t of tris){
     if(w0<0||w1<0||w2<0)continue;
     const iz=w0/a[2]+w1/b[2]+w2/c[2], z=1/iz;
     const uu=(w0*t.u[0][0]/a[2]+w1*t.u[1][0]/b[2]+w2*t.u[2][0]/c[2])*z, vv=(w0*t.u[0][1]/a[2]+w1*t.u[1][1]/b[2]+w2*t.u[2][1]/c[2])*z;
-    const tx=Math.min(TW-1,Math.max(0,Math.floor(uu*TW))), ty=Math.min(TH-1,Math.max(0,Math.floor(vv*TH)));
-    const o=(ty*TW+tx)*4; if(t.tex[o+3]<128)continue;
+    let o;
+    if(t.pad){const fu=uu*rep[0]+off[0],fv=vv*rep[1]+off[1];const tx=Math.floor((fu-Math.floor(fu))*BTW),ty=Math.floor((fv-Math.floor(fv))*BTH);o=(ty*BTW+tx)*4;}
+    else{const tx=Math.min(TW-1,Math.max(0,Math.floor(uu*TW))), ty=Math.min(TH-1,Math.max(0,Math.floor(vv*TH)));o=(ty*TW+tx)*4;} if(t.tex[o+3]<128)continue;
     const zi=y*W+x, zz=z-t.bias*0.01; if(zz>zb[zi])continue; zb[zi]=zz;
     img[zi*4]=t.tex[o];img[zi*4+1]=t.tex[o+1];img[zi*4+2]=t.tex[o+2];
   }

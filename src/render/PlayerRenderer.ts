@@ -4,8 +4,23 @@ import * as THREE from 'three';
 // Sem isso a montagem (que varre o ROM inteiro) era refeita a cada frame
 // enquanto falhasse, travando a thread principal.
 // Quantos metatiles de borda desenhar em volta do mapa ativo.
+// Alcance do padding alem da borda de cada mapa. Calculado pela camera:
+// altura 10, recuo 11, fov 48 -> o raio do topo da tela toca o chao ~20
+// tiles ao norte do jogador, e as laterais da tela larga vao alem disso.
+// Com 12 o horizonte ficava escuro. A repeticao e feita pela GPU
+// (RepeatWrapping), entao alcance maior quase nao custa.
 const MAP_PADDING_METATILES =
-  12;
+  40;
+
+// Altura do padding: logo abaixo do chao. Antes ficava em -0.4, e vista a
+// 42 graus essa queda deslocava o padding ~0.44 tile para tras da borda
+// do mapa - uma costura visivel. A precisao do z-buffer nessa distancia
+// (~1e-4) permite degraus de 0.002 entre planos.
+const PADDING_TOP_Y =
+  -0.02;
+
+const PADDING_STEP_Y =
+  0.002;
 
 // Movimento suave das entidades: o jogo move o sprite 1 tile em 16 quadros
 // (60 fps) ao caminhar. As coordenadas na RAM pulam para o tile de destino
@@ -84,6 +99,7 @@ import {
 
 import {
   buildFoldGeometry,
+  computeFoldMask,
 } from './VoxelFolding';
 
 import {
@@ -1415,12 +1431,16 @@ export class PlayerRenderer {
 
     candidates.forEach(
       (candidate, index) => {
+        // Mais proximo do jogador = mais alto (fica por cima).
+        const rank =
+          candidates.length - 1 - index;
+
         const mesh =
           this.buildPaddingPlane(
             candidate.map,
             candidate.centerX,
             candidate.centerZ,
-            -0.4 + index * 0.002,
+            PADDING_TOP_Y - rank * PADDING_STEP_Y,
           );
 
         if (mesh) {
@@ -1576,6 +1596,26 @@ export class PlayerRenderer {
     texture.repeat.set(
       planeWidth / map.borderWidth,
       planeHeight / map.borderHeight,
+    );
+
+    // Alinhamento com a grade do jogo: fora do mapa, o bloco em (x, y) e
+    // borda[x mod largura][y mod altura], contado da origem do mapa.
+    //  - u = 0 e a borda oeste do plano, coluna x = -P do mapa;
+    //  - v = 0 e a borda sul do plano, linha y = H + P - 1; a textura do
+    //    bloco de borda e assada de baixo para cima, entao a linha r da
+    //    borda ocupa v em [(bh-1-r)/bh, (bh-r)/bh).
+    const mod = (value: number, size: number): number =>
+      ((value % size) + size) % size;
+
+    const westColumn =
+      mod(-MAP_PADDING_METATILES, map.borderWidth);
+
+    const southRow =
+      mod(map.height + MAP_PADDING_METATILES - 1, map.borderHeight);
+
+    texture.offset.set(
+      westColumn / map.borderWidth,
+      (map.borderHeight - 1 - southRow) / map.borderHeight,
     );
 
     texture.needsUpdate = true;
@@ -2228,9 +2268,8 @@ export class PlayerRenderer {
     baseTexture: THREE.DataTexture,
     overlayTexture: THREE.DataTexture,
   ): THREE.Group | undefined {
-    // Solido = impassavel e nao e agua (elevacao 1 na grade da Gen 3).
-    // Medido em Pallet Town: casas, laboratorio, arvores, cercas e placas
-    // sao impassaveis; a agua e passavel (surf) e tem elevacao 1.
+    // Quem ganha volume: ver computeFoldMask (grupos impassaveis que
+    // encostam em chao andavel; pedras no mar ficam planas).
     // Interiores ficam planos: parede de interior dobrada cobriria o
     // comodo inteiro diante da camera.
     if (
@@ -2240,20 +2279,18 @@ export class PlayerRenderer {
       return undefined;
     }
 
+    const mask =
+      computeFoldMask(
+        map.width,
+        map.height,
+        (x, y) => blocks[y * map.width + x],
+      );
+
     const data =
       buildFoldGeometry(
         map.width,
         map.height,
-        (x, y) => {
-          const block =
-            blocks[y * map.width + x];
-
-          return (
-            !!block &&
-            block.collision !== 0 &&
-            block.elevation !== 1
-          );
-        },
+        (x, y) => mask[y * map.width + x] === 1,
         VOXEL_MAX_WALL_ROWS,
       );
 

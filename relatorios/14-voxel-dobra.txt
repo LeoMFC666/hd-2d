@@ -59,3 +59,16 @@ profundidade, com polygonOffset para nao brigar com o chao.
 ================================================================================
 FIM DO RELATORIO 14
 ================================================================================
+
+ADENDO - PEDRAS NO MAR (Cinnabar)
+--------------------------------------------------------------------------------
+Pedras no mar sao impassaveis com elevacao 0, iguais a uma casa, e
+levantavam como muro. Regra nova (computeFoldMask): so ganha volume o GRUPO
+conectado de blocos solidos que encosta em chao andavel (passavel com
+elevacao >= 2). Elevacao 0 e o nivel de transicao da Gen 3 e nao conta como
+chao - em Cinnabar ha blocos passaveis de elevacao 0 encostados nas pedras.
+Regra por grupo, nao por bloco, para nao quebrar florestas (a coluna mais
+externa so encosta em outras arvores).
+Verificado: relatorios/imagens/cinnabar-fold.png - predios com volume,
+pedras do mar planas. Pallet e Littleroot inalterados.
+Renderizador de software usado nas imagens: tools/render-fold.mjs.
