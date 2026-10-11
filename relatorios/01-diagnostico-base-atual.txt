@@ -1,0 +1,145 @@
+================================================================================
+RELATORIO 01 - DIAGNOSTICO DA BASE ATUAL
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)
+Branch: 4          Commit analisado: c11ca2d "Backup do projeto Pokemon 2.5D"
+Data: 2026-10-11
+Referencia alvo: "3D Pokemon - FireRed Faithful 2.5D" (canal Boji)
+================================================================================
+
+1. ESTADO DA CONEXAO E DO CLONE
+--------------------------------------------------------------------------------
+GitHub conectado com sucesso. Repositorio clonado e branch 4 verificada.
+c11ca2d e o HEAD da branch 4 - nao ha commits posteriores a ele nessa branch.
+Historico da branch 4: 19 commits visiveis no clone raso.
+
+2. ARQUITETURA IDENTIFICADA
+--------------------------------------------------------------------------------
+A duvida levantada na conversa (frontend de emulador x renderizador 3D
+alimentado pelo emulador) esta RESOLVIDA pelo proprio codigo: o prototipo ja
+implementa a segunda abordagem.
+
+Fluxo atual (src/app.ts):
+  arquivo .gba -> MgbaEmulatorAdapter.loadRom()
+               -> emulator.getMemoryReader()
+               -> Gen3StateAdapter(memoryReader, romBytes)
+               -> PlayerRenderer(container, stateAdapter, romBytes)
+
+Ou seja: mGBA roda em WASM, o jogo real executa, e a cena 3D e reconstruida
+lendo a memoria do emulador em tempo real. Essa e a arquitetura correta para
+replicar o video de referencia.
+
+3. INVENTARIO DO CODIGO-FONTE (14 arquivos, ~9.650 linhas)
+--------------------------------------------------------------------------------
+  2713  src/gen3/Gen3StateAdapter.ts        <- arquivo-monstro, precisa quebrar
+  1942  src/render/PlayerRenderer.ts        <- arquivo-monstro, precisa quebrar
+  1915  src/gen3/world/MapCatalog.ts        <- catalogo de mapas hardcoded
+  1161  src/gen3/TilesetAnimationController.ts
+   412  src/app.ts
+   361  src/gen3/GameProfile.ts             <- a melhor peca do projeto
+   330  src/gen3/TileGraphicsDecoder.ts
+   315  src/gen3/world/MapWorld.ts
+   222  src/emulator/Emulator.ts
+   182  src/gen3/GameState.ts
+    48  src/gen3/MemoryReader.ts
+    32  src/gen3/world/MapDefinition.ts
+    16  src/emulator/EmulatorAdapter.ts
+     3  src/main.ts
+
+Stack: TypeScript 7 + Vite 8 + Three.js 0.186 + @wasm-gaming/mgba-wasm 0.1.1
+`npx tsc --noEmit` passa sem erros (exit 0).
+
+4. O QUE JA FUNCIONA / O QUE PRESTA
+--------------------------------------------------------------------------------
+[OK] GameProfile.ts - perfis de memoria dos 5 jogos da Gen 3 (Ruby, Sapphire,
+     Emerald, FireRed, LeafGreen) com deteccao por gameCode + revision.
+     Ruby/Sapphire usam SaveBlock1 em endereco FIXO (0x02025734);
+     Emerald e FRLG usam ponteiro (0x03005D8C / 0x03005008).
+     Essa camada e solida e deve ser PRESERVADA na reconstrucao.
+[OK] EmulatorAdapter.ts - interface limpa, desacoplada do mGBA. Boa abstracao.
+[OK] MemoryReader - le via _mgbawasm_bus_read8/16/32 com fallback para HEAP.
+[OK] TileGraphicsDecoder - decodificacao de tiles 4bpp do ROM ja existe.
+[OK] Pipeline de save: import .sav, export .sav, persistencia.
+
+5. PROBLEMAS CRITICOS ENCONTRADOS
+--------------------------------------------------------------------------------
+[P1] ROMs COMERCIAIS COMMITADAS NO REPOSITORIO  *** BLOQUEANTE ***
+     Arquivos rastreados pelo git:
+       Pokemon - Emerald Version (USA, Europe).gba          16 MB
+       Pokemon - FireRed Version (USA, Europe) (Rev 1).gba  16 MB
+       Pokemon Perfect Fire Red v5.5 ORIGINAL.gba           16 MB
+       dist/Pokemon - Emerald.gba
+       public/Pokemon - Emerald.gba
+       + 4 arquivos .sav
+     Isso e material protegido da Nintendo/Game Freak dentro de um repositorio
+     publico. E risco de DMCA takedown do repo inteiro, e nao apenas dos
+     arquivos. Precisa ser removido do historico, nao apenas do HEAD.
+     Decisao do usuario necessaria antes de qualquer acao.
+
+[P2] node_modules/ COMMITADO - 3.167 arquivos
+     De 3.231 arquivos rastreados, 3.167 sao node_modules. O codigo real sao
+     14 arquivos. Nao existe .gitignore no projeto.
+
+[P3] AUSENCIA TOTAL DE .gitignore
+
+[P4] ARQUIVOS-MONSTRO
+     Gen3StateAdapter.ts com 2.713 linhas e PlayerRenderer.ts com 1.942 linhas
+     concentram responsabilidades demais (leitura de memoria + catalogo +
+     decodificacao + montagem de cena + loop de render + camera).
+
+[P5] FORMATACAO ANOMALA DO CODIGO
+     O codigo esta quebrado em 1-3 tokens por linha de forma nao convencional.
+     Nao ha Prettier/ESLint configurado. Isso infla a contagem de linhas e
+     dificulta leitura e diff.
+
+[P6] RENDERIZACAO AINda EMBRIONARIA
+     PlayerRenderer usa apenas: PlaneGeometry para o mapa, BoxGeometry para o
+     jogador, MeshBasicMaterial/MeshStandardMaterial, 1 DirectionalLight e
+     1 AmbientLight, PerspectiveCamera. Nao ha sprites billboard, nao ha
+     tilt-shift/DOF, nao ha extrusao de tiles, nao ha sombras configuradas.
+     O visual "HD-2D / Faithful 2.5D" do video de referencia ainda nao existe.
+
+[P7] COBERTURA DESIGUAL ENTRE JOGOS
+     Apenas Emerald e FRLG possuem objectState (posicao e direcao de NPCs e do
+     jogador). Ruby e Sapphire tem somente mapState - nao renderizam NPCs nem
+     leem avatar. O requisito "suportar todos os jogos da terceira geracao"
+     nao esta cumprido hoje.
+
+[P8] MAPAS HARDCODED
+     MapCatalog.ts (1.915 linhas) carrega definicoes de mapa escritas a mao em
+     vez de ler a estrutura de mapas do proprio ROM. Nao escala para 5 jogos.
+     O historico de commits mostra varias tentativas sucessivas de corrigir
+     isso ("fix: restore FireRed world reconstruction", "fix: retry FireRed
+     catalog initialization", etc.) - sintoma de que a abordagem nao fecha.
+
+6. SOBRE A TROCA DE LINGUAGEM (Rust)
+--------------------------------------------------------------------------------
+Recomendacao: NAO trocar TypeScript por Rust na camada de aplicacao.
+  - O core de emulacao JA e nativo compilado para WASM (mGBA). O trabalho
+    pesado ja esta fora do JS.
+  - O que a aplicacao faz e ler memoria e orquestrar Three.js/WebGL. Mover
+    isso para Rust/WASM adiciona custo de travessia da fronteira JS<->WASM a
+    cada frame, o que tende a PIORAR o desempenho, nao melhorar.
+  - Rust/WASM so se justificaria para um hot path pesado de CPU (ex.: decodi-
+    ficacao em massa de tilesets, geracao de meshes). Pode ser avaliado depois
+    como otimizacao pontual, com medicao antes e depois.
+O gargalo deste projeto e arquitetura e pipeline de assets, nao a linguagem.
+
+7. PROXIMAS ETAPAS PROPOSTAS
+--------------------------------------------------------------------------------
+  E1. Higienizacao do repositorio (.gitignore, remocao de ROMs e node_modules
+      do rastreamento e do historico) - PENDENTE DE DECISAO DO USUARIO
+  E2. Reestruturacao de pastas e quebra dos arquivos-monstro em modulos
+  E3. Tooling: Prettier + ESLint + configuracao de build
+  E4. Leitura de mapas direto do ROM, substituindo MapCatalog hardcoded
+  E5. Paridade dos 5 jogos da Gen 3 (objectState para Ruby/Sapphire)
+  E6. Camada visual HD-2D: billboards, extrusao de tiles, iluminacao,
+      profundidade de campo, camera inclinada
+
+8. STATUS
+--------------------------------------------------------------------------------
+Nenhuma alteracao de codigo foi feita ate aqui. Apenas leitura e diagnostico.
+Aguardando decisao sobre o item P1 antes de prosseguir para a etapa E1.
+
+================================================================================
+FIM DO RELATORIO 01
+================================================================================
