@@ -26,6 +26,10 @@ export interface MapDefinition {
   width: number;
   height: number;
 
+  // Tipo do mapa (offset 0x17 do cabecalho). Decide, entre outras coisas,
+  // se o mapa recebe padding: interior e caverna nao recebem.
+  mapType: number;
+
   // Bloco de borda do layout: os metatiles que o jogo repete em volta do
   // mapa. Em Ruby/Sapphire/Emerald e sempre 2x2; em FireRed/LeafGreen as
   // dimensoes ficam no proprio layout (offsets 0x18 e 0x19).

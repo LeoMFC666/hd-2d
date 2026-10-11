@@ -7,6 +7,13 @@ import * as THREE from 'three';
 const MAP_PADDING_METATILES =
   12;
 
+// Tipos de mapa (offset 0x17 do cabecalho) que recebem padding.
+// 1 TOWN, 2 CITY, 3 ROUTE, 5 UNDERWATER, 6 OCEAN_ROUTE.
+// Ficam de fora 4 UNDERGROUND, 8 INDOOR e 9 SECRET_BASE: no jogo original
+// o espaco fora desses mapas e preto mesmo.
+const OUTDOOR_MAP_TYPES =
+  new Set<number>([1, 2, 3, 5, 6]);
+
 const GBA_ROM_BASE_ADDRESS =
   0x08000000;
 
@@ -119,14 +126,8 @@ export class PlayerRenderer {
   private nextCatalogBuildAt =
     0;
 
-  private worldBorderMesh?:
-    THREE.Mesh;
-
-  private worldBorderTexture?:
-    THREE.DataTexture;
-
-  private worldBorderGeometry?:
-    THREE.PlaneGeometry;
+  private readonly worldBorderMeshes:
+    THREE.Mesh[] = [];
 
   private cinnabarDefinitionChecked =
     false;
@@ -419,6 +420,65 @@ export class PlayerRenderer {
       console.warn(
         'Unable to build Gen 3 map catalog. Tentativa',
         this.worldCatalogBuildFailures,
+      );
+
+      return;
+    }
+
+    // VALIDACAO DA ANCORA
+    //
+    // Ter montado algum catalogo nao significa ter montado o catalogo
+    // CERTO. A ancora vem da RAM do emulador, e nos primeiros frames apos
+    // carregar um ROM essa RAM pode ainda nao estar inicializada. Com uma
+    // ancora invalida a resolucao casa com um cabecalho qualquer e o
+    // catalogo inteiro sai deslocado - e o que fazia Cinnabar Island
+    // aparecer como um mapa beta e o mundo nao conectar no primeiro
+    // carregamento do Fire Red. Carregar outro ROM antes "consertava"
+    // porque a RAM ja estava quente na segunda vez.
+    //
+    // O teste e de consistencia: o mapa que o catalogo registrou na
+    // posicao da ancora tem de apontar para o MESMO layout que a ancora
+    // leu da memoria. Se divergir, o catalogo esta errado - descarta e
+    // tenta de novo mais tarde, em vez de fixar o erro para sempre.
+    const anchored =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    if (
+      !anchored ||
+      anchored.mapLayoutAddress !==
+        state.map.mapLayoutAddress
+    ) {
+      this.mapCatalog.clear();
+
+      this.worldCatalogBuildFailures++;
+
+      if (
+        this.worldCatalogBuildFailures <
+        MAX_CATALOG_BUILD_ATTEMPTS
+      ) {
+        this.nextCatalogBuildAt =
+          performance.now() +
+          CATALOG_BUILD_RETRY_MS;
+
+        this.worldCatalogBuildAttempted =
+          false;
+      }
+
+      console.warn(
+        'Catalogo inconsistente com a ancora; descartado.',
+        {
+          esperado:
+            state.map.mapLayoutAddress,
+
+          obtido:
+            anchored?.mapLayoutAddress ?? null,
+
+          tentativa:
+            this.worldCatalogBuildFailures,
+        },
       );
 
       return;
@@ -845,8 +905,9 @@ export class PlayerRenderer {
       mapGroup: state.map.mapGroup,
       mapNumber: state.map.mapNumber,
       // Este caminho monta a definicao a partir do estado vivo, que nao
-      // carrega o bloco de borda; sem endereco, o renderizador apenas nao
-      // desenha padding neste mapa.
+      // carrega nem o tipo nem o bloco de borda; sem endereco, o
+      // renderizador apenas nao desenha padding neste mapa.
+      mapType: 0,
       borderAddress: 0,
       borderWidth: 2,
       borderHeight: 2,
@@ -1126,18 +1187,20 @@ export class PlayerRenderer {
   }
 
   /**
-   * Monta UM plano de padding cobrindo todo o mundo posicionado.
+   * Monta o padding do mundo: um plano por mapa posicionado, cada um
+   * usando o PROPRIO bloco de borda daquele mapa.
    *
-   * Por que um plano so, e nao um por mapa: o mundo nao e retangular. Entre
-   * mapas conectados sobram recortes vazios, e alem do mapa mais externo
-   * sobra o resto da tela. Padding por mapa nao alcanca esses buracos, e
-   * varios planos sobrepostos trariam de volta o z-fighting.
+   * Por que nao um plano unico para o mundo inteiro (versao anterior):
+   * cada mapa define a sua borda. Mauville usa grama, uma rota de mar usa
+   * agua, uma area rochosa usa pedra. Pintar o mundo todo com a borda do
+   * mapa ativo acerta ao redor do jogador e erra em todo o resto - era o
+   * que deixava faixas de agua em volta de areas de terra.
    *
-   * A textura e apenas o bloco de borda (tipicamente 2x2 metatiles) com
-   * RepeatWrapping - a repeticao e feita pela GPU. Gerar um bitmap do
-   * tamanho do mundo inteiro seria inviavel: a regiao conectada de Hoenn
-   * passa de 500x500 metatiles, o que daria uma textura de mais de 8000px
-   * por lado (centenas de MB).
+   * Por que os planos nao brigam por profundidade: cada um recebe um y
+   * ligeiramente diferente, ordenado pela distancia ate o mapa ativo. O
+   * mais proximo fica por cima, entao a regiao em volta do jogador sempre
+   * mostra a borda correta, e nunca ha dois planos coplanares - que foi a
+   * causa do z-fighting em 597e1b2.
    */
   private rebuildWorldBorder(
     maps: MapDefinition[],
@@ -1145,33 +1208,49 @@ export class PlayerRenderer {
   ): void {
     this.disposeWorldBorder();
 
+    // Interior, caverna e base secreta nao recebem padding: no jogo
+    // original o que existe fora deles e preto mesmo.
     if (
       !activeMap ||
-      maps.length === 0
+      !this.mapAcceptsPadding(activeMap)
     ) {
       return;
     }
 
-    const borderMetatileIds =
-      this.readBorderMetatileIds(
-        activeMap,
+    const activePosition =
+      this.mapWorld.getWorldPosition(
+        activeMap.mapGroup,
+        activeMap.mapNumber,
       );
 
-    if (
-      borderMetatileIds.length === 0
-    ) {
+    if (!activePosition) {
       return;
     }
 
-    // Bounding box do mundo posicionado.
-    let minX = Number.POSITIVE_INFINITY;
-    let minZ = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxZ = Number.NEGATIVE_INFINITY;
+    const activeCenterX =
+      activePosition.x + activeMap.width / 2;
+
+    const activeCenterZ =
+      activePosition.y + activeMap.height / 2;
+
+    interface PaddingCandidate {
+      map: MapDefinition;
+      centerX: number;
+      centerZ: number;
+      distance: number;
+    }
+
+    const candidates: PaddingCandidate[] = [];
 
     for (
       const map of maps
     ) {
+      if (
+        !this.mapAcceptsPadding(map)
+      ) {
+        continue;
+      }
+
       const position =
         this.mapWorld.getWorldPosition(
           map.mapGroup,
@@ -1182,59 +1261,114 @@ export class PlayerRenderer {
         continue;
       }
 
-      minX = Math.min(minX, position.x);
-      minZ = Math.min(minZ, position.y);
-      maxX = Math.max(maxX, position.x + map.width);
-      maxZ = Math.max(maxZ, position.y + map.height);
+      const centerX =
+        position.x + map.width / 2;
+
+      const centerZ =
+        position.y + map.height / 2;
+
+      candidates.push({
+        map,
+        centerX,
+        centerZ,
+        distance:
+          Math.hypot(
+            centerX - activeCenterX,
+            centerZ - activeCenterZ,
+          ),
+      });
     }
+
+    // Mais distante primeiro: o mais proximo do jogador e desenhado por
+    // cima e manda na aparencia da area visivel.
+    candidates.sort(
+      (left, right) =>
+        right.distance - left.distance,
+    );
+
+    candidates.forEach(
+      (candidate, index) => {
+        const mesh =
+          this.buildPaddingPlane(
+            candidate.map,
+            candidate.centerX,
+            candidate.centerZ,
+            -0.4 + index * 0.002,
+          );
+
+        if (mesh) {
+          this.worldBorderMeshes.push(mesh);
+          this.root.add(mesh);
+        }
+      },
+    );
+  }
+
+  private mapAcceptsPadding(
+    map: MapDefinition,
+  ): boolean {
+    return (
+      OUTDOOR_MAP_TYPES.has(
+        map.mapType,
+      ) &&
+      map.borderAddress !== 0 &&
+      map.borderWidth > 0 &&
+      map.borderHeight > 0
+    );
+  }
+
+  /**
+   * Plano de padding de um mapa: area do mapa expandida por
+   * MAP_PADDING_METATILES, preenchida com o bloco de borda repetido.
+   *
+   * A textura gerada e apenas o bloco de borda (tipicamente 2x2
+   * metatiles); a repeticao fica por conta da GPU via RepeatWrapping.
+   * Gerar um bitmap do tamanho da area preenchida seria inviavel para os
+   * mapas grandes.
+   */
+  private buildPaddingPlane(
+    map: MapDefinition,
+    centerX: number,
+    centerZ: number,
+    y: number,
+  ): THREE.Mesh | null {
+    const borderMetatileIds =
+      this.readBorderMetatileIds(
+        map,
+      );
 
     if (
-      !Number.isFinite(minX) ||
-      !Number.isFinite(minZ)
+      borderMetatileIds.length === 0
     ) {
-      return;
+      return null;
     }
 
-    const planeMinX =
-      minX - MAP_PADDING_METATILES;
-
-    const planeMinZ =
-      minZ - MAP_PADDING_METATILES;
-
-    const planeWidth =
-      (maxX - minX) + MAP_PADDING_METATILES * 2;
-
-    const planeHeight =
-      (maxZ - minZ) + MAP_PADDING_METATILES * 2;
-
-    // Textura pequena: so o bloco de borda.
     const blockWidth =
-      activeMap.borderWidth * GBA_METATILE_PIXELS;
+      map.borderWidth * GBA_METATILE_PIXELS;
 
     const blockHeight =
-      activeMap.borderHeight * GBA_METATILE_PIXELS;
+      map.borderHeight * GBA_METATILE_PIXELS;
 
     const pixels =
       new Uint8ClampedArray(
         blockWidth * blockHeight * 4,
       );
 
-    const graphicsSource =
-      this.stateAdapter;
+    let painted = false;
 
     for (
       let tileY = 0;
-      tileY < activeMap.borderHeight;
+      tileY < map.borderHeight;
       tileY++
     ) {
       for (
         let tileX = 0;
-        tileX < activeMap.borderWidth;
+        tileX < map.borderWidth;
         tileX++
       ) {
         const metatileId =
           borderMetatileIds[
-            tileY * activeMap.borderWidth + tileX
+            tileY * map.borderWidth + tileX
           ];
 
         if (metatileId === undefined) {
@@ -1242,13 +1376,15 @@ export class PlayerRenderer {
         }
 
         const graphics =
-          graphicsSource.getMetatileGraphics(
+          this.stateAdapter.getMetatileGraphics(
             metatileId,
           );
 
         if (!graphics) {
           continue;
         }
+
+        painted = true;
 
         for (
           let sourceY = 0;
@@ -1263,9 +1399,8 @@ export class PlayerRenderer {
             const sourceOffset =
               (sourceY * GBA_METATILE_PIXELS + sourceX) * 4;
 
-            // Mesma inversao vertical usada nas texturas de mapa.
             const destinationY =
-              (activeMap.borderHeight - 1 - tileY) *
+              (map.borderHeight - 1 - tileY) *
                 GBA_METATILE_PIXELS +
               GBA_METATILE_PIXELS - 1 - sourceY;
 
@@ -1291,6 +1426,16 @@ export class PlayerRenderer {
       }
     }
 
+    if (!painted) {
+      return null;
+    }
+
+    const planeWidth =
+      map.width + MAP_PADDING_METATILES * 2;
+
+    const planeHeight =
+      map.height + MAP_PADDING_METATILES * 2;
+
     const texture =
       this.createMapTexture(
         pixels,
@@ -1298,25 +1443,15 @@ export class PlayerRenderer {
         blockHeight,
       );
 
-    texture.wrapS =
-      THREE.RepeatWrapping;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
 
-    texture.wrapT =
-      THREE.RepeatWrapping;
-
-    // Repeticao em unidades de bloco de borda, alinhada a grade do mundo.
     texture.repeat.set(
-      planeWidth / activeMap.borderWidth,
-      planeHeight / activeMap.borderHeight,
+      planeWidth / map.borderWidth,
+      planeHeight / map.borderHeight,
     );
 
-    texture.offset.set(
-      planeMinX / activeMap.borderWidth,
-      planeMinZ / activeMap.borderHeight,
-    );
-
-    texture.needsUpdate =
-      true;
+    texture.needsUpdate = true;
 
     const geometry =
       new THREE.PlaneGeometry(
@@ -1335,50 +1470,44 @@ export class PlayerRenderer {
         }),
       );
 
-    mesh.rotation.x =
-      -Math.PI / 2;
+    mesh.rotation.x = -Math.PI / 2;
 
-    // Abaixo de tudo: os mapas reais desenham por cima.
     mesh.position.set(
-      planeMinX + planeWidth / 2,
-      -0.05,
-      planeMinZ + planeHeight / 2,
+      centerX,
+      y,
+      centerZ,
     );
 
-    mesh.renderOrder =
-      -10;
+    mesh.renderOrder = -10;
 
-    this.worldBorderMesh = mesh;
-    this.worldBorderTexture = texture;
-    this.worldBorderGeometry = geometry;
-
-    this.root.add(mesh);
+    return mesh;
   }
 
   private disposeWorldBorder(): void {
-    if (this.worldBorderMesh) {
-      this.root.remove(
-        this.worldBorderMesh,
-      );
+    for (
+      const mesh of this.worldBorderMeshes
+    ) {
+      this.root.remove(mesh);
 
       const material =
-        this.worldBorderMesh.material;
+        mesh.material;
 
       if (Array.isArray(material)) {
         material.forEach(
-          entry => entry.dispose(),
+          entry => {
+            (entry as THREE.MeshBasicMaterial).map?.dispose();
+            entry.dispose();
+          },
         );
       } else {
+        (material as THREE.MeshBasicMaterial).map?.dispose();
         material.dispose();
       }
+
+      mesh.geometry.dispose();
     }
 
-    this.worldBorderTexture?.dispose();
-    this.worldBorderGeometry?.dispose();
-
-    this.worldBorderMesh = undefined;
-    this.worldBorderTexture = undefined;
-    this.worldBorderGeometry = undefined;
+    this.worldBorderMeshes.length = 0;
   }
 
   private queueMapBuild(

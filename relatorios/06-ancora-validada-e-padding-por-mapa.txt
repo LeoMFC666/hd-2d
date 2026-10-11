@@ -1,0 +1,104 @@
+================================================================================
+RELATORIO 06 - VALIDACAO DA ANCORA + PADDING POR MAPA
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. FIRE RED BUGADO NO PRIMEIRO CARREGAMENTO (anexos 1, 3, 4, 5)
+--------------------------------------------------------------------------------
+A pista decisiva foi sua observacao: carregando o Emerald ANTES, o Fire Red
+fica correto. Isso elimina o ROM como culpado - o mesmo arquivo funciona ou
+nao dependendo do que veio antes. O que muda entre os dois casos e o estado
+da RAM do emulador.
+
+CAUSA: a ancora (mapGroup, mapNumber, mapLayoutAddress) e lida da RAM do
+emulador. Nos primeiros frames apos carregar um ROM essa RAM ainda nao esta
+inicializada. Com uma ancora invalida, a resolucao casa com um cabecalho
+qualquer do ROM e o catalogo inteiro sai deslocado - por isso Cinnabar
+Island aparecia apontando para 0x00338378, um mapa da beta. Carregar outro
+ROM antes "consertava" porque na segunda vez a RAM ja estava quente.
+
+O agravante estava no codigo: bastava count > 0 para marcar
+worldCatalogBuilt = true. Ter montado ALGUM catalogo era tratado como ter
+montado o catalogo CERTO, e o erro ficava fixado para sempre.
+
+CORRECAO: teste de consistencia apos a montagem. O mapa que o catalogo
+registrou na posicao da ancora tem de apontar para o MESMO layout que a
+ancora leu da memoria:
+
+    catalogo.get(ancora.grupo, ancora.numero).mapLayoutAddress
+        ===  ancora.mapLayoutAddress
+
+Divergiu, o catalogo esta errado: descarta, nao marca como pronto e tenta
+de novo 500ms depois (ate 8 tentativas). Assim o primeiro carregamento
+espera a RAM ficar valida em vez de cristalizar um catalogo torto.
+
+2. PADDING ENTRANDO EM INTERIORES (anexo 5)
+--------------------------------------------------------------------------------
+O padding era aplicado a qualquer mapa. Agora o tipo do mapa decide.
+
+O cabecalho de mapa da Gen 3 tem o mapType no offset 0x17. Confirmei o
+offset medindo a distribuicao nos ROMs reais:
+
+  Fire Red : INDOOR 262 | UNDERGROUND 87 | ROUTE 57 | TOWN 19
+  Emerald  : INDOOR 307 | UNDERGROUND 105 | ROUTE 41 | SECRET_BASE 24 |
+             UNDERWATER 14 | OCEAN_ROUTE 11 | CITY 9 | TOWN 7
+
+Os numeros batem com a geografia real dos jogos (Kanto nao tem mapas do
+tipo CITY, todos sao TOWN; Hoenn tem 9 cidades e 7 vilarejos). Se o offset
+estivesse errado, a distribuicao seria aleatoria.
+
+Recebem padding: TOWN, CITY, ROUTE, UNDERWATER, OCEAN_ROUTE.
+Nao recebem: INDOOR, UNDERGROUND, SECRET_BASE - no jogo original o espaco
+fora desses mapas e preto mesmo.
+
+Alcance da correcao: 436 dos 518 mapas do Emerald e 349 dos 425 do Fire Red
+deixam de receber padding.
+
+3. PADDING ERRADO EM VOLTA DE AREAS (anexos 6 e 8; anexo 7 = correto)
+--------------------------------------------------------------------------------
+CAUSA: o plano unico do relatorio 05 pintava o mundo inteiro com a borda do
+MAPA ATIVO. Isso acerta ao redor do jogador e erra em todo o resto.
+
+Medicao que fecha o caso:
+
+  Emerald : 82 mapas com padding -> 82 blocos de borda DISTINTOS
+  Fire Red: 76 mapas com padding -> 76 blocos de borda DISTINTOS
+
+Ou seja: CADA mapa define a propria borda, sem nenhuma reutilizacao. Usar
+uma borda so para o mundo todo estava errado em 81 dos 82 casos.
+
+CORRECAO: um plano de padding POR MAPA, cada um com o seu proprio bloco de
+borda. Mauville usa a borda de Mauville, a rota de mar usa a dela.
+
+Como os planos nao brigam por profundidade: cada um recebe um y levemente
+diferente, ordenado pela distancia ate o mapa ativo (mais distante primeiro,
+mais proximo por cima). Nunca ha dois planos coplanares - que foi a causa do
+z-fighting em 597e1b2 - e a area em volta do jogador sempre mostra a borda
+correta.
+
+A textura de cada plano continua sendo so o bloco de borda (2x2 metatiles)
+com RepeatWrapping; a repeticao fica na GPU.
+
+4. PONTO A OBSERVAR
+--------------------------------------------------------------------------------
+Existe no PlayerRenderer um remendo antigo especifico de Cinnabar
+(ensureFireRedCinnabarDefinition / repairCinnabarVisual), fixado no mapa
+3:8, que monta uma definicao a mao. Ele foi escrito para contornar
+justamente o sintoma que a secao 1 agora corrige na raiz. Com a ancora
+validada ele pode ter virado desnecessario - ou pior, pode corromper um
+catalogo que agora esta correto.
+
+Nao mexi nele nesta etapa porque nao tenho como observar o efeito. Se
+Cinnabar continuar estranha depois destas correcoes, esse remendo e o
+primeiro suspeito, e a acao provavel e remove-lo.
+
+5. VERIFICACAO
+--------------------------------------------------------------------------------
+  npx tsc --noEmit -> exit 0
+  Harness contra os ROMs reais: mapType (secao 2) e bordas distintas (secao 3)
+  Sem teste visual - mesma limitacao de sempre.
+
+================================================================================
+FIM DO RELATORIO 06
+================================================================================

@@ -25,6 +25,9 @@ const MAP_HEADER_CONNECTIONS_OFFSET =
 const MAP_HEADER_LAYOUT_ID_OFFSET =
   0x12;
 
+const MAP_HEADER_MAP_TYPE_OFFSET =
+  0x17;
+
 const MAP_LAYOUT_SIZE =
   0x18;
 
@@ -717,6 +720,12 @@ export class MapCatalog {
           primaryTilesetAddress,
           secondaryTilesetAddress,
 
+          mapType:
+            this.readU8(
+              romBytes,
+              headerOffset + MAP_HEADER_MAP_TYPE_OFFSET,
+            ),
+
           borderAddress:
             border.borderAddress,
 
@@ -983,6 +992,12 @@ export class MapCatalog {
           mapDataAddress,
           primaryTilesetAddress,
           secondaryTilesetAddress,
+          mapType:
+            this.readU8(
+              romBytes,
+              headerOffset + MAP_HEADER_MAP_TYPE_OFFSET,
+            ),
+
           borderAddress:
             border.borderAddress,
 
@@ -1124,6 +1139,12 @@ export class MapCatalog {
       this.register({
         mapGroup,
         mapNumber,
+        mapType:
+          this.readU8(
+            romBytes,
+            candidate.mapHeaderAddress - GBA_ROM_BASE +
+              MAP_HEADER_MAP_TYPE_OFFSET,
+          ),
         borderAddress: candidateBorder.borderAddress,
         borderWidth: candidateBorder.borderWidth,
         borderHeight: candidateBorder.borderHeight,
