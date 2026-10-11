@@ -1,0 +1,106 @@
+================================================================================
+RELATORIO 09 - ANIMACAO DE TILES REESCRITA DO ZERO
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. REVERSAO PRIMEIRO
+--------------------------------------------------------------------------------
+Commit 6752e21 desligou TilesetAnimationController e devolveu o projeto ao
+estado funcional de 3562b2e. Isso foi feito ANTES de escrever qualquer
+coisa nova, para o projeto nao ficar quebrado durante a reescrita.
+
+O arquivo antigo continua no repositorio, desligado, como referencia.
+
+2. POR QUE O ANTERIOR QUEBROU TANTA COISA
+--------------------------------------------------------------------------------
+2.1 Tiles duplicados
+    Ele escrevia na textura sem aplicar a MESMA inversao vertical que
+    PlayerRenderer.buildMapVisual usa ao assar o mapa. A textura do mapa e
+    gravada de baixo para cima; escrevendo de cima para baixo, cada tile
+    animado aparecia na posicao espelhada - o "carregado duas vezes".
+
+2.2 Derrubou conexao de mapas, Cinnabar e padding
+    Esta parte parece nao ter relacao com animacao, mas tem. O controller
+    registrava TODOS os mapas do mundo. Medido no relatorio 08: 197.459
+    posicoes animadas em Emerald, repintadas na thread principal. Esse custo
+    atrasava a montagem do catalogo o bastante para estourar o limite de 8
+    tentativas (ensureWorldCatalog), e sem catalogo caem juntos conexao de
+    mapas, resolucao da Cinnabar e padding do FRLG.
+    Ou seja: nao foi coincidencia nem corrupcao de dados - foi fome de CPU
+    competindo com a inicializacao.
+
+3. O ANIMADOR NOVO (src/render/TileAnimator.ts)
+--------------------------------------------------------------------------------
+Escrito do zero, com tres decisoes tomadas especificamente para que cada
+falha acima seja impossivel por construcao:
+
+3.1 Formula de destino copiada de buildMapVisual
+    O calculo de destinationX/destinationY e literalmente o mesmo da
+    rotina que assa o mapa, inversao vertical inclusive, com comentario
+    cruzado nos dois lados. Nao ha como divergir sem alguem alterar os dois.
+
+3.2 Apenas o MAPA ATIVO anima
+    setActiveMap troca o alvo a cada mudanca de mapa. Um mapa de cada vez,
+    nunca o mundo. Alem disso ha teto de 6.000 posicoes por mapa: acima
+    disso o mapa nao anima, em vez de arrastar a taxa de quadros.
+    Medido: o maior mapa do Emerald tem 5.728 posicoes. O pior caso por
+    frame passou de 197.459 para 5.728 - reducao de 34x.
+
+3.3 Apenas a camada de baixo (subtiles 0 a 3)
+    A composicao das duas camadas do metatile depende do layerType, e
+    divergir dela gera artefato. Agua e vegetacao, que sao o caso de uso
+    real, estao na camada de baixo. Mexer so nela elimina a ambiguidade.
+
+3.4 Desarme automatico
+    update() roda dentro de try/catch: qualquer excecao desliga a animacao
+    permanentemente e registra aviso, em vez de derrubar o loop de render.
+    Nenhuma falha na animacao pode parar o jogo.
+
+3.5 Isolamento
+    O animador le VRAM e paleta e escreve em texturas. Nao toca em
+    MapCatalog, MapWorld nem no pipeline de mundo. Nao tem por onde
+    reintroduzir as regressoes da secao 2.
+
+4. COMO FUNCIONA
+--------------------------------------------------------------------------------
+Ao entrar num mapa, varre os blocos e anota cada subtile da camada de baixo
+cujo tile esta na faixa animada (416-512 do tileset primario), ja convertido
+para coordenada de pixel na textura. A cada 60ms le da VRAM os 96 tiles
+animados, compara uma assinatura barata e, so se mudaram, decodifica 4bpp
+com a paleta lida da palette RAM e repinta as posicoes anotadas.
+
+Como a fonte e a VRAM viva, a animacao fica em sincronia exata com o jogo.
+
+5. VERIFICACAO
+--------------------------------------------------------------------------------
+Harness em Node sobre os ROMs reais (150 mapas de cada), checando o ponto
+que quebrou da ultima vez - se alguma coordenada de destino cai fora da
+textura:
+
+  Emerald : 150 mapas | 32 com animacao | 64.218 posicoes
+            coordenadas fora da textura: 0
+            maior mapa: 5.728 posicoes (abaixo do teto de 6.000)
+
+  FireRed : 150 mapas | 11 com animacao |  3.916 posicoes
+            coordenadas fora da textura: 0
+            maior mapa: 792 posicoes
+
+  npx tsc --noEmit -> exit 0
+
+Zero coordenadas invalidas em 68 mil posicoes nos dois jogos. Era
+exatamente esse calculo que produzia os tiles duplicados.
+
+6. NAO VERIFICADO
+--------------------------------------------------------------------------------
+Sem teste visual. O que a verificacao acima garante e que o destino dos
+pixels esta correto e que o custo esta limitado. O que ela NAO cobre:
+  - se as cores saem certas (decodificacao 4bpp + paleta BGR555)
+  - se a faixa 416-512 da VRAM e a certa em todos os tilesets
+Se a cor sair errada, o suspeito e a leitura da palette RAM; se nada animar,
+e a faixa de VRAM. Nos dois casos o resto do projeto continua intacto, pelo
+isolamento da secao 3.5.
+
+================================================================================
+FIM DO RELATORIO 09
+================================================================================

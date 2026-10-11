@@ -35,6 +35,10 @@ import type {
   GameState,
 } from '../gen3/GameState';
 
+import {
+  TileAnimator,
+} from './TileAnimator';
+
 import type {
   MapDefinition,
 } from '../gen3/world/MapDefinition';
@@ -53,6 +57,14 @@ const GBA_METATILE_PIXELS =
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
+
+  // Guardados para a animacao de tiles: ela repinta diretamente neste
+  // buffer e marca a textura como suja. Os ids de metatile vao como
+  // Uint16Array (2 bytes por bloco) em vez da lista de objetos, que seria
+  // pesada demais com dezenas de mapas carregados.
+  basePixels: Uint8ClampedArray;
+
+  metatileIds: Uint16Array;
 
   baseTexture:
     THREE.DataTexture;
@@ -129,6 +141,9 @@ export class PlayerRenderer {
   private readonly worldBorderMeshes:
     THREE.Mesh[] = [];
 
+  private readonly tileAnimator:
+    TileAnimator;
+
   private cinnabarDefinitionChecked =
     false;
 
@@ -178,6 +193,12 @@ export class PlayerRenderer {
 
     this.mapCatalog =
       new MapCatalog();
+
+    this.tileAnimator =
+      new TileAnimator(
+        romBytes,
+        stateAdapter.getMemoryReader(),
+      );
 
     this.mapWorld =
       new MapWorld(
@@ -1169,6 +1190,11 @@ export class PlayerRenderer {
       activeMap,
     );
 
+    this.syncTileAnimation(
+      mapKey,
+      activeMap,
+    );
+
     console.log(
       'Active World:',
       {
@@ -1506,6 +1532,39 @@ export class PlayerRenderer {
     }
 
     this.worldBorderMeshes.length = 0;
+  }
+
+  /**
+   * Aponta a animacao de tiles para o mapa ativo. So um mapa anima por vez:
+   * registrar o mundo inteiro foi o que derrubou a versao anterior.
+   */
+  private syncTileAnimation(
+    mapKey: string,
+    activeMap: MapDefinition | null,
+  ): void {
+    if (!activeMap) {
+      this.tileAnimator.clear();
+
+      return;
+    }
+
+    const visual =
+      this.mapVisuals.get(
+        mapKey,
+      );
+
+    if (!visual) {
+      // O visual ainda esta na fila; na proxima passagem ele existe.
+      return;
+    }
+
+    this.tileAnimator.setActiveMap(
+      mapKey,
+      activeMap,
+      visual.metatileIds,
+      visual.baseTexture,
+      visual.basePixels,
+    );
   }
 
   private queueMapBuild(
@@ -2070,10 +2129,26 @@ export class PlayerRenderer {
       overlayMesh,
     );
 
+    const metatileIds =
+      new Uint16Array(
+        map.width * map.height,
+      );
+
+    for (
+      let index = 0;
+      index < metatileIds.length;
+      index++
+    ) {
+      metatileIds[index] =
+        renderData.blocks[index]?.metatileId ?? 0;
+    }
+
     const visual:
       MapVisual = {
         baseMesh,
         overlayMesh,
+        basePixels: pixels,
+        metatileIds,
         baseTexture,
         overlayTexture,
         geometry,
@@ -2403,6 +2478,8 @@ export class PlayerRenderer {
         state,
       );
 
+      this.tileAnimator.update();
+
       this.renderer.render(
         this.scene,
         this.camera,
@@ -2420,6 +2497,8 @@ export class PlayerRenderer {
     );
 
     this.disposeWorldBorder();
+
+    this.tileAnimator.clear();
 
     for (
       const visual of
