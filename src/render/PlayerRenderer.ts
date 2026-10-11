@@ -1558,7 +1558,6 @@ export class PlayerRenderer {
       activeMap,
       visual.metatileIds,
       visual.baseTexture,
-      visual.basePixels,
     );
   }
 

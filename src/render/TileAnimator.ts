@@ -79,6 +79,10 @@ const GBA_ROM_BASE =
 const BG_PALETTE_BYTES =
   512;
 
+// Offset do ponteiro de paletas na struct de tileset.
+const TILESET_PALETTES_OFFSET =
+  0x08;
+
 // Teto de posicoes animadas por mapa. Acima disso o mapa nao anima: e
 // preferivel perder a animacao de um mapa a comprometer a taxa de quadros.
 const MAX_ANIMATED_POSITIONS =
@@ -108,7 +112,11 @@ export class TileAnimator {
 
   private texture: THREE.DataTexture | null = null;
 
-  private texturePixels: Uint8ClampedArray | null = null;
+  // Buffer da PROPRIA textura (texture.image.data). Antes o animador
+  // escrevia no array que PlayerRenderer usou para assar o mapa, mas
+  // createMapTexture faz new Uint8Array(pixels) - uma copia. Escrever la
+  // nao mudava nada na tela: a animacao rodava inerte.
+  private texturePixels: Uint8Array | null = null;
 
   private textureWidth = 0;
 
@@ -125,6 +133,8 @@ export class TileAnimator {
   // Diagnostico: relatado uma vez por mapa, para distinguir "nao ha tile
   // animado neste mapa" de "a leitura da VRAM nao esta trazendo dado".
   private vramReported = false;
+
+  private palettes: Uint8Array | null = null;
 
   constructor(
     romBytes: Uint8Array,
@@ -143,7 +153,6 @@ export class TileAnimator {
     map: MapDefinition,
     metatileIds: Uint16Array,
     texture: THREE.DataTexture,
-    texturePixels: Uint8ClampedArray,
   ): void {
     if (this.activeKey === key) {
       return;
@@ -151,9 +160,16 @@ export class TileAnimator {
 
     this.activeKey = key;
     this.texture = texture;
-    this.texturePixels = texturePixels;
+
+    this.texturePixels =
+      (texture.image as { data?: Uint8Array }).data ?? null;
     this.textureWidth = map.width * METATILE_PIXELS;
     this.lastTileSignature = '';
+
+    this.palettes =
+      this.readTilesetPalettes(
+        map.primaryTilesetAddress,
+      );
 
     this.positions =
       this.collectPositions(
@@ -168,6 +184,10 @@ export class TileAnimator {
       key,
       '- posicoes animadas:',
       this.positions.length,
+      '| paletas do ROM:',
+      this.palettes ? 'ok' : 'FALHOU',
+      '| buffer da textura:',
+      this.texturePixels ? this.texturePixels.length : 'FALHOU',
     );
   }
 
@@ -258,15 +278,14 @@ export class TileAnimator {
 
     this.lastTileSignature = signature;
 
+    // Paletas do ROM, nao da palette RAM: medido neste build, uma leitura
+    // de 512 bytes em 0x05000000 volta inteiramente zerada, o que pintaria
+    // tudo de preto. As paletas do tileset no ROM sao as mesmas que o jogo
+    // carrega, e estao sempre disponiveis.
     const paletteBytes =
-      this.memoryReader.readRange(
-        GBA_PALETTE_RAM_BASE,
-        BG_PALETTE_BYTES,
-      );
+      this.palettes;
 
-    if (
-      paletteBytes.length < BG_PALETTE_BYTES
-    ) {
+    if (!paletteBytes) {
       return;
     }
 
@@ -281,6 +300,41 @@ export class TileAnimator {
     }
 
     this.texture.needsUpdate = true;
+  }
+
+  /**
+   * Le as 16 paletas do tileset primario direto do ROM.
+   */
+  private readTilesetPalettes(
+    tilesetAddress: number,
+  ): Uint8Array | null {
+    const palettesAddress =
+      this.readU32(
+        tilesetAddress -
+          GBA_ROM_BASE +
+          TILESET_PALETTES_OFFSET,
+      );
+
+    if (
+      palettesAddress < GBA_ROM_BASE
+    ) {
+      return null;
+    }
+
+    const offset =
+      palettesAddress - GBA_ROM_BASE;
+
+    if (
+      offset + BG_PALETTE_BYTES >
+      this.romBytes.length
+    ) {
+      return null;
+    }
+
+    return this.romBytes.slice(
+      offset,
+      offset + BG_PALETTE_BYTES,
+    );
   }
 
   /**
@@ -614,7 +668,7 @@ export class TileAnimator {
     for (
       let index = 0;
       index < tileBytes.length;
-      index += 256
+      index += 16
     ) {
       signature += tileBytes[index].toString(16);
     }
