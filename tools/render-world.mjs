@@ -1,11 +1,22 @@
-// Renderiza um mapa + vizinhos conectados, com dobra e o padding novo,
-// usando a camera do app. Para conferir o encontro entre mapas.
+// Renderiza um mapa + vizinhos conectados, com dobra (predios, topos de
+// objeto, remendo de chao, sombreamento por face) e o padding, usando a
+// camera do app. Rasterizador por software: confere o voxel sem navegador.
+//
+// Monte antes o pacote com o codigo atual do app, num arquivo entry8.ts
+// na pasta deste script contendo:
+//   export { Gen3StateAdapter } from '<repo>/src/gen3/Gen3StateAdapter';
+//   export { MapCatalog } from '<repo>/src/gen3/world/MapCatalog';
+//   export * from '<repo>/src/render/VoxelFolding';
+//   export { buildPadding, isBorderRaised } from '<repo>/src/render/PaddingBuilder';
+// e depois:
+//   esbuild entry8.ts --bundle --format=esm --platform=node --outfile=b8.mjs
+//
+// Uso: node render-world.mjs <rom> <grupo> <mapa> <saida.png> <dx> <dz> [vizinhos 0|1]
+// Variaveis: DEBUG=1 pinta as faces por direcao; NOPATCH=1 sem remendo;
+// NOEXT=1 sem topos de objeto; PROBE=x,y lista triangulos do pixel.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { Gen3StateAdapter } from './b4/gen3/Gen3StateAdapter.js';
-import { MapCatalog } from './b4/gen3/world/MapCatalog.js';
-import { buildFoldGeometry, computeFoldMask } from './b7/VoxelFolding.js';
-import { buildPadding, isBorderRaised } from './b7/PaddingBuilder.js';
+import { Gen3StateAdapter, MapCatalog, buildFoldGeometry, computeFoldMask, computeBuildingIds, buildPadding, isBorderRaised, extendFoldMaskUpward, buildGroundPatch, findGroundCell, dropThinColumns } from './b8.mjs';
 const BASE=0x08000000, PX=16;
 const u16=(r,o)=>r[o]|(r[o+1]<<8), u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
 function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
@@ -32,8 +43,12 @@ function loadMap(g,m,x,z){
   const mask=computeFoldMask(W,H,(xx,y)=>rd.blocks[y*W+xx]);
   const ids=new Uint16Array(W*H); for(let i=0;i<ids.length;i++)ids[i]=rd.blocks[i]?.metatileId??0;
   const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,mask);
-  const fold=buildFoldGeometry(W,H,(xx,y)=>mask[y*W+xx]===1,2);
-  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,fold,type:rom[hdr-BASE+0x17],hdr};
+  const hasFg=id=>{const g=rd.graphics.get(id);if(!g)return false;for(let i=3;i<g.foregroundPixels.length;i+=4)if(g.foregroundPixels[i]>127)return true;return false;};
+  dropThinColumns(W,H,mask); if(!process.env.NOEXT) extendFoldMaskUpward(W,H,mask,(xx,y)=>{const b=rd.blocks[y*W+xx];return b&&b.collision===0&&b.elevation!==1&&hasFg(b.metatileId);});
+  const warps=cat.readWarps(rom,hdr); const bmask=computeBuildingIds(W,H,mask,warps);
+  const fold=buildFoldGeometry(W,H,(xx,y)=>mask[y*W+xx]!==0,2,{buildingAt:(xx,y)=>bmask[y*W+xx],overlayOnly:(xx,y)=>mask[y*W+xx]===2});
+  const gc=findGroundCell(W,H,mask,(xx,y)=>rd.blocks[y*W+xx]); const patch=gc&&!process.env.NOPATCH?buildGroundPatch(W,H,mask,gc):null;
+  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,fold,patch,type:rom[hdr-BASE+0x17],hdr};
 }
 const main=loadMap(+G,+M,0,0); const maps=[main];
 if(neighborsFlag!=='0'){
@@ -47,15 +62,18 @@ console.log=log;
 const OUT=new Set([1,2,3,5,6]);
 const padding=buildPadding(maps.map(m=>({key:m.key,x:m.x,z:m.z,width:m.W,height:m.H,borderWidth:m.bw,borderHeight:m.bh,spreads:OUT.has(m.type),raised:m.raised})),12,2);
 // triangulos
-const tris=[]; const add=(P,U,I,tex,tw,th,wrap,bias)=>{for(let i=0;i<I.length;i+=3)tris.push({p:[P[I[i]],P[I[i+1]],P[I[i+2]]],u:[U[I[i]],U[I[i+1]],U[I[i+2]]],tex,tw,th,wrap,bias});};
+const tris=[]; const add=(P,U,I,tex,tw,th,wrap,bias,C)=>{for(let i=0;i<I.length;i+=3)tris.push({p:[P[I[i]],P[I[i+1]],P[I[i+2]]],u:[U[I[i]],U[I[i+1]],U[I[i+2]]],c:C?[C[I[i]],C[I[i+1]],C[I[i+2]]]:null,tex,tw,th,wrap,bias});};
 const arr=(f,n)=>{const o=[];for(let i=0;i<f.length/n;i++)o.push(Array.from(f.slice(i*n,i*n+n)));return o;};
 for(const m of maps){
-  const gP=[[m.x,0,m.z+m.H],[m.x+m.W,0,m.z+m.H],[m.x+m.W,0,m.z],[m.x,0,m.z]], gU=[[0,0],[1,0],[1,1],[0,1]];
-  for(const [t,b] of [[m.base,0],[m.over,1]]) add(gP,gU,[0,1,2,0,2,3],t,m.TW,m.TH,false,b);
+  for(let r=0;r<m.H;r++){const gP=[[m.x,0,m.z+r+1],[m.x+m.W,0,m.z+r+1],[m.x+m.W,0,m.z+r],[m.x,0,m.z+r]], v0=(m.H-1-r)/m.H, v1=(m.H-r)/m.H, gU=[[0,v0],[1,v0],[1,v1],[0,v1]];
+  for(const [t,b] of [[m.base,0],[m.over,1]]) add(gP,gU,[0,1,2,0,2,3],t,m.TW,m.TH,false,b);}
   const FP=arr(m.fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(m.fold.uvs,2);
-  for(const [t,b] of [[m.base,0],[m.over,1]]) add(FP,FU,Array.from(m.fold.indices),t,m.TW,m.TH,false,b);
+  const FC=arr(m.fold.colors,3).map(c=>c[0]); const FI=Array.from(m.fold.indices);
+  add(FP,FU,FI.slice(0,m.fold.fullIndexCount),m.base,m.TW,m.TH,false,0,FC);
+  add(FP,FU,FI,m.over,m.TW,m.TH,false,1,FC);
+  if(m.patch){const PP=arr(m.patch.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]); add(PP,arr(m.patch.uvs,2),Array.from(m.patch.indices),m.base,m.TW,m.TH,false,1.5);}
 }
-for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1);}
+for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1,arr(p.colors,3).map(c=>c[0]));}
 log(maps.map(m=>`${m.key} @(${m.x},${m.z}) ${m.W}x${m.H} borda ${m.bw}x${m.bh} ${m.raised?'ELEVADA':'plana'}`).join('\n'));
 log('padding:', padding.map(p=>`${p.key}=${p.cellCount} celulas`).join(', '));
 // camera
@@ -80,7 +98,9 @@ for(const t of tris){
     if(t.wrap){uu-=Math.floor(uu);vv-=Math.floor(vv);}
     const tx=Math.min(t.tw-1,Math.max(0,Math.floor(uu*t.tw))),ty=Math.min(t.th-1,Math.max(0,Math.floor(vv*t.th)));
     const o=(ty*t.tw+tx)*4; if(t.tex[o+3]<128)continue;
-    const zi=y*W+x, zz=z-t.bias*0.01; if(zz>zb[zi])continue; zb[zi]=zz;
-    img[zi*4]=t.tex[o];img[zi*4+1]=t.tex[o+1];img[zi*4+2]=t.tex[o+2];}
+    const zi=y*W+x, zz=z-t.bias*0.01; if(process.env.PROBE===x+','+y)log('probe',t.bias,zz.toFixed(3),JSON.stringify(t.p)); if(zz>zb[zi])continue; zb[zi]=zz;
+    const sh=t.c?(w0*t.c[0]/a[2]+w1*t.c[1]/b[2]+w2*t.c[2]/c[2])*z:1;
+    if(process.env.DEBUG&&t.c&&!t.wrap){const k=Math.round(t.c[0]*100);const tint={100:[255,255,0],88:[0,255,0],80:[0,0,255],70:[255,0,0]}[k]||[255,0,255];img[zi*4]=(t.tex[o]+tint[0])/2;img[zi*4+1]=(t.tex[o+1]+tint[1])/2;img[zi*4+2]=(t.tex[o+2]+tint[2])/2;continue;}
+    img[zi*4]=t.tex[o]*sh;img[zi*4+1]=t.tex[o+1]*sh;img[zi*4+2]=t.tex[o+2]*sh;}
 }
 writeFileSync(out,png(W,H,img));

@@ -4,7 +4,9 @@
 set -e
 OUT="${1:-test-site}"
 mkdir -p "$OUT"
-npx esbuild src/main.ts --bundle --format=esm --target=es2022 \
+# esbuild do PATH quando houver (ambientes sem acesso ao registro npm).
+if command -v esbuild >/dev/null 2>&1; then ESBUILD=esbuild; else ESBUILD="npx esbuild"; fi
+$ESBUILD src/main.ts --bundle --format=esm --target=es2022 \
   --outfile="$OUT/app.js" \
   --alias:@wasm-gaming/mgba-wasm=./node_modules/@wasm-gaming/mgba-wasm/dist/mgba/mgba.sdk.js
 cp -r public/mgba "$OUT/mgba"

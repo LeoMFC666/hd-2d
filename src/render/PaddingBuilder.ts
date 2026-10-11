@@ -55,9 +55,20 @@ export interface PaddingMeshData {
   key: string;
   positions: Float32Array;
   uvs: Float32Array;
+
+  // Brilho por vertice (RGB), o mesmo sombreamento por face da dobra.
+  colors: Float32Array;
+
   indices: Uint32Array;
   cellCount: number;
 }
+
+// Mesmos valores de VoxelFolding: o padding elevado continua as arvores do
+// mapa e precisa da mesma luz para nao parecer outro material.
+const SHADE_TOP = 1.0;
+const SHADE_SOUTH = 0.88;
+const SHADE_EAST = 0.8;
+const SHADE_WEST = 0.7;
 
 const NO_OWNER = -1;
 const BLOCKED = -2;
@@ -162,6 +173,7 @@ export function buildPadding(
   const builders = maps.map(() => ({
     positions: [] as number[],
     uvs: [] as number[],
+    colors: [] as number[],
     indices: [] as number[],
     cells: 0,
   }));
@@ -176,16 +188,30 @@ export function buildPadding(
     return owner[cell] === index && mapCells[cell] === 0;
   };
 
+  // Celula de padding ELEVADO, de qualquer mapa.
+  const isRaisedPadding = (gx: number, gz: number): boolean => {
+    if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) {
+      return false;
+    }
+
+    const cell = gz * gridWidth + gx;
+    const index = owner[cell];
+
+    return index >= 0 && mapCells[cell] === 0 && maps[index].raised;
+  };
+
   const quad = (
     target: (typeof builders)[number],
     corners: number[][],
     cornerUvs: number[][],
+    shade = SHADE_TOP,
   ): void => {
     const base = target.positions.length / 3;
 
     for (let corner = 0; corner < 4; corner++) {
       target.positions.push(...corners[corner]);
       target.uvs.push(...cornerUvs[corner]);
+      target.colors.push(shade, shade, shade);
     }
 
     target.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -279,10 +305,59 @@ export function buildPadding(
                 [uOf(wallRight), vOf(south - height)],
                 [uOf(wallLeft), vOf(south - height)],
               ],
+              SHADE_SOUTH,
             );
           }
 
           wallStart = wx + 1;
+        }
+
+        // Laterais: onde o padding elevado encosta de lado num mapa (ou em
+        // padding no chao). Sem elas ficava um vao escuro entre o chao do
+        // mapa e o topo das arvores - Littleroot, cujas colunas da beira
+        // sao grama e as arvores sao a borda. Cada face mostra o tile do
+        // topo naquela celula, de pe, como as laterais da dobra.
+        for (let wx = gx; wx <= end; wx++) {
+          const cellLeft = originX + wx;
+          const cellRight = cellLeft + 1;
+
+          if (!isRaisedPadding(wx - 1, gz)) {
+            quad(
+              target,
+              [
+                [cellLeft, 0, north],
+                [cellLeft, 0, south],
+                [cellLeft, height, south],
+                [cellLeft, height, north],
+              ],
+              [
+                [uOf(cellLeft), vOf(south)],
+                [uOf(cellRight), vOf(south)],
+                [uOf(cellRight), vOf(north)],
+                [uOf(cellLeft), vOf(north)],
+              ],
+              SHADE_WEST,
+            );
+          }
+
+          if (!isRaisedPadding(wx + 1, gz)) {
+            quad(
+              target,
+              [
+                [cellRight, 0, south],
+                [cellRight, 0, north],
+                [cellRight, height, north],
+                [cellRight, height, south],
+              ],
+              [
+                [uOf(cellLeft), vOf(south)],
+                [uOf(cellRight), vOf(south)],
+                [uOf(cellRight), vOf(north)],
+                [uOf(cellLeft), vOf(north)],
+              ],
+              SHADE_EAST,
+            );
+          }
         }
       }
 
@@ -301,6 +376,7 @@ export function buildPadding(
       key: maps[index].key,
       positions: new Float32Array(builder.positions),
       uvs: new Float32Array(builder.uvs),
+      colors: new Float32Array(builder.colors),
       indices: new Uint32Array(builder.indices),
       cellCount: builder.cells,
     });

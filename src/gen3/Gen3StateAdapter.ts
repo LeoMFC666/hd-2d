@@ -2801,6 +2801,12 @@ export class Gen3StateAdapter {
           this.memoryReader.readU8(
             base + layout.objectEventMovementActionIdOffset,
           ),
+        spriteId:
+          this.memoryReader.readU8(base + 0x04),
+        previousX:
+          this.readMapCoordinate(coordsAddress + 4),
+        previousY:
+          this.readMapCoordinate(coordsAddress + 6),
         isPlayer:
           (this.memoryReader.readU8(base + 0x02) & 0x01) !== 0,
       });

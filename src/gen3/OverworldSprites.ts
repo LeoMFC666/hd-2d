@@ -255,6 +255,89 @@ export class OverworldSprites {
     );
   }
 
+  /**
+   * Endereco da tabela de imagens (SpriteFrameImage) de um graphicsId. O
+   * sprite vivo do jogo aponta para ela: e assim que LiveSprites acha a
+   * tabela gSprites na RAM.
+   */
+  getImagesAddress(
+    graphicsId: number,
+  ): number | null {
+    if (
+      !this.ensureLocated() ||
+      graphicsId < 0 ||
+      graphicsId >= this.graphicsCount
+    ) {
+      return null;
+    }
+
+    return this.getInfo(graphicsId)?.imagesAddress ?? null;
+  }
+
+  /**
+   * Quadro exato que o jogo esta mostrando: imagem do comando de animacao
+   * atual do sprite (anims[animNum][animCmdIndex]). Cobre caminhada,
+   * corrida, bike, pulo - qualquer animacao, no passo certo.
+   *
+   * @param animsAddress  sprite->anims (ponteiro no ROM)
+   */
+  getFrameFromAnimation(
+    graphicsId: number,
+    animsAddress: number,
+    animNum: number,
+    animCmdIndex: number,
+  ): SpriteFrame | null {
+    if (
+      !this.ensureLocated() ||
+      graphicsId < 0 ||
+      graphicsId >= this.graphicsCount ||
+      !this.valid(animsAddress, (animNum + 1) * 4)
+    ) {
+      return null;
+    }
+
+    const info =
+      this.getInfo(graphicsId);
+
+    if (!info) {
+      return null;
+    }
+
+    const sequence =
+      this.u32(animsAddress - ROM_BASE + animNum * 4);
+
+    if (!this.valid(sequence, 4)) {
+      return null;
+    }
+
+    // O indice pode estar parado num comando especial (fim/salto/laco);
+    // o quadro na tela e o do ultimo comando de quadro antes dele.
+    for (
+      let index = Math.min(animCmdIndex, MAX_ANIM_FRAMES * 4);
+      index >= 0;
+      index--
+    ) {
+      const command =
+        this.u32(sequence - ROM_BASE + index * 4);
+
+      const low =
+        command & 0xffff;
+
+      if (low >= 0x8000) {
+        continue;
+      }
+
+      return this.decodeFrame(
+        graphicsId,
+        info,
+        low,
+        ((command >>> 22) & 1) === 1,
+      );
+    }
+
+    return null;
+  }
+
   // ----------------------------------------------------------------------
 
   private getInfo(

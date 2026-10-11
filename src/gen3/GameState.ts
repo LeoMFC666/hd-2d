@@ -110,6 +110,12 @@ export interface WorldObject {
   mapNumber?: number;
   movementActionId?: number;
 
+  // Indice do sprite em gSprites (byte 0x04) e coordenadas de ORIGEM do
+  // passo em andamento (0x14). Iguais as atuais quando parado.
+  spriteId?: number;
+  previousX?: number;
+  previousY?: number;
+
   // Bit isPlayer (byte 0x02, bit 0): o ObjectEvent do proprio jogador.
   isPlayer?: boolean;
 }

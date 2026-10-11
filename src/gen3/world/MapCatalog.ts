@@ -2122,6 +2122,60 @@ export class MapCatalog {
   }
 
   /**
+   * Warps (portas, entradas de caverna, escadas) de um mapa, em coordenadas
+   * do mapa. struct MapEvents, igual em RSE e FRLG:
+   *   0x01 warpCount | 0x08 ponteiro para WarpEvent[] (8 bytes: x s16, y s16, ...)
+   */
+  readWarps(
+    romBytes: Uint8Array,
+    mapHeaderAddress: number,
+  ): Array<{ x: number; y: number }> {
+    if (!this.isValidRomPointer(romBytes, mapHeaderAddress, MAP_HEADER_SIZE)) {
+      return [];
+    }
+
+    const eventsAddress =
+      this.readU32(romBytes, mapHeaderAddress - GBA_ROM_BASE + 0x04);
+
+    if (!this.isValidRomPointer(romBytes, eventsAddress, 0x14)) {
+      return [];
+    }
+
+    const eventsOffset =
+      eventsAddress - GBA_ROM_BASE;
+
+    const count =
+      this.readU8(romBytes, eventsOffset + 0x01);
+
+    const warpsAddress =
+      this.readU32(romBytes, eventsOffset + 0x08);
+
+    if (
+      count === 0 ||
+      !this.isValidRomPointer(romBytes, warpsAddress, count * 8)
+    ) {
+      return [];
+    }
+
+    const warps: Array<{ x: number; y: number }> = [];
+
+    for (let index = 0; index < count; index++) {
+      const offset =
+        warpsAddress - GBA_ROM_BASE + index * 8;
+
+      const x = this.readU16(romBytes, offset);
+      const y = this.readU16(romBytes, offset + 2);
+
+      warps.push({
+        x: x >= 0x8000 ? x - 0x10000 : x,
+        y: y >= 0x8000 ? y - 0x10000 : y,
+      });
+    }
+
+    return warps;
+  }
+
+  /**
    * Borda de um layout pelo ENDERECO do layout (para layouts que vem da
    * RAM, quando o save usa um layout diferente do padrao do cabecalho).
    */

@@ -177,6 +177,12 @@ export function setupApp(): void {
         const memoryReader =
           emulator.getMemoryReader();
 
+        // Depuracao pelo console do navegador:
+        //   __gen3.memory.readU16(0x02037350)
+        (window as unknown as { __gen3?: unknown }).__gen3 = {
+          memory: memoryReader,
+        };
+
         const stateAdapter =
           new Gen3StateAdapter(
             memoryReader,
@@ -191,6 +197,9 @@ export function setupApp(): void {
           );
 
         overlay?.destroy();
+
+        (window as unknown as { __gen3: Record<string, unknown> }).__gen3.scene =
+          scene;
 
         const activeScene =
           scene;

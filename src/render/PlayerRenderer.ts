@@ -51,6 +51,19 @@ const WALK_TILES_PER_SECOND =
 const ENTITY_SNAP_DISTANCE =
   3;
 
+// Movimento pelo sprite vivo: se a posicao calculada sai do passo mais do
+// que isto (tiles), o jogo rebaseou as coordenadas; recalibra.
+const LIVE_RECALIBRATE_DISTANCE =
+  0.25;
+
+// Tempo (ms) com o sprite imovel para considerar a entidade parada mesmo
+// sem a origem do passo ter sido atualizada. Medido em tempo e nao em
+// quadros do navegador (monitores de 144 Hz leem o mesmo quadro do GBA
+// varias vezes). Nenhum passo fica parado no meio tanto tempo - o mais
+// lento anda 1 pixel a cada 2 quadros (33 ms).
+const LIVE_STILL_MS =
+  120;
+
 // Abaixo disto a entidade e considerada parada (animacao de pe).
 const ENTITY_MOVING_EPSILON =
   0.02;
@@ -103,7 +116,13 @@ import {
 
 import {
   buildFoldGeometry,
+  buildGroundPatch,
+  computeBuildingIds,
   computeFoldMask,
+  dropThinColumns,
+  extendFoldMaskUpward,
+  findGroundCell,
+  FOLD_OVERHANG,
 } from './VoxelFolding';
 
 import {
@@ -116,6 +135,34 @@ import {
   OverworldSprites,
   type SpriteFrame,
 } from '../gen3/OverworldSprites';
+
+import {
+  LiveSprites,
+  type LiveSpriteState,
+} from '../gen3/LiveSprites';
+
+/**
+ * Os brilhos das faces (VoxelFolding/PaddingBuilder) sao valores de TELA,
+ * como no renderizador do pokeemerald-dualscreen. O three.js multiplica a
+ * cor do vertice em espaco linear e so depois converte para sRGB; sem esta
+ * conversao 0.7 viraria ~0.85 na tela e o volume ficaria apagado.
+ */
+function shadeToLinear(
+  colors: Float32Array,
+): Float32Array {
+  const linear = new Float32Array(colors.length);
+
+  for (let index = 0; index < colors.length; index++) {
+    const value = colors[index];
+
+    linear[index] =
+      value <= 0.04045
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4);
+  }
+
+  return linear;
+}
 
 import type {
   MapDefinition,
@@ -145,6 +192,28 @@ interface EntityVisual {
 
   moving: boolean;
   walkStartedAt: number;
+
+  // Movimento pelo sprite vivo do jogo (ver LiveSprites): mundo = sprite
+  // em pixels / 16 + calibracao, acertada sempre que a entidade esta
+  // parada num tile.
+  calibX: number;
+  calibZ: number;
+  calibrated: boolean;
+
+  // Ultima posicao lida do sprite e desde quando ela nao muda (ms).
+  lastSpriteX: number;
+  lastSpriteY: number;
+  stillSince: number;
+}
+
+/**
+ * Movimento real de uma entidade, lido do jogo: sprite vivo e tile de
+ * origem do passo (em coordenadas do mundo 3D).
+ */
+interface EntityMotion {
+  live: LiveSpriteState;
+  previousX: number;
+  previousZ: number;
 }
 
 interface MapVisual {
@@ -251,6 +320,9 @@ export class PlayerRenderer {
     TileAnimator;
 
   // Sprites do overworld lidos do ROM (jogador, NPCs, caminhao, itens).
+  private readonly liveSprites:
+    LiveSprites;
+
   private readonly overworldSprites:
     OverworldSprites;
 
@@ -322,6 +394,12 @@ export class PlayerRenderer {
     this.overworldSprites =
       new OverworldSprites(
         romBytes,
+      );
+
+    this.liveSprites =
+      new LiveSprites(
+        stateAdapter.getMemoryReader(),
+        this.overworldSprites,
       );
 
     this.tileAnimator =
@@ -1067,6 +1145,11 @@ export class PlayerRenderer {
         new THREE.BufferAttribute(data.uvs, 2),
       );
 
+      geometry.setAttribute(
+        'color',
+        new THREE.BufferAttribute(shadeToLinear(data.colors), 3),
+      );
+
       geometry.setIndex(
         new THREE.BufferAttribute(data.indices, 1),
       );
@@ -1077,6 +1160,7 @@ export class PlayerRenderer {
           new THREE.MeshBasicMaterial({
             map: texture,
             side: THREE.DoubleSide,
+            vertexColors: true,
           }),
         );
 
@@ -1301,6 +1385,7 @@ export class PlayerRenderer {
           target.x,
           target.z,
           now,
+          this.readEntityMotion(state, object),
         );
 
       if (visual) {
@@ -1330,9 +1415,154 @@ export class PlayerRenderer {
   }
 
   /**
+   * Sprite vivo + tile de origem de uma entidade, ou null quando nao da
+   * para ler (o visual cai no movimento estimado antigo).
+   */
+  private readEntityMotion(
+    state: GameState,
+    object: GameState['objects'][number],
+  ): EntityMotion | null {
+    if (
+      object.spriteId === undefined ||
+      object.previousX === undefined ||
+      object.previousY === undefined
+    ) {
+      return null;
+    }
+
+    const live =
+      this.liveSprites.read(
+        object.spriteId,
+        object.graphicsId ?? 0,
+      );
+
+    if (!live) {
+      return null;
+    }
+
+    const previous =
+      this.getEntityWorldPosition(
+        state,
+        object.previousX,
+        object.previousY,
+      );
+
+    if (!previous) {
+      return null;
+    }
+
+    return {
+      live,
+      previousX: previous.x,
+      previousZ: previous.z,
+    };
+  }
+
+  /**
+   * Posicao exata pelo sprite vivo, passo a passo como no GBA.
+   *
+   * Parado (origem == destino): o sprite esta no centro do tile; acerta a
+   * calibracao e mostra o tile. Andando: sprite / 16 + calibracao, preso
+   * entre a origem e o destino do passo. Se a trava agir de verdade (o
+   * jogo rebaseou as coordenadas ao cruzar uma conexao), recalibra a
+   * partir do que esta na tela, para nao dar salto.
+   */
+  private applyLiveMotion(
+    visual: EntityVisual,
+    motion: EntityMotion,
+    targetX: number,
+    targetZ: number,
+    now: number,
+  ): void {
+    const spriteX =
+      motion.live.x / PIXELS_PER_TILE;
+
+    const spriteZ =
+      motion.live.y / PIXELS_PER_TILE;
+
+    if (
+      motion.live.x !== visual.lastSpriteX ||
+      motion.live.y !== visual.lastSpriteY
+    ) {
+      visual.stillSince = now;
+      visual.lastSpriteX = motion.live.x;
+      visual.lastSpriteY = motion.live.y;
+    }
+
+    // Parado: origem == destino, ou o sprite nao se mexe ha alguns
+    // quadros. O segundo caso existe porque a origem nem sempre e
+    // atualizada ao parar (save carregado no meio de um passo, visto na
+    // Perfect Fire Red: origem 18,13 e destino 19,13 com o jogador parado).
+    const atRest =
+      (Math.abs(motion.previousX - targetX) < 1e-6 &&
+        Math.abs(motion.previousZ - targetZ) < 1e-6) ||
+      now - visual.stillSince >= LIVE_STILL_MS;
+
+    if (atRest) {
+      visual.calibX = targetX - spriteX;
+      visual.calibZ = targetZ - spriteZ;
+      visual.calibrated = true;
+      visual.displayX = targetX;
+      visual.displayZ = targetZ;
+
+      return;
+    }
+
+    // Passo longo demais para ser caminhada (warp com origem antiga):
+    // vai direto.
+    if (
+      Math.abs(motion.previousX - targetX) + Math.abs(motion.previousZ - targetZ) >
+      ENTITY_SNAP_DISTANCE
+    ) {
+      visual.displayX = targetX;
+      visual.displayZ = targetZ;
+
+      return;
+    }
+
+    if (!visual.calibrated) {
+      // Primeiro quadro ja andando: assume a origem como ponto de partida.
+      visual.calibX = motion.previousX - spriteX;
+      visual.calibZ = motion.previousZ - spriteZ;
+      visual.calibrated = true;
+    }
+
+    const rawX = spriteX + visual.calibX;
+    const rawZ = spriteZ + visual.calibZ;
+
+    const minX = Math.min(motion.previousX, targetX);
+    const maxX = Math.max(motion.previousX, targetX);
+    const minZ = Math.min(motion.previousZ, targetZ);
+    const maxZ = Math.max(motion.previousZ, targetZ);
+
+    const clampedX = Math.min(maxX, Math.max(minX, rawX));
+    const clampedZ = Math.min(maxZ, Math.max(minZ, rawZ));
+
+    if (
+      Math.abs(clampedX - rawX) > LIVE_RECALIBRATE_DISTANCE ||
+      Math.abs(clampedZ - rawZ) > LIVE_RECALIBRATE_DISTANCE
+    ) {
+      // Mantem o que esta na tela e reancora o sprite nele.
+      const keepX = Math.min(maxX, Math.max(minX, visual.displayX));
+      const keepZ = Math.min(maxZ, Math.max(minZ, visual.displayZ));
+
+      visual.calibX = keepX - spriteX;
+      visual.calibZ = keepZ - spriteZ;
+      visual.displayX = keepX;
+      visual.displayZ = keepZ;
+
+      return;
+    }
+
+    visual.displayX = clampedX;
+    visual.displayZ = clampedZ;
+  }
+
+  /**
    * Cria ou atualiza o visual de uma entidade: quadro do sprite, posicao
-   * suavizada e animacao de caminhada. Devolve null se o sprite nao puder
-   * ser resolvido (o chamador decide o fallback).
+   * e animacao. Com `motion` (sprite vivo do jogo) tudo vem do GBA; sem
+   * ele, posicao suavizada e caminhada pelo relogio. Devolve null se o
+   * sprite nao puder ser resolvido (o chamador decide o fallback).
    */
   private updateSpriteVisual(
     visual: EntityVisual | null,
@@ -1341,9 +1571,20 @@ export class PlayerRenderer {
     targetX: number,
     targetZ: number,
     now: number,
+    motion: EntityMotion | null = null,
   ): EntityVisual | null {
     // ---- posicao ----
-    if (visual) {
+    if (visual && motion) {
+      visual.targetX = targetX;
+      visual.targetZ = targetZ;
+
+      this.applyLiveMotion(visual, motion, targetX, targetZ, now);
+    } else if (visual) {
+      // O tile pulou mais de um passo de uma vez (warp, porta, troca de
+      // mapa): vai direto em vez de deslizar ate la.
+      const jumped =
+        Math.hypot(targetX - visual.targetX, targetZ - visual.targetZ) > 1.5;
+
       visual.targetX = targetX;
       visual.targetZ = targetZ;
 
@@ -1353,6 +1594,7 @@ export class PlayerRenderer {
 
       if (
         !SMOOTH_ENTITY_MOVEMENT ||
+        jumped ||
         distance > ENTITY_SNAP_DISTANCE
       ) {
         visual.displayX = targetX;
@@ -1386,7 +1628,10 @@ export class PlayerRenderer {
     }
 
     // ---- quadro ----
+    // O do jogo quando ha sprite vivo (corrida, bike, pulo no passo
+    // certo); senao, o estimado pela direcao e pelo relogio.
     const frame =
+      motion?.live.frame ??
       this.overworldSprites.getFrame(
         graphicsId,
         direction,
@@ -1437,7 +1682,17 @@ export class PlayerRenderer {
         targetZ,
         moving: false,
         walkStartedAt: now,
+        calibX: 0,
+        calibZ: 0,
+        calibrated: false,
+        lastSpriteX: Number.NaN,
+        lastSpriteY: Number.NaN,
+        stillSince: now,
       };
+
+      if (motion) {
+        this.applyLiveMotion(visual, motion, targetX, targetZ, now);
+      }
     } else {
       if (visual.frameKey !== frame.key) {
         (visual.mesh.material as THREE.MeshBasicMaterial).map = texture;
@@ -1453,10 +1708,15 @@ export class PlayerRenderer {
 
     visual.moving = moving;
 
-    // Pes no chao, no centro do tile.
+    if (!motion) {
+      // Sem sprite vivo a calibracao antiga nao vale mais.
+      visual.calibrated = false;
+    }
+
+    // Pes no chao, no centro do tile; acima dele so durante um pulo.
     visual.mesh.position.set(
       visual.displayX,
-      0,
+      (motion?.live.lift ?? 0) / PIXELS_PER_TILE,
       visual.displayZ,
     );
 
@@ -1789,10 +2049,10 @@ export class PlayerRenderer {
     const meshes =
       visual.voxelGroup.children as THREE.Mesh[];
 
-    // As duas malhas compartilham a geometria.
-    meshes[0]?.geometry.dispose();
-
+    // As malhas da dobra compartilham os atributos; dispose em cada
+    // geometria e idempotente para os buffers ja liberados.
     for (const mesh of meshes) {
+      mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
     }
 
@@ -1804,6 +2064,7 @@ export class PlayerRenderer {
     blocks: readonly { metatileId: number; collision: number; elevation: number }[],
     baseTexture: THREE.DataTexture,
     overlayTexture: THREE.DataTexture,
+    hasForeground: (metatileId: number) => boolean,
   ): THREE.Group | undefined {
     // Quem ganha volume: ver computeFoldMask (grupos impassaveis que
     // encostam em chao andavel; pedras no mar ficam planas).
@@ -1848,46 +2109,102 @@ export class PlayerRenderer {
       this.paddingDirty = true;
     }
 
+    // Cercas norte-sul ficam no chao (ver dropThinColumns).
+    dropThinColumns(map.width, map.height, mask);
+
+    // Topos de objetos de 2 tiles (telhado de cima, copa, caixa de
+    // correio): passaveis, com camada de cima, logo ao norte do volume.
+    extendFoldMaskUpward(
+      map.width,
+      map.height,
+      mask,
+      (x, y) => {
+        const block = blocks[y * map.width + x];
+
+        return (
+          !!block &&
+          block.collision === 0 &&
+          block.elevation !== 1 &&
+          hasForeground(block.metatileId)
+        );
+      },
+    );
+
+    // Predios = grupos com volume que tem porta (warp do cabecalho do
+    // mapa). Ganham fachada unica e telhado com caimento.
+    let buildingIds: Int32Array | null = null;
+
+    try {
+      buildingIds =
+        computeBuildingIds(
+          map.width,
+          map.height,
+          mask,
+          this.mapCatalog.readWarps(this.romBytes, map.mapHeaderAddress),
+        );
+    } catch (error) {
+      console.warn('[voxel] warps ilegiveis; sem predios neste mapa:', error);
+    }
+
     const data =
       buildFoldGeometry(
         map.width,
         map.height,
-        (x, y) => mask[y * map.width + x] === 1,
+        (x, y) => mask[y * map.width + x] !== 0,
         VOXEL_MAX_WALL_ROWS,
+        {
+          buildingAt: (x, y) => buildingIds?.[y * map.width + x] ?? 0,
+          overlayOnly: (x, y) => mask[y * map.width + x] === FOLD_OVERHANG,
+        },
       );
 
     if (data.quadCount === 0) {
       return undefined;
     }
 
-    const geometry =
+    const position =
+      new THREE.BufferAttribute(data.positions, 3);
+
+    const uv =
+      new THREE.BufferAttribute(data.uvs, 2);
+
+    // Sombreamento por face (topo claro, laterais mais escuras).
+    const color =
+      new THREE.BufferAttribute(shadeToLinear(data.colors), 3);
+
+    const index =
+      new THREE.BufferAttribute(data.indices, 1);
+
+    // Duas geometrias sobre os MESMOS atributos: a camada de baixo desenha
+    // so os quads de duas camadas; a de cima desenha todos (inclusive os
+    // topos de objeto, cuja camada de baixo e chao).
+    const baseGeometry =
       new THREE.BufferGeometry();
 
-    geometry.setAttribute(
-      'position',
-      new THREE.BufferAttribute(data.positions, 3),
-    );
+    const overlayGeometry =
+      new THREE.BufferGeometry();
 
-    geometry.setAttribute(
-      'uv',
-      new THREE.BufferAttribute(data.uvs, 2),
-    );
+    for (const geometry of [baseGeometry, overlayGeometry]) {
+      geometry.setAttribute('position', position);
+      geometry.setAttribute('uv', uv);
+      geometry.setAttribute('color', color);
+      geometry.setIndex(index);
+    }
 
-    geometry.setIndex(
-      new THREE.BufferAttribute(data.indices, 1),
-    );
+    baseGeometry.setDrawRange(0, data.fullIndexCount);
 
     const group =
       new THREE.Group();
 
     const base =
       new THREE.Mesh(
-        geometry,
+        baseGeometry,
         new THREE.MeshBasicMaterial({
           map: baseTexture,
           transparent: true,
           alphaTest: 0.5,
           side: THREE.DoubleSide,
+          vertexColors: true,
         }),
       );
 
@@ -1896,12 +2213,13 @@ export class PlayerRenderer {
 
     const overlay =
       new THREE.Mesh(
-        geometry,
+        overlayGeometry,
         new THREE.MeshBasicMaterial({
           map: overlayTexture,
           transparent: true,
           alphaTest: 0.5,
           side: THREE.DoubleSide,
+          vertexColors: true,
           depthWrite: false,
           polygonOffset: true,
           polygonOffsetFactor: -1,
@@ -1913,6 +2231,48 @@ export class PlayerRenderer {
 
     group.add(base);
     group.add(overlay);
+
+    // Remendo de chao debaixo do volume (ver buildGroundPatch).
+    const ground =
+      findGroundCell(
+        map.width,
+        map.height,
+        mask,
+        (x, y) => blocks[y * map.width + x],
+      );
+
+    if (ground) {
+      const patch =
+        buildGroundPatch(map.width, map.height, mask, ground);
+
+      const patchGeometry =
+        new THREE.BufferGeometry();
+
+      patchGeometry.setAttribute(
+        'position',
+        new THREE.BufferAttribute(patch.positions, 3),
+      );
+
+      patchGeometry.setAttribute(
+        'uv',
+        new THREE.BufferAttribute(patch.uvs, 2),
+      );
+
+      patchGeometry.setIndex(
+        new THREE.BufferAttribute(patch.indices, 1),
+      );
+
+      const patchMesh =
+        new THREE.Mesh(
+          patchGeometry,
+          new THREE.MeshBasicMaterial({
+            map: baseTexture,
+            side: THREE.DoubleSide,
+          }),
+        );
+
+      group.add(patchMesh);
+    }
 
     return group;
   }
@@ -2324,6 +2684,25 @@ export class PlayerRenderer {
             renderData.blocks,
             baseTexture,
             overlayTexture,
+            (metatileId) => {
+              const graphics =
+                renderData.graphics.get(metatileId);
+
+              if (!graphics) {
+                return false;
+              }
+
+              const pixels =
+                graphics.foregroundPixels;
+
+              for (let alpha = 3; alpha < pixels.length; alpha += 4) {
+                if (pixels[alpha] > 127) {
+                  return true;
+                }
+              }
+
+              return false;
+            },
           )
         : undefined;
 
@@ -2471,6 +2850,18 @@ export class PlayerRenderer {
       );
 
     if (playerObject) {
+      const now =
+        performance.now();
+
+      // O sprite do jogador e a ancora para achar gSprites na RAM.
+      if (playerObject.spriteId !== undefined) {
+        this.liveSprites.locate(
+          playerObject.spriteId,
+          playerObject.graphicsId ?? 0,
+          now,
+        );
+      }
+
       this.playerVisual =
         this.updateSpriteVisual(
           this.playerVisual,
@@ -2478,7 +2869,8 @@ export class PlayerRenderer {
           state.player.direction,
           target.x,
           target.z,
-          performance.now(),
+          now,
+          this.readEntityMotion(state, playerObject),
         );
     }
 
