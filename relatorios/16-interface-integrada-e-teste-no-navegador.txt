@@ -83,3 +83,18 @@ require para o seu).
 ================================================================================
 FIM DO RELATORIO 16
 ================================================================================
+
+ADENDO - DEPOIS DO COMMIT 8cd1d2f
+--------------------------------------------------------------------------------
+  - Animacao de tiles confirmada no jogo real: "primeiro quadro aplicado:
+    12 tiles mudaram, 104 celulas recompostas" (FireRed, Cinnabar).
+  - Linha na emenda Cinnabar/Route 21: fresta de 1 pixel com a cor de fundo
+    (arestas comuns nao fecham exatamente apos as transformacoes). Cada
+    plano de mapa ganhou margem de 0,02 tile com UVs reescaladas (textura
+    continua alinhada; a margem repete o pixel da borda). Verificado:
+    nenhuma linha da captura com cor de fundo.
+  - Tela inteira exercitada no navegador abrindo a BOLSA pelo menu Start.
+    Sequencia de modos registrada: world -> windows (menu) -> full (bolsa)
+    -> windows (menu) -> world. Imagem: relatorios/imagens/ui-firered-bolsa.png
+  - Batalha continua nao exercitada no navegador (a bolsa usa a mesma
+    decisao de tela cheia).

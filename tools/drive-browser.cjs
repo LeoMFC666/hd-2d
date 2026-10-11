@@ -45,7 +45,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await shot('andou');
   await tap('Enter'); await sleep(1500);
   await shot('menu');
+  // BAG: terceira opcao do menu Start (FRLG e Emerald)
+  await tap('ArrowDown'); await sleep(400); await tap('ArrowDown'); await sleep(400);
+  await tap('KeyX'); await sleep(4000);
+  await shot('bolsa');
+  await tap('KeyZ'); await sleep(4000);
+  await shot('voltou');
   await tap('KeyZ'); await sleep(1500);
+  await shot('final');
   fs.writeFileSync(`${outPrefix}-console.txt`, logs.join('\n'));
   await browser.close();
 })().catch((e) => { console.error('FALHOU:', e.message); process.exit(1); });

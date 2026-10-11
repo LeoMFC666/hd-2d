@@ -12,6 +12,10 @@ import * as THREE from 'three';
 const MAP_PADDING_METATILES =
   40;
 
+// Sobra em volta do plano de cada mapa, em tiles (ver buildMapVisual).
+const MAP_SEAM_MARGIN =
+  0.02;
+
 // Altura do padding: logo abaixo do chao. Antes ficava em -0.4, e vista a
 // 42 graus essa queda deslocava o padding ~0.44 tile para tras da borda
 // do mapa - uma costura visivel. A precisao do z-buffer nessa distancia
@@ -2161,9 +2165,31 @@ export class PlayerRenderer {
 
     const geometry =
       new THREE.PlaneGeometry(
-        map.width,
-        map.height,
+        map.width + MAP_SEAM_MARGIN * 2,
+        map.height + MAP_SEAM_MARGIN * 2,
       );
+
+    // Margem contra a fresta de 1 pixel entre mapas vizinhos: as arestas
+    // em comum passam por transformacoes diferentes e nao fecham exatamente
+    // (vista no navegador entre Cinnabar e a Route 21). As UVs sao
+    // reescaladas para a textura continuar alinhada ao tile; a margem so
+    // repete o pixel da borda (ClampToEdge).
+    {
+      const uv =
+        geometry.getAttribute('uv');
+
+      for (let index = 0; index < uv.count; index++) {
+        uv.setXY(
+          index,
+          (uv.getX(index) * (map.width + MAP_SEAM_MARGIN * 2) - MAP_SEAM_MARGIN) /
+            map.width,
+          (uv.getY(index) * (map.height + MAP_SEAM_MARGIN * 2) - MAP_SEAM_MARGIN) /
+            map.height,
+        );
+      }
+
+      uv.needsUpdate = true;
+    }
 
     const baseMaterial =
       new THREE.MeshBasicMaterial({
