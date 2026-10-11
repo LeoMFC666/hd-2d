@@ -1,0 +1,156 @@
+================================================================================
+RELATORIO 02 - CORRECOES: CONEXAO DE MAPAS, CAMERA E CARGA DO EMERALD
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Base: c11ca2d -> b67d8d5
+Data: 2026-10-11
+================================================================================
+
+AVISO IMPORTANTE SOBRE ESTE RELATORIO
+--------------------------------------------------------------------------------
+Nem tudo que foi pedido pode ser entregue verificado. O que esta abaixo separa
+explicitamente:
+  [CORRIGIDO E VALIDADO]  - mudanca feita e comprovada com teste
+  [CORRIGIDO, NAO TESTADO EM EXECUCAO] - mudanca feita, logica revisada, mas
+                                         sem execucao real do emulador
+  [EM ABERTO]             - nao resolvido; hipotese inicial foi REFUTADA
+Nao houve teste manual no browser. O motivo esta na secao 5.
+
+
+1. PROBLEMA 1 - HACKROMS CARREGAM MAPAS MAS NAO CONECTAM   [EM ABERTO]
+--------------------------------------------------------------------------------
+Minha hipotese inicial era que MAP_GROUP_LENGTHS (tabela fixa com as contagens
+vanilla de mapas por grupo) truncava o catalogo em hackroms, derrubando as
+conexoes que apontassem para mapas adicionados.
+
+ESSA HIPOTESE FOI REFUTADA POR TESTE.
+
+Escrevi um harness que compila MapCatalog e roda direto contra os ROMs reais,
+localizando gMapGroups por varredura e medindo mapas e conexoes:
+
+  Pokemon - FireRed (USA, Europe) (Rev 1)   BPRE rev1
+    gMapGroups: 0x8352718
+    mapas validos: 425 | mapas com conexao: 62 | conexoes: 116
+
+  Pokemon Perfect Fire Red v5.5 ORIGINAL    BPRE rev0
+    gMapGroups: 0x83526a8
+    mapas validos: 425 | mapas com conexao: 62 | conexoes: 116
+
+  Pokemon - Emerald (USA, Europe)           BPEE rev0
+    gMapGroups: 0x8486578
+    mapas validos: 518 | mapas com conexao: 61 | conexoes: 134
+
+Conclusao: o Perfect Fire Red tem EXATAMENTE a mesma estrutura de mapas e as
+mesmas 116 conexoes do FireRed vanilla. A camada que le o ROM nao e a culpada -
+ela ja produz as conexoes corretas para o hackrom.
+
+Onde o problema deve estar, entao: na ancora vinda da memoria viva. O catalogo
+e montado a partir de um anchor (mapGroup/mapNumber/mapLayoutAddress) lido da
+RAM do emulador, e gMapGroups fica em endereco DIFERENTE no hackrom
+(0x83526a8 vs 0x8352718). Se a ancora resolve para o mapa errado, MapWorld.
+buildFrom parte de um mapa sem conexoes e nada se conecta - exatamente o
+sintoma relatado. Isso so da para confirmar executando o emulador.
+
+PROXIMO PASSO: instrumentar o anchor (logar mapGroup/mapNumber/layoutAddress
+resolvidos) rodando o hackrom e comparar com o vanilla.
+
+
+2. MELHORIAS FEITAS NA LEITURA DE MAPAS   [CORRIGIDO E VALIDADO]
+--------------------------------------------------------------------------------
+Mesmo nao sendo a causa do problema 1, estes eram bugs reais e foram corrigidos:
+
+2.1 Tamanhos de grupo agora derivados do ROM (MapCatalog.deriveGroupLengths)
+    Em vez de depender so da tabela vanilla, o catalogo varre o proprio ROM
+    validando a cadeia header -> layout -> (dimensoes, map data, tilesets).
+    VALIDACAO: a derivacao reproduziu a tabela vanilla do BPRE byte a byte
+    (5,123,60,66,4,6,8,10,6,8,20,10,8,2,10,4,2,2,2,1,1,2,2,3,2,3,2,1,1,1,1,
+     7,5,5,8,8,5,5,1,1,1,2,1 = 425 mapas), o que prova que o algoritmo esta
+    correto. No Emerald derivou 518 contra 516 da tabela (grupo 32: 3 em vez
+    de 1); o resultado nunca encolhe abaixo do vanilla, entao ROMs originais
+    mantem o comportamento anterior.
+
+2.2 Conexoes DIVE/EMERGE nao invalidam mais o mapa inteiro
+    Em readFireRedMapHeaderCandidate, os valores de direcao 5 e 6 (mergulho e
+    emersao, legitimos na Gen 3) caiam em `return null`, descartando o mapa
+    completo. Agora sao apenas puladas (`continue`).
+
+2.3 Limite de conexao deixou de usar contagens vanilla
+    readConnections comparava o alvo com MAP_GROUP_LENGTHS e descartava
+    silenciosamente qualquer conexao fora da contagem original. Trocado por
+    limites absolutos de sanidade (grupo < 64, mapa < 256). Alvos inexistentes
+    continuam sendo filtrados por MapWorld, que resolve cada conexao contra o
+    catalogo - a checagem antiga era redundante e hostil a hackroms.
+
+
+3. PROBLEMA 2 - ANIMACOES INDESEJADAS   [CORRIGIDO, NAO TESTADO EM EXECUCAO]
+--------------------------------------------------------------------------------
+3.1 Balanco da camera ao mover o personagem  (PlayerRenderer.updateCamera)
+    CAUSA: a camera usava interpolacao exponencial em direcao ao alvo:
+       camera.position.x += (alvo - camera.position.x) * 0.12;   (e y, z)
+    Com fator 0.12 por frame a camera nunca alcanca o alvo imediatamente -
+    ela escorrega atras do personagem a cada passo. Era esse o "mexer um
+    pouco" relatado.
+    CORRECAO: atribuicao direta da posicao alvo. A camera passa a acompanhar
+    o jogador de forma rigida.
+
+3.2 Animacao ao sair de uma rota  (PlayerRenderer, troca de mapa)
+    CAUSA: a cada mapa ainda nao posicionado o codigo executava
+       buildQueue.length = 0;
+       queuedMaps.clear();
+       mapWorld.clearPositions();
+    ou seja, DESCARTAVA todo o mundo ja montado e reconstruia tudo do zero,
+    mapa a mapa, pela fila de construcao. A "animacao" era essa varredura de
+    reconstrucao aparecendo na tela.
+    CORRECAO: extraido para rebuildWorldAround(), que acumula posicoes em vez
+    de limpar. Mapas ja posicionados permanecem; so os novos entram na fila.
+
+
+4. PROBLEMA 3 - EMERALD LENTO E SEM RENDERIZAR   [PARCIAL]
+--------------------------------------------------------------------------------
+4.1 Mapa em branco ate sair e voltar   [CORRIGIDO, NAO TESTADO EM EXECUCAO]
+    CAUSA: em updateActiveWorld, quando mapKey === activeMapKey o codigo
+    retornava cedo sem nunca posicionar o mundo. Na primeira avaliacao o
+    catalogo ainda pode estar vazio; activeMapKey ja fica definido, o mundo
+    nunca e posicionado, e so uma troca de mapa (que cai no caminho completo)
+    forcava a reconstrucao. Dai o "so renderiza depois de sair e voltar".
+    CORRECAO: o ramo de retorno antecipado agora detecta mundo nao posicionado
+    e chama rebuildWorldAround() assim que o catalogo fica disponivel.
+    Alem disso, a ancoragem na origem para mapa isolado deixou de ser
+    exclusiva da familia FireRed e passou a valer tambem para o Emerald.
+
+4.2 Lentidao   [CAUSA IDENTIFICADA, NAO CORRIGIDA]
+    MapCatalog.findMapGroupsAddress faz busca por forca bruta O(n^2) sobre o
+    ROM inteiro: varre ~4 milhoes de offsets e, a cada acerto, dispara outra
+    varredura completa de ~4 milhoes. Em um ROM de 16 MB isso trava a thread
+    principal, o que explica a lentidao na carga e o fato de o catalogo nao
+    estar pronto na primeira avaliacao (ver 4.1).
+    NAO corrigido neste commit. A solucao e indexar os ponteiros em um unico
+    passe (Map de valor -> offsets) e consultar o indice, derrubando para
+    O(n). Fica para o proximo relatorio por ser uma mudanca de porte.
+
+
+5. POR QUE NAO HOUVE TESTE MANUAL NO BROWSER
+--------------------------------------------------------------------------------
+Nao foi possivel atender esse pedido nesta sessao:
+  - O projeto roda em um container na nuvem. O dev server do Vite sobe no
+    localhost DESSE container.
+  - Os navegadores que consigo controlar rodam na maquina do usuario e nao
+    alcancam o localhost do container.
+  - Nao ha navegador instalado no container, e a tentativa de instalar um
+    headless (playwright) expirou por limite de tempo no registro npm.
+Portanto nenhuma das correcoes 3.1, 3.2 e 4.1 foi observada rodando. Elas sao
+corretas por leitura do codigo e passam na verificacao de tipos, mas o teste
+real precisa ser feito manualmente.
+
+O que FOI testado de verdade: a camada de leitura de ROM (secoes 1 e 2), via
+harness em Node executado contra os tres ROMs reais do projeto.
+
+
+6. VERIFICACOES EXECUTADAS
+--------------------------------------------------------------------------------
+  npx tsc --noEmit            -> exit 0, sem erros
+  harness de grupos de mapas  -> derivacao bate com a tabela vanilla do BPRE
+  harness de conexoes         -> 3 ROMs parseados, contagens acima
+
+================================================================================
+FIM DO RELATORIO 02
+================================================================================

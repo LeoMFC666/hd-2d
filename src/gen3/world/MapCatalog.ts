@@ -61,6 +61,21 @@ const MAX_MAP_DIMENSION =
 const MAX_CONNECTION_COUNT =
   64;
 
+// Limites absolutos de sanidade para validar referencias de conexao.
+// Nao usamos mais as contagens vanilla (MAP_GROUP_LENGTHS) para isso:
+// hackroms expandem grupos de mapas e qualquer limite fixo derrubaria
+// conexoes legitimas. Referencias invalidas sao filtradas naturalmente
+// por MapWorld, que so posiciona alvos presentes no catalogo.
+const MAX_MAP_GROUP_COUNT =
+  64;
+
+const MAX_MAPS_PER_GROUP =
+  256;
+
+// Teto de varredura ao derivar o tamanho de um grupo direto do ROM.
+const MAX_GROUP_SCAN =
+  MAX_MAPS_PER_GROUP;
+
 const MAP_DIRECTION_BY_VALUE:
   Record<
     number,
@@ -493,17 +508,27 @@ export class MapCatalog {
       return 0;
     }
 
+    // Tamanhos derivados do proprio ROM. Em ROMs originais coincidem com
+    // os valores vanilla; em hackroms revelam os mapas adicionados, que
+    // antes ficavam fora do catalogo e quebravam as conexoes.
+    const effectiveGroupLengths =
+      this.deriveGroupLengths(
+        romBytes,
+        mapGroupsAddress,
+        groupLengths,
+      );
+
     let count =
       0;
 
     for (
       let mapGroup = 0;
       mapGroup <
-        groupLengths.length;
+        effectiveGroupLengths.length;
       mapGroup++
     ) {
       const currentGroupLength =
-        groupLengths[
+        effectiveGroupLengths[
           mapGroup
         ];
 
@@ -662,7 +687,6 @@ export class MapCatalog {
           this.readConnections(
             romBytes,
             mapHeaderAddress,
-            groupLengths,
           );
 
         this.register({
@@ -756,17 +780,27 @@ export class MapCatalog {
       return 0;
     }
 
+    // Tamanhos derivados do proprio ROM. Em ROMs originais coincidem com
+    // os valores vanilla; em hackroms revelam os mapas adicionados, que
+    // antes ficavam fora do catalogo e quebravam as conexoes.
+    const effectiveGroupLengths =
+      this.deriveGroupLengths(
+        romBytes,
+        mapGroupsAddress,
+        groupLengths,
+      );
+
     let count =
       0;
 
     for (
       let mapGroup = 0;
       mapGroup <
-        groupLengths.length;
+        effectiveGroupLengths.length;
       mapGroup++
     ) {
       const currentGroupLength =
-        groupLengths[
+        effectiveGroupLengths[
           mapGroup
         ];
 
@@ -920,7 +954,6 @@ export class MapCatalog {
           this.readConnections(
             romBytes,
             mapHeaderAddress,
-            groupLengths,
           );
 
         this.register({
@@ -1316,8 +1349,11 @@ export class MapCatalog {
             this.readU8(romBytes, connectionOffset)
           ];
 
+          // Valores 5 e 6 sao DIVE/EMERGE: conexoes legitimas que este
+          // renderizador nao posiciona no plano. Pular apenas elas, em vez
+          // de descartar o mapa inteiro.
           if (!direction) {
-            return null;
+            continue;
           }
 
           const mapGroup = this.readU8(
@@ -1330,10 +1366,12 @@ export class MapCatalog {
           );
 
           if (
-            mapGroup >= groupLengths.length ||
-            mapNumber >= groupLengths[mapGroup]
+            mapGroup < 0 ||
+            mapGroup >= MAX_MAP_GROUP_COUNT ||
+            mapNumber < 0 ||
+            mapNumber >= MAX_MAPS_PER_GROUP
           ) {
-            return null;
+            continue;
           }
 
           connections.push({
@@ -1617,8 +1655,6 @@ export class MapCatalog {
   private readConnections(
     romBytes: Uint8Array,
     mapHeaderAddress: number,
-    groupLengths:
-      readonly number[],
   ): MapConnection[] {
     const headerOffset =
       mapHeaderAddress -
@@ -1734,11 +1770,16 @@ export class MapCatalog {
           connectionOffset + 9,
         );
 
+      // Antes isto comparava com as contagens vanilla e descartava toda
+      // conexao que apontasse para mapa adicionado por hackrom - a causa
+      // de "os mapas carregam mas nao conectam". Agora so aplicamos
+      // limites absolutos de sanidade; alvos inexistentes sao ignorados
+      // depois por MapWorld, que resolve cada conexao contra o catalogo.
       if (
         mapGroup <
           0 ||
         mapGroup >=
-          groupLengths.length
+          MAX_MAP_GROUP_COUNT
       ) {
         continue;
       }
@@ -1747,9 +1788,7 @@ export class MapCatalog {
         mapNumber <
           0 ||
         mapNumber >=
-          groupLengths[
-            mapGroup
-          ]
+          MAX_MAPS_PER_GROUP
       ) {
         continue;
       }
@@ -1774,6 +1813,276 @@ export class MapCatalog {
       value <=
         MAX_MAP_DIMENSION
     );
+  }
+
+  /**
+   * Valida se um endereco aponta para um cabecalho de mapa Gen 3 real,
+   * seguindo a cadeia header -> layout -> (dimensoes, map data, tilesets).
+   * Dados aleatorios praticamente nunca passam nessa cadeia inteira, o que
+   * torna a checagem confiavel para varrer grupos de tamanho desconhecido.
+   */
+  private isPlausibleMapHeader(
+    romBytes: Uint8Array,
+    mapHeaderAddress: number,
+  ): boolean {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapHeaderAddress,
+        MAP_HEADER_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const headerOffset =
+      mapHeaderAddress - GBA_ROM_BASE;
+
+    const mapLayoutAddress =
+      this.readU32(
+        romBytes,
+        headerOffset + MAP_HEADER_LAYOUT_OFFSET,
+      );
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapLayoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return false;
+    }
+
+    const layoutOffset =
+      mapLayoutAddress - GBA_ROM_BASE;
+
+    const width =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_WIDTH_OFFSET,
+      );
+
+    const height =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_HEIGHT_OFFSET,
+      );
+
+    if (
+      !this.isValidMapDimension(width) ||
+      !this.isValidMapDimension(height)
+    ) {
+      return false;
+    }
+
+    const mapDataAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_MAP_OFFSET,
+      );
+
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapDataAddress,
+        width * height * 2,
+      )
+    ) {
+      return false;
+    }
+
+    const primaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_PRIMARY_TILESET_OFFSET,
+      );
+
+    const secondaryTilesetAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_SECONDARY_TILESET_OFFSET,
+      );
+
+    return (
+      this.isValidRomPointer(
+        romBytes,
+        primaryTilesetAddress,
+        0x04,
+      ) &&
+      this.isValidRomPointer(
+        romBytes,
+        secondaryTilesetAddress,
+        0x04,
+      )
+    );
+  }
+
+  /**
+   * Deriva a quantidade de grupos de mapas lendo o proprio ROM.
+   * Em Gen 3 os arrays de cada grupo costumam vir logo apos a tabela
+   * gMapGroups, entao a distancia ate o primeiro ponteiro revela quantas
+   * entradas a tabela tem. Cai no valor vanilla quando o layout nao bate.
+   */
+  private deriveGroupCount(
+    romBytes: Uint8Array,
+    mapGroupsAddress: number,
+    fallbackCount: number,
+  ): number {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        mapGroupsAddress,
+        0x04,
+      )
+    ) {
+      return fallbackCount;
+    }
+
+    const firstGroupAddress =
+      this.readU32(
+        romBytes,
+        mapGroupsAddress - GBA_ROM_BASE,
+      );
+
+    if (firstGroupAddress <= mapGroupsAddress) {
+      return fallbackCount;
+    }
+
+    const implied =
+      (firstGroupAddress - mapGroupsAddress) / 4;
+
+    if (
+      !Number.isInteger(implied) ||
+      implied < fallbackCount ||
+      implied > MAX_MAP_GROUP_COUNT
+    ) {
+      return fallbackCount;
+    }
+
+    return implied;
+  }
+
+  /**
+   * Deriva o tamanho de cada grupo de mapas varrendo o ROM, em vez de
+   * confiar nas contagens vanilla. Esta e a correcao central para hackroms:
+   * eles mantem o gameCode original (ex. BPRE) mas adicionam mapas aos
+   * grupos, de modo que qualquer tabela fixa trunca o catalogo e descarta
+   * as conexoes que apontam para os mapas extras.
+   *
+   * O resultado nunca encolhe abaixo do valor vanilla, entao ROMs originais
+   * mantem exatamente o comportamento anterior.
+   */
+  private deriveGroupLengths(
+    romBytes: Uint8Array,
+    mapGroupsAddress: number,
+    fallbackGroupLengths: readonly number[],
+  ): number[] {
+    const groupCount =
+      this.deriveGroupCount(
+        romBytes,
+        mapGroupsAddress,
+        fallbackGroupLengths.length,
+      );
+
+    const groupAddresses: number[] = [];
+
+    for (
+      let groupIndex = 0;
+      groupIndex < groupCount;
+      groupIndex++
+    ) {
+      groupAddresses.push(
+        this.readU32(
+          romBytes,
+          (mapGroupsAddress - GBA_ROM_BASE) +
+            groupIndex * 4,
+        ),
+      );
+    }
+
+    // Inicio de outro grupo funciona como limite: parar ali evita que a
+    // varredura de um grupo invada o array do grupo seguinte.
+    const groupBoundaries =
+      new Set<number>(
+        groupAddresses.filter(
+          address => address >= GBA_ROM_BASE,
+        ),
+      );
+
+    const lengths: number[] = [];
+
+    for (
+      let groupIndex = 0;
+      groupIndex < groupCount;
+      groupIndex++
+    ) {
+      const fallbackLength =
+        groupIndex < fallbackGroupLengths.length
+          ? fallbackGroupLengths[groupIndex]
+          : 0;
+
+      const groupAddress =
+        groupAddresses[groupIndex];
+
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          groupAddress,
+          0x04,
+        )
+      ) {
+        lengths.push(fallbackLength);
+        continue;
+      }
+
+      let scanned = 0;
+
+      while (scanned < MAX_GROUP_SCAN) {
+        const entryAddress =
+          groupAddress + scanned * 4;
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            entryAddress,
+            0x04,
+          )
+        ) {
+          break;
+        }
+
+        if (
+          scanned > 0 &&
+          groupBoundaries.has(entryAddress)
+        ) {
+          break;
+        }
+
+        const mapHeaderAddress =
+          this.readU32(
+            romBytes,
+            entryAddress - GBA_ROM_BASE,
+          );
+
+        if (
+          !this.isPlausibleMapHeader(
+            romBytes,
+            mapHeaderAddress,
+          )
+        ) {
+          break;
+        }
+
+        scanned++;
+      }
+
+      lengths.push(
+        Math.max(scanned, fallbackLength),
+      );
+    }
+
+    return lengths;
   }
 
   private isValidRomPointer(

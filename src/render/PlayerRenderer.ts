@@ -883,6 +883,44 @@ export class PlayerRenderer {
     );
   }
 
+  /**
+   * Posiciona o mundo em torno do mapa atual.
+   *
+   * Importante: NAO descarta mais a fila de construcao nem as posicoes ja
+   * calculadas. A versao anterior fazia
+   *   buildQueue.length = 0; queuedMaps.clear(); mapWorld.clearPositions();
+   * a cada mapa novo, o que derrubava todos os mapas ja montados e os
+   * reconstruia um a um - era essa varredura visivel que aparecia ao sair
+   * de uma rota. Agora as posicoes sao acumuladas: mapas ja posicionados
+   * permanecem no lugar e apenas os novos entram na fila.
+   */
+  private rebuildWorldAround(
+    state: GameState,
+  ): void {
+    this.mapWorld.buildFrom(
+      state.map.mapGroup,
+      state.map.mapNumber,
+    );
+
+    if (
+      !this.mapWorld.hasPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      )
+    ) {
+      // Mapa isolado (sem conexoes resolviveis): ancora na origem para
+      // que ao menos ele apareca, em vez de ficar a cena vazia.
+      this.mapWorld.setWorldPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+        {
+          x: 0,
+          y: 0,
+        },
+      );
+    }
+  }
+
   private updateActiveWorld(
     state: GameState,
   ): void {
@@ -920,6 +958,25 @@ export class PlayerRenderer {
         );
       }
 
+      // Auto-recuperacao do primeiro carregamento: na primeira avaliacao o
+      // catalogo ainda pode estar vazio (ele e montado a partir do ROM com
+      // a varredura inicial). Nesse caso activeMapKey ja ficou definido,
+      // porem o mundo nunca foi posicionado - e o mapa so aparecia quando o
+      // jogador trocava de mapa e forcava a reconstrucao. Aqui posicionamos
+      // o mundo assim que o catalogo fica disponivel, sem precisar sair e
+      // voltar da rota.
+      if (
+        activeMap &&
+        !this.mapWorld.hasPosition(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        )
+      ) {
+        this.rebuildWorldAround(
+          state,
+        );
+      }
+
       return;
     }
 
@@ -935,34 +992,9 @@ export class PlayerRenderer {
     if (
       !alreadyPositioned
     ) {
-      this.buildQueue.length =
-        0;
-
-      this.queuedMaps.clear();
-
-      this.mapWorld.clearPositions();
-
-      this.mapWorld.buildFrom(
-        state.map.mapGroup,
-        state.map.mapNumber,
+      this.rebuildWorldAround(
+        state,
       );
-
-      if (
-        this.isFireRedFamily(state) &&
-        !this.mapWorld.hasPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        )
-      ) {
-        this.mapWorld.setWorldPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-          {
-            x: 0,
-            y: 0,
-          },
-        );
-      }
     }
 
     const maps =
@@ -1687,23 +1719,18 @@ export class PlayerRenderer {
     const cameraTargetZ =
       targetZ + 11;
 
-    this.camera.position.x +=
-      (
-        cameraTargetX -
-        this.camera.position.x
-      ) * 0.12;
+    // A camera acompanha o jogador de forma rigida. Antes havia uma
+    // interpolacao exponencial (fator 0.12 por frame) que fazia a camera
+    // "escorregar" atras do personagem a cada passo - o balanco que
+    // aparecia sempre que o jogador se movia.
+    this.camera.position.x =
+      cameraTargetX;
 
-    this.camera.position.y +=
-      (
-        cameraTargetY -
-        this.camera.position.y
-      ) * 0.12;
+    this.camera.position.y =
+      cameraTargetY;
 
-    this.camera.position.z +=
-      (
-        cameraTargetZ -
-        this.camera.position.z
-      ) * 0.12;
+    this.camera.position.z =
+      cameraTargetZ;
 
     this.camera.lookAt(
       targetX,
