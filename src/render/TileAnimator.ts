@@ -240,27 +240,8 @@ export class TileAnimator {
     if (!this.vramReported) {
       this.vramReported = true;
 
-      let nonZero = 0;
-
-      for (
-        let index = 0;
-        index < tileBytes.length;
-        index++
-      ) {
-        if (tileBytes[index] !== 0) {
-          nonZero++;
-        }
-      }
-
-      console.log(
-        '[anim] VRAM lida:',
-        tileBytes.length,
-        'bytes,',
-        nonZero,
-        'nao-zero',
-        nonZero === 0
-          ? '-- faixa de VRAM provavelmente errada ou leitura indisponivel'
-          : '',
+      this.probeMemory(
+        tileBytes,
       );
     }
 
@@ -300,6 +281,89 @@ export class TileAnimator {
     }
 
     this.texture.needsUpdate = true;
+  }
+
+  /**
+   * Sonda de diagnostico, uma vez por mapa.
+   *
+   * A leitura em 0x06003400 voltou inteiramente zerada, mas as leituras de
+   * ROM e EWRAM funcionam (o estado do jogo depende delas). Isso aponta
+   * para o ENDERECO, nao para a leitura em si: os tiles do mapa podem
+   * estar em outra base de caracteres da VRAM. Em vez de adivinhar, esta
+   * sonda varre a VRAM inteira em blocos de 4 KB e mostra onde ha dado,
+   * alem de conferir paleta e EWRAM como controle.
+   */
+  private probeMemory(
+    tileBytes: Uint8Array,
+  ): void {
+    const countNonZero =
+      (bytes: Uint8Array): number => {
+        let total = 0;
+
+        for (
+          let index = 0;
+          index < bytes.length;
+          index++
+        ) {
+          if (bytes[index] !== 0) {
+            total++;
+          }
+        }
+
+        return total;
+      };
+
+    console.log(
+      '[anim] faixa usada 0x06003400:',
+      countNonZero(tileBytes),
+      'de',
+      tileBytes.length,
+      'nao-zero',
+    );
+
+    // Controle: se estes vierem zerados, o problema e a leitura, nao o
+    // endereco.
+    console.log(
+      '[anim] controle EWRAM 0x02000000:',
+      countNonZero(
+        this.memoryReader.readRange(0x02000000, 256),
+      ),
+      '/256  | paleta 0x05000000:',
+      countNonZero(
+        this.memoryReader.readRange(GBA_PALETTE_RAM_BASE, 512),
+      ),
+      '/512',
+    );
+
+    // Mapa da VRAM: 96 KB em blocos de 4 KB.
+    const chunks: string[] = [];
+
+    for (
+      let offset = 0;
+      offset < 0x18000;
+      offset += 0x1000
+    ) {
+      const bytes =
+        this.memoryReader.readRange(
+          GBA_VRAM_BASE + offset,
+          256,
+        );
+
+      const nonZero =
+        countNonZero(bytes);
+
+      chunks.push(
+        '0x' +
+          (GBA_VRAM_BASE + offset).toString(16) +
+          ':' +
+          nonZero,
+      );
+    }
+
+    console.log(
+      '[anim] mapa da VRAM (amostra de 256B por bloco de 4KB):',
+      chunks.join('  '),
+    );
   }
 
   /**
