@@ -20,11 +20,14 @@ const GBA_ROM_BASE_ADDRESS =
 const METATILE_ID_MASK =
   0x03ff;
 
+// Teto alto de proposito: com a espera por ancora plausivel acima, uma
+// tentativa so e gasta quando ha dado real para tentar. Parar cedo foi o
+// que deixou a Perfect Fire Red sem catalogo.
 const MAX_CATALOG_BUILD_ATTEMPTS =
-  8;
+  60;
 
 const CATALOG_BUILD_RETRY_MS =
-  500;
+  250;
 
 import type {
   Gen3StateAdapter,
@@ -377,9 +380,22 @@ export class PlayerRenderer {
       return;
     }
 
+    // Nao gastar tentativa enquanto a ancora nao for plausivel.
+    //
+    // Era aqui que a Perfect Fire Red voltava a quebrar: logo apos
+    // carregar, a RAM do emulador ainda nao tem dado valido, e cada
+    // avaliacao consumia uma das 8 tentativas. Com a Perfect demorando
+    // mais para estabilizar, as tentativas acabavam ANTES de a RAM ficar
+    // boa, o catalogo nunca era montado e caiam junto conexao de mapas e
+    // Cinnabar. Carregar o Emerald antes mascarava isso porque a segunda
+    // carga estabiliza mais rapido.
+    //
+    // Um ponteiro de layout fora da faixa do ROM e sinal claro de RAM
+    // ainda fria: esperar nao conta como tentativa.
     if (
-      state.map
-        .mapLayoutAddress === 0
+      state.map.mapLayoutAddress < GBA_ROM_BASE_ADDRESS ||
+      state.map.mapLayoutAddress - GBA_ROM_BASE_ADDRESS >=
+        this.romBytes.length
     ) {
       return;
     }
@@ -1558,6 +1574,7 @@ export class PlayerRenderer {
       activeMap,
       visual.metatileIds,
       visual.baseTexture,
+      visual.overlayTexture,
     );
   }
 
@@ -2479,18 +2496,23 @@ export class PlayerRenderer {
       // seguintes - a animacao nunca chegava a ser registrada.
       // Aqui a tentativa se repete ate o visual existir; depois disso
       // setActiveMap sai de imediato, entao o custo e desprezivel.
-      this.syncTileAnimation(
-        this.createMapKey(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        ),
-        this.mapCatalog.get(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        ),
-      );
+      // A animacao so entra depois do mundo montado. Durante a montagem
+      // do catalogo ela nao disputa CPU - foi essa disputa que derrubou
+      // conexao de mapas e Cinnabar na primeira tentativa de animacao.
+      if (this.worldCatalogBuilt) {
+        this.syncTileAnimation(
+          this.createMapKey(
+            state.map.mapGroup,
+            state.map.mapNumber,
+          ),
+          this.mapCatalog.get(
+            state.map.mapGroup,
+            state.map.mapNumber,
+          ),
+        );
 
-      this.tileAnimator.update();
+        this.tileAnimator.update();
+      }
 
       this.renderer.render(
         this.scene,

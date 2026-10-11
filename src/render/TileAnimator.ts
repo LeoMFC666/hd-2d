@@ -101,6 +101,11 @@ interface AnimatedPosition {
   palette: number;
   hFlip: boolean;
   vFlip: boolean;
+
+  // Camada de baixo vai na textura base; a de cima, na overlay. Plantas e
+  // flores animam na camada DE CIMA - ignora-la era o motivo de so a agua
+  // animar.
+  overlay: boolean;
 }
 
 export class TileAnimator {
@@ -111,6 +116,10 @@ export class TileAnimator {
   private positions: AnimatedPosition[] = [];
 
   private texture: THREE.DataTexture | null = null;
+
+  private overlayTexture: THREE.DataTexture | null = null;
+
+  private overlayPixels: Uint8Array | null = null;
 
   // Buffer da PROPRIA textura (texture.image.data). Antes o animador
   // escrevia no array que PlayerRenderer usou para assar o mapa, mas
@@ -153,6 +162,7 @@ export class TileAnimator {
     map: MapDefinition,
     metatileIds: Uint16Array,
     texture: THREE.DataTexture,
+    overlayTexture: THREE.DataTexture,
   ): void {
     if (this.activeKey === key) {
       return;
@@ -163,6 +173,11 @@ export class TileAnimator {
 
     this.texturePixels =
       (texture.image as { data?: Uint8Array }).data ?? null;
+
+    this.overlayTexture = overlayTexture;
+
+    this.overlayPixels =
+      (overlayTexture.image as { data?: Uint8Array }).data ?? null;
     this.textureWidth = map.width * METATILE_PIXELS;
     this.lastTileSignature = '';
 
@@ -195,6 +210,8 @@ export class TileAnimator {
     this.activeKey = null;
     this.texture = null;
     this.texturePixels = null;
+    this.overlayTexture = null;
+    this.overlayPixels = null;
     this.positions = [];
     this.lastTileSignature = '';
   }
@@ -300,6 +317,10 @@ export class TileAnimator {
     }
 
     this.texture.needsUpdate = true;
+
+    if (this.overlayTexture) {
+      this.overlayTexture.needsUpdate = true;
+    }
   }
 
   /**
@@ -477,10 +498,10 @@ export class TileAnimator {
           continue;
         }
 
-        // Apenas a camada de baixo: subtiles 0 a 3.
+        // As 8 subtiles: 0-3 camada de baixo, 4-7 camada de cima.
         for (
           let subtile = 0;
-          subtile < 4;
+          subtile < 8;
           subtile++
         ) {
           const raw =
@@ -506,11 +527,14 @@ export class TileAnimator {
             return [];
           }
 
+          const positionInLayer =
+            subtile % 4;
+
           const columnInMetatile =
-            subtile % 2;
+            positionInLayer % 2;
 
           const rowInMetatile =
-            Math.floor(subtile / 2);
+            Math.floor(positionInLayer / 2);
 
           // Origem do subtile dentro do metatile, em pixels.
           const sourceX =
@@ -537,6 +561,7 @@ export class TileAnimator {
             palette: (raw >> 12) & 0x0f,
             hFlip: (raw & 0x0400) !== 0,
             vFlip: (raw & 0x0800) !== 0,
+            overlay: subtile >= 4,
           });
         }
       }
@@ -554,7 +579,9 @@ export class TileAnimator {
     paletteBytes: Uint8Array,
   ): void {
     const pixels =
-      this.texturePixels;
+      position.overlay
+        ? this.overlayPixels
+        : this.texturePixels;
 
     if (!pixels) {
       return;
@@ -606,6 +633,14 @@ export class TileAnimator {
           (sampleX & 1) === 0
             ? byte & 0x0f
             : (byte >> 4) & 0x0f;
+
+        // Indice 0 e transparente no GBA. Pintar a cor 0 por cima
+        // apagava o que ja estava assado ali - era o que deixava tiles
+        // "invisiveis" e comia a borda da agua. Agora o pixel original
+        // fica intacto.
+        if (colorIndex === 0) {
+          continue;
+        }
 
         const colorOffset =
           paletteOffset + colorIndex * 2;

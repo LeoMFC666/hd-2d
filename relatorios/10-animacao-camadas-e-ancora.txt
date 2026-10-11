@@ -1,0 +1,82 @@
+================================================================================
+RELATORIO 10 - ANIMACAO EM DUAS CAMADAS + ESPERA POR ANCORA PLAUSIVEL
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. SO A AGUA ANIMAVA; PLANTAS NAO
+--------------------------------------------------------------------------------
+CAUSA: no relatorio 09 eu limitei a animacao a camada de BAIXO do metatile
+(subtiles 0-3), e apresentei isso como decisao conservadora para evitar
+artefato de layerType. Foi uma escolha errada: agua fica na camada de baixo,
+mas plantas e flores animam na camada DE CIMA. Eu tinha excluido justamente
+metade do que voce queria ver.
+
+CORRECAO: as 8 subtiles sao varridas. A camada de baixo escreve na textura
+base, a de cima na overlay - as mesmas duas texturas que buildMapVisual
+produz.
+
+MEDICAO (150 mapas de cada ROM):
+  Emerald          : 64.218 posicoes na camada de baixo | 2.297 na de cima
+  Perfect Fire Red :  4.936 posicoes na camada de baixo |   126 na de cima
+
+2. TILES INVISIVEIS E BORDA DA AGUA SUMINDO
+--------------------------------------------------------------------------------
+CAUSA: eu pintava TODOS os pixels do tile, inclusive os de indice de cor 0.
+No GBA o indice 0 e transparente. Ao pinta-lo como cor solida, o animador
+apagava o que ja estava assado naquele pixel - borda da agua, contorno,
+o que estivesse por baixo. Dai tiles "invisiveis" e a borda sumindo.
+
+CORRECAO: indice 0 agora e pulado. O pixel original fica intacto. O
+animador so pode ADICIONAR pixel, nunca apagar.
+
+3. PERFECT FIRE RED SEM CONEXOES E COM A CINNABAR BETA, DE NOVO
+--------------------------------------------------------------------------------
+Este e o ponto mais serio, porque e reincidencia.
+
+CAUSA: ensureWorldCatalog gastava uma das 8 tentativas a cada avaliacao,
+inclusive quando a RAM do emulador ainda estava fria e a ancora era lixo.
+Eram 8 tentativas em 4 segundos. A Perfect demora mais para estabilizar que
+o vanilla, entao as tentativas acabavam ANTES de a RAM ficar valida: o
+catalogo nunca era montado, e com ele caem conexao de mapas e Cinnabar.
+Carregar o Emerald antes mascarava o problema porque a segunda carga
+estabiliza mais rapido.
+
+O limite de tentativas que eu introduzi no relatorio 03 resolveu o
+travamento, mas criou este: virou um prazo que a Perfect nao cumpria.
+
+CORRECAO, em duas partes:
+  a) Tentativa so e gasta quando ha dado real para tentar. Se o ponteiro de
+     layout da ancora esta fora da faixa do ROM, a RAM esta fria: espera,
+     sem consumir tentativa.
+  b) Com isso o teto pode ser alto sem risco: 60 tentativas a 250ms.
+
+4. ANIMACAO NAO COMPETE MAIS COM A INICIALIZACAO
+--------------------------------------------------------------------------------
+O animador so e acionado depois de worldCatalogBuilt. Durante a montagem do
+catalogo ele nao roda nem registra nada. Foi a disputa por CPU nessa janela
+que derrubou conexao de mapas e Cinnabar na primeira tentativa de animacao
+(relatorio 09, secao 2.2); agora a janela esta protegida por construcao.
+
+5. VERIFICACAO
+--------------------------------------------------------------------------------
+Harness sobre os ROMs reais, 150 mapas de cada:
+  paletas do ROM lidas com sucesso: 150/150 nos dois jogos
+  coordenadas de destino fora da textura: 0 nos dois jogos
+  npx tsc --noEmit -> exit 0
+
+6. RESSALVA HONESTA
+--------------------------------------------------------------------------------
+O mapeamento "subtiles 0-3 = textura base, 4-7 = overlay" e uma
+aproximacao. A composicao real das camadas depende do layerType do
+metatile, que o Gen3StateAdapter aplica ao assar o mapa e que eu nao
+replico aqui. Para layerType normal bate; para os demais pode haver tile
+animado escrito na textura errada.
+
+Como o indice 0 agora e pulado (secao 2), o pior caso e um tile animado
+aparecer na camada errada - nao mais apagar conteudo. Se notar algo assim,
+o proximo passo e ler o layerType do metatile e decidir a textura por ele.
+
+================================================================================
+FIM DO RELATORIO 10
+================================================================================
