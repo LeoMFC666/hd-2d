@@ -98,6 +98,17 @@ export interface WorldObject {
   z: number;
   visible: boolean;
   rotation?: number;
+
+  // Dados do ObjectEvent da Gen 3. graphicsId identifica o sprite
+  // (NPC, caminhao do Emerald, item, etc.); localId/mapGroup/mapNumber
+  // dizem a qual mapa a entidade pertence.
+  graphicsId?: number;
+  direction?: string;
+  elevation?: number;
+  localId?: number;
+  mapGroup?: number;
+  mapNumber?: number;
+  movementActionId?: number;
 }
 
 export interface GameInfo {

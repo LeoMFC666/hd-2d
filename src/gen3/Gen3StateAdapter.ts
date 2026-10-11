@@ -7,6 +7,7 @@ import {
   type MetatileTileState,
   type MovementState,
   type TilesetState,
+  type WorldObject,
 } from './GameState';
 
 import type { MemoryReader } from './MemoryReader';
@@ -84,6 +85,10 @@ const FRLG_TILESET_METATILE_ATTRIBUTES_OFFSET =
 
 const METATILE_TILE_COUNT =
   8;
+
+// Gen 3 mantem 16 slots de ObjectEvent por mapa.
+const OBJECT_EVENT_COUNT =
+  16;
 
 const METATILE_LAYER_TYPE_NORMAL =
   0;
@@ -338,6 +343,11 @@ export class Gen3StateAdapter {
       this.profile.memory.objectState
     ) {
       this.readPlayerObjectState(
+        state,
+        this.profile.memory.objectState,
+      );
+
+      this.readObjectEvents(
         state,
         this.profile.memory.objectState,
       );
@@ -2459,6 +2469,96 @@ export class Gen3StateAdapter {
       this.readMapCoordinate(
         positionAddress + 2,
       );
+  }
+
+  /**
+   * Le os 16 slots de ObjectEvent da Gen 3 e preenche state.objects.
+   *
+   * Cobre NPCs, o caminhao do inicio do Emerald, itens no chao e qualquer
+   * outra entidade do overworld - todos sao ObjectEvents para o jogo. O
+   * campo objects do GameState existia desde o inicio do projeto mas nunca
+   * era preenchido: ficava sempre vazio.
+   *
+   * Layout do struct (0x24 bytes), identico em Emerald e FRLG:
+   *   0x00  bitfield, bit 0 = ativo
+   *   0x05  graphicsId (qual sprite)
+   *   0x08  localId
+   *   0x09  mapNum
+   *   0x0A  mapGroup
+   *   0x0B  elevacao: nibble baixo = atual
+   *   0x10  coordenadas atuais (x u16, y u16)
+   *   0x18  nibble baixo = direcao olhando, alto = direcao do movimento
+   *   0x1C  movementActionId
+   */
+  private readObjectEvents(
+    state: GameState,
+    layout: Gen3ObjectStateLayout,
+  ): void {
+    const objects: WorldObject[] = [];
+
+    for (
+      let slot = 0;
+      slot < OBJECT_EVENT_COUNT;
+      slot++
+    ) {
+      const base =
+        layout.objectEventsAddress +
+        slot * layout.objectEventSize;
+
+      const flags =
+        this.memoryReader.readU8(base);
+
+      // Slot inativo: nao ha entidade aqui.
+      if ((flags & 0x01) === 0) {
+        continue;
+      }
+
+      const coordsAddress =
+        base + layout.objectEventCurrentCoordsOffset;
+
+      const x =
+        this.readMapCoordinate(coordsAddress);
+
+      const y =
+        this.readMapCoordinate(coordsAddress + 2);
+
+      const facingAndMovement =
+        this.memoryReader.readU8(
+          base + layout.objectEventFacingDirectionOffset,
+        );
+
+      const elevationByte =
+        this.memoryReader.readU8(base + 0x0b);
+
+      objects.push({
+        id: slot,
+        type: 'object-event',
+        x,
+        y,
+        z: elevationByte & 0x0f,
+        visible: true,
+        graphicsId:
+          this.memoryReader.readU8(base + 0x05),
+        direction:
+          this.decodeDirection(
+            facingAndMovement & 0x0f,
+            (facingAndMovement >> 4) & 0x0f,
+          ),
+        elevation: elevationByte & 0x0f,
+        localId:
+          this.memoryReader.readU8(base + 0x08),
+        mapNumber:
+          this.memoryReader.readU8(base + 0x09),
+        mapGroup:
+          this.memoryReader.readU8(base + 0x0a),
+        movementActionId:
+          this.memoryReader.readU8(
+            base + layout.objectEventMovementActionIdOffset,
+          ),
+      });
+    }
+
+    state.objects = objects;
   }
 
   private readPlayerObjectState(

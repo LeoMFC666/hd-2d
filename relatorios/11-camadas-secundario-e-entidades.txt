@@ -1,0 +1,88 @@
+================================================================================
+RELATORIO 11 - ANIMACAO: CAMADA CORRETA + TILESET SECUNDARIO
+                ETAPA E3 (parcial): ENTIDADES DO OVERWORLD
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. BORDA DA AGUA PARADA - TILESET SECUNDARIO IGNORADO
+--------------------------------------------------------------------------------
+CAUSA: collectPositions descartava todo metatile com id >= 512, ou seja,
+todo o tileset SECUNDARIO. A borda da agua e tipicamente um metatile
+secundario que usa os tiles animados do tileset PRIMARIO - o tile anima,
+mas o metatile que o usa estava fora da varredura.
+
+CORRECAO: metatiles secundarios passam a ser lidos, pelo ponteiro de
+metatiles do proprio tileset secundario (offset 0x0C da struct).
+
+2. ROTEAMENTO DE CAMADA AGORA SEGUE A REGRA REAL
+--------------------------------------------------------------------------------
+No relatorio 10 eu assumi "subtiles 4-7 sempre na overlay" e registrei a
+aproximacao como risco conhecido. Fui ler a regra em Gen3StateAdapter:
+
+    camada de baixo (0-3)  -> sempre textura base
+    camada de cima  (4-7)  -> base    se layerType == COVERED
+                              overlay se layerType == NORMAL ou SPLIT
+
+A aproximacao errava justamente nos metatiles COVERED, que sao comuns em
+orla e bordas. Agora o layerType vem de getMetatileGraphics - a mesma fonte
+que o renderizador usa para assar o mapa, entao nao ha como divergir.
+
+3. ENTIDADES DO OVERWORLD (ETAPA E3, PARTE 1)
+--------------------------------------------------------------------------------
+state.objects existia no GameState desde o inicio do projeto e NUNCA era
+preenchido - ficava sempre []. Agora Gen3StateAdapter.readObjectEvents le os
+16 slots de ObjectEvent e preenche:
+
+    id, x, y, graphicsId, direction, elevation,
+    localId, mapGroup, mapNumber, movementActionId
+
+Isso cobre NPCs, o caminhao do inicio do Emerald, itens no chao - para o
+jogo todos sao ObjectEvents. Slots inativos (bit 0 do byte 0x00) sao
+pulados, e so entidades do mapa atual sao exibidas.
+
+Layout usado (0x24 bytes, igual em Emerald e FRLG):
+    0x00 bitfield (bit 0 = ativo) | 0x05 graphicsId | 0x08 localId
+    0x09 mapNum | 0x0A mapGroup   | 0x0B elevacao
+    0x10 coordenadas atuais       | 0x18 direcao    | 0x1C movementActionId
+
+RENDERIZACAO: cada entidade e hoje um painel que olha para a camera,
+colorido por graphicsId. Da para conferir posicao, movimentacao e quais
+entidades existem. O SPRITE REAL AINDA NAO E DESENHADO.
+
+4. POR QUE O SPRITE NAO VEIO JUNTO
+--------------------------------------------------------------------------------
+Desenhar o sprite real exige saber de onde vem os pixels, e ha duas rotas:
+
+  a) OAM (0x07000000) + OBJ VRAM (0x06010000) + paleta OBJ (0x05000200)
+     Da o quadro exato que o jogo esta exibindo, inclusive animacao de
+     caminhada, de graca. Mas depende de tres regioes de memoria.
+  b) Tabelas de graficos no ROM (gObjectEventGraphicsInfoPointers)
+     Independe da RAM, porem o endereco da tabela muda entre ROMs e
+     hackroms, e teria de ser localizado estruturalmente.
+
+O que ja sabemos deste build: a leitura de VRAM funciona, mas uma leitura
+de 512 bytes na palette RAM (0x05000000) voltou ZERADA. Se a paleta OBJ
+tambem vier zerada, a rota (a) pinta tudo de preto e a rota certa e a (b).
+
+Por isso ha uma sonda que roda uma vez e imprime as tres fontes. Uma rodada
+resolve a duvida. Chutar endereco foi o que custou as ultimas rodadas; nao
+vou repetir com um sistema deste tamanho.
+
+5. VERIFICACAO
+--------------------------------------------------------------------------------
+  npx tsc --noEmit -> exit 0
+  Sem teste visual.
+
+  Logs a reportar:
+    [ent] entidades lidas: N [#id gfx=.. (x,y) direcao, ...]
+    [ent] fontes de sprite -- OAM: a/1024 | OBJ VRAM: b/1024 | paleta OBJ: c/512
+
+6. PROXIMO PASSO
+--------------------------------------------------------------------------------
+Com a sonda respondida: desenhar o sprite real pela rota viavel, incluindo
+o do protagonista, e so entao partir para o voxel.
+
+================================================================================
+FIM DO RELATORIO 11
+================================================================================

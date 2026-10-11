@@ -8,6 +8,10 @@ import type {
   MapDefinition,
 } from '../gen3/world/MapDefinition';
 
+import type {
+  Gen3StateAdapter,
+} from '../gen3/Gen3StateAdapter';
+
 /**
  * Animacao de tiles escrita do zero, substituindo
  * TilesetAnimationController (desligado em 6752e21 por regressao).
@@ -83,6 +87,12 @@ const BG_PALETTE_BYTES =
 const TILESET_PALETTES_OFFSET =
   0x08;
 
+// Regra de composicao de camada, identica a de Gen3StateAdapter:
+// camada de baixo sempre na textura base; camada de cima vai para a base
+// quando o metatile e COVERED, e para a overlay quando e NORMAL ou SPLIT.
+const METATILE_LAYER_TYPE_COVERED =
+  1;
+
 // Teto de posicoes animadas por mapa. Acima disso o mapa nao anima: e
 // preferivel perder a animacao de um mapa a comprometer a taxa de quadros.
 const MAX_ANIMATED_POSITIONS =
@@ -112,6 +122,8 @@ export class TileAnimator {
   private readonly romBytes: Uint8Array;
 
   private readonly memoryReader: MemoryReader;
+
+  private readonly stateAdapter: Gen3StateAdapter;
 
   private positions: AnimatedPosition[] = [];
 
@@ -148,9 +160,11 @@ export class TileAnimator {
   constructor(
     romBytes: Uint8Array,
     memoryReader: MemoryReader,
+    stateAdapter: Gen3StateAdapter,
   ) {
     this.romBytes = romBytes;
     this.memoryReader = memoryReader;
+    this.stateAdapter = stateAdapter;
   }
 
   /**
@@ -465,6 +479,18 @@ export class TileAnimator {
     const metatilesOffset =
       metatilesAddress - GBA_ROM_BASE;
 
+    const secondaryMetatilesAddress =
+      this.readU32(
+        map.secondaryTilesetAddress -
+          GBA_ROM_BASE +
+          TILESET_METATILES_OFFSET,
+      );
+
+    const secondaryMetatilesOffset =
+      secondaryMetatilesAddress >= GBA_ROM_BASE
+        ? secondaryMetatilesAddress - GBA_ROM_BASE
+        : -1;
+
     const result: AnimatedPosition[] = [];
 
     for (
@@ -480,23 +506,34 @@ export class TileAnimator {
         const metatileId =
           metatileIds[blockY * map.width + blockX];
 
-        if (
-          metatileId === undefined ||
-          metatileId >= PRIMARY_METATILE_COUNT
-        ) {
+        if (metatileId === undefined) {
           continue;
         }
 
+        // Metatiles do tileset SECUNDARIO tambem contam. A borda da agua
+        // costuma ser um metatile secundario que usa os tiles animados do
+        // tileset primario; ignorar o secundario era o que deixava a
+        // orla parada.
         const entryOffset =
-          metatilesOffset +
-          metatileId * METATILE_ENTRY_BYTES;
+          metatileId < PRIMARY_METATILE_COUNT
+            ? metatilesOffset +
+              metatileId * METATILE_ENTRY_BYTES
+            : secondaryMetatilesOffset +
+              (metatileId - PRIMARY_METATILE_COUNT) *
+                METATILE_ENTRY_BYTES;
 
         if (
+          entryOffset < 0 ||
           entryOffset + METATILE_ENTRY_BYTES >
-          this.romBytes.length
+            this.romBytes.length
         ) {
           continue;
         }
+
+        const layerType =
+          this.stateAdapter.getMetatileGraphics(
+            metatileId,
+          )?.layerType ?? 0;
 
         // As 8 subtiles: 0-3 camada de baixo, 4-7 camada de cima.
         for (
@@ -561,7 +598,10 @@ export class TileAnimator {
             palette: (raw >> 12) & 0x0f,
             hFlip: (raw & 0x0400) !== 0,
             vFlip: (raw & 0x0800) !== 0,
-            overlay: subtile >= 4,
+            // COVERED desenha a camada de cima na propria textura base.
+            overlay:
+              subtile >= 4 &&
+              layerType !== METATILE_LAYER_TYPE_COVERED,
           });
         }
       }

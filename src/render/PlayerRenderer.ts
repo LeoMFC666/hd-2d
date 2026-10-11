@@ -147,6 +147,13 @@ export class PlayerRenderer {
   private readonly tileAnimator:
     TileAnimator;
 
+  // Entidades do overworld (NPCs, caminhao do Emerald, itens). Uma malha
+  // por slot de ObjectEvent, reaproveitada entre frames.
+  private readonly entityMeshes =
+    new Map<number, THREE.Mesh>();
+
+  private entityProbeDone = false;
+
   private cinnabarDefinitionChecked =
     false;
 
@@ -201,6 +208,7 @@ export class PlayerRenderer {
       new TileAnimator(
         romBytes,
         stateAdapter.getMemoryReader(),
+        stateAdapter,
       );
 
     this.mapWorld =
@@ -1578,6 +1586,186 @@ export class PlayerRenderer {
     );
   }
 
+  /**
+   * Posiciona as entidades do overworld lidas de state.objects.
+   *
+   * Hoje cada entidade e um painel que olha para a camera. O sprite real
+   * ainda nao e desenhado: a fonte dos pixels depende de qual regiao de
+   * memoria este build do mGBA deixa ler, e isso esta sendo medido pela
+   * sonda abaixo em vez de chutado - foi chutar endereco que custou as
+   * ultimas rodadas.
+   */
+  private updateEntities(
+    state: GameState,
+  ): void {
+    this.probeSpriteSources(
+      state,
+    );
+
+    const seen = new Set<number>();
+
+    for (
+      const object of state.objects
+    ) {
+      // So entidades do mapa onde o jogador esta.
+      if (
+        object.mapGroup !== state.map.mapGroup ||
+        object.mapNumber !== state.map.mapNumber
+      ) {
+        continue;
+      }
+
+      seen.add(object.id);
+
+      let mesh =
+        this.entityMeshes.get(object.id);
+
+      if (!mesh) {
+        mesh =
+          new THREE.Mesh(
+            new THREE.PlaneGeometry(1, 1.4),
+            new THREE.MeshBasicMaterial({
+              color:
+                new THREE.Color().setHSL(
+                  ((object.graphicsId ?? 0) % 16) / 16,
+                  0.6,
+                  0.55,
+                ),
+              transparent: true,
+              side: THREE.DoubleSide,
+            }),
+          );
+
+        this.entityMeshes.set(object.id, mesh);
+        this.root.add(mesh);
+      }
+
+      const world =
+        this.getEntityWorldPosition(
+          state,
+          object.x,
+          object.y,
+        );
+
+      if (!world) {
+        mesh.visible = false;
+
+        continue;
+      }
+
+      mesh.visible = true;
+
+      mesh.position.set(
+        world.x,
+        0.7,
+        world.z,
+      );
+
+      // Billboard: sempre de frente para a camera.
+      mesh.quaternion.copy(
+        this.camera.quaternion,
+      );
+    }
+
+    for (
+      const [id, mesh] of this.entityMeshes
+    ) {
+      if (!seen.has(id)) {
+        mesh.visible = false;
+      }
+    }
+  }
+
+  private getEntityWorldPosition(
+    state: GameState,
+    tileX: number,
+    tileY: number,
+  ): { x: number; z: number } | null {
+    const position =
+      this.mapWorld.getWorldPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const map =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    if (!position || !map) {
+      return null;
+    }
+
+    return {
+      x: position.x + tileX + 0.5,
+      z: position.y + tileY + 0.5,
+    };
+  }
+
+  /**
+   * Sonda, uma vez: quantas entidades foram lidas e quais fontes de sprite
+   * este build deixa acessar. Decide o proximo passo com dado, nao palpite.
+   */
+  private probeSpriteSources(
+    state: GameState,
+  ): void {
+    if (this.entityProbeDone) {
+      return;
+    }
+
+    if (state.objects.length === 0) {
+      return;
+    }
+
+    this.entityProbeDone = true;
+
+    const reader =
+      this.stateAdapter.getMemoryReader();
+
+    const countNonZero =
+      (address: number, size: number): number => {
+        const bytes =
+          reader.readRange(address, size);
+
+        let total = 0;
+
+        for (
+          let index = 0;
+          index < bytes.length;
+          index++
+        ) {
+          if (bytes[index] !== 0) {
+            total++;
+          }
+        }
+
+        return total;
+      };
+
+    console.log(
+      '[ent] entidades lidas:',
+      state.objects.length,
+      state.objects.map(
+        object =>
+          `#${object.id} gfx=${object.graphicsId} (${object.x},${object.y}) ${object.direction}`,
+      ),
+    );
+
+    console.log(
+      '[ent] fontes de sprite --',
+      'OAM 0x07000000:',
+      countNonZero(0x07000000, 1024),
+      '/1024 |',
+      'OBJ VRAM 0x06010000:',
+      countNonZero(0x06010000, 1024),
+      '/1024 |',
+      'paleta OBJ 0x05000200:',
+      countNonZero(0x05000200, 512),
+      '/512',
+    );
+  }
+
   private queueMapBuild(
     map: MapDefinition,
   ): void {
@@ -2512,6 +2700,10 @@ export class PlayerRenderer {
         );
 
         this.tileAnimator.update();
+
+        this.updateEntities(
+          state,
+        );
       }
 
       this.renderer.render(
