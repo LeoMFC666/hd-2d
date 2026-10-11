@@ -35,6 +35,10 @@ import type {
   GameState,
 } from '../gen3/GameState';
 
+import {
+  TilesetAnimationController,
+} from '../gen3/TilesetAnimationController';
+
 import type {
   MapDefinition,
 } from '../gen3/world/MapDefinition';
@@ -129,6 +133,12 @@ export class PlayerRenderer {
   private readonly worldBorderMeshes:
     THREE.Mesh[] = [];
 
+  // Animacao de tiles (agua, plantas, etc). Le da VRAM viva do emulador
+  // os tiles que o proprio jogo anima e repinta as texturas dos mapas,
+  // entao a animacao fica em sincronia exata com o jogo rodando.
+  private readonly tilesetAnimation:
+    TilesetAnimationController;
+
   private cinnabarDefinitionChecked =
     false;
 
@@ -178,6 +188,12 @@ export class PlayerRenderer {
 
     this.mapCatalog =
       new MapCatalog();
+
+    this.tilesetAnimation =
+      new TilesetAnimationController(
+        romBytes,
+        stateAdapter.getMemoryReader(),
+      );
 
     this.mapWorld =
       new MapWorld(
@@ -1007,6 +1023,12 @@ export class PlayerRenderer {
     }
 
     this.mapVisuals.delete(
+      '3:8',
+    );
+
+    // As texturas antigas deste mapa foram descartadas; tirar da animacao
+    // para o controller nao continuar escrevendo em textura morta.
+    this.tilesetAnimation.unregisterMap(
       '3:8',
     );
 
@@ -2081,6 +2103,14 @@ export class PlayerRenderer {
           map.mapDataAddress,
       };
 
+    // Registra o mapa na animacao de tiles: a partir daqui o controller
+    // repinta nestas texturas os tiles que o jogo estiver animando.
+    const animationPlacements =
+      this.tilesetAnimation.createPlacements(
+        map,
+        renderData.blocks,
+      );
+
     const mapKey =
       this.createMapKey(
         map.mapGroup,
@@ -2091,6 +2121,18 @@ export class PlayerRenderer {
       mapKey,
       visual,
     );
+
+    if (
+      animationPlacements.size > 0
+    ) {
+      this.tilesetAnimation.attachMap(
+        mapKey,
+        map,
+        baseTexture,
+        overlayTexture,
+        animationPlacements,
+      );
+    }
 
     const visible =
       this.mapWorld.hasPosition(
@@ -2403,6 +2445,21 @@ export class PlayerRenderer {
         state,
       );
 
+      // Avanca a animacao de tiles. O controller le da VRAM os tiles que
+      // o jogo esta animando no tileset primario atual, entao basta dizer
+      // qual tileset esta ativo.
+      const animatedMap =
+        this.mapCatalog.get(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        );
+
+      if (animatedMap) {
+        this.tilesetAnimation.update(
+          animatedMap.primaryTilesetAddress,
+        );
+      }
+
       this.renderer.render(
         this.scene,
         this.camera,
@@ -2420,6 +2477,8 @@ export class PlayerRenderer {
     );
 
     this.disposeWorldBorder();
+
+    this.tilesetAnimation.clear();
 
     for (
       const visual of

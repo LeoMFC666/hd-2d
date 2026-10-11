@@ -1,0 +1,84 @@
+================================================================================
+RELATORIO 08 - ETAPA E2: ANIMACAO DE TILES RELIGADA
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. O QUE FOI FEITO
+--------------------------------------------------------------------------------
+TilesetAnimationController.ts (1.161 linhas) existia desde o inicio do
+projeto e NAO era importado em lugar nenhum - codigo morto apontado no
+relatorio 03. Avaliei o arquivo antes de considerar reescrever e a conclusao
+foi que ele estava certo: a API encaixa exatamente no pipeline do
+PlayerRenderer, sem adaptacao.
+
+    constructor(romBytes, memoryReader)
+    createPlacements(map, blocks)  -> Map<tileIndex, AnimatedTile[]>
+    attachMap(key, map, baseTexture, overlayTexture, placements)
+    unregisterMap(key)
+    update(primaryTilesetAddress)
+    clear()
+
+2. POR QUE A ABORDAGEM DELE E A CERTA
+--------------------------------------------------------------------------------
+O controller NAO reimplementa as animacoes. Ele le da VRAM do emulador
+(0x06000000, tiles 416 a 512 do tileset primario) os tiles que o PROPRIO
+jogo esta animando naquele instante e os repinta nas texturas dos mapas.
+
+Isso significa que agua, plantas e demais tiles animados ficam em sincronia
+exata com o jogo rodando - mesma cadencia, mesmos quadros, sem relogio
+paralelo que possa derivar. E a opcao fiel, e seria dificil fazer melhor
+reescrevendo do zero.
+
+3. LIGACAO FEITA NO PlayerRenderer
+--------------------------------------------------------------------------------
+  - instancia no construtor, usando stateAdapter.getMemoryReader()
+  - buildMapVisual: createPlacements sobre os blocos do mapa e, havendo
+    posicoes animadas, attachMap com as texturas recem-criadas
+  - loop de animacao: update(primaryTilesetAddress do mapa atual) a cada
+    frame; o proprio controller limita a frequencia de leitura da VRAM
+  - descarte de visual: unregisterMap, para o controller nao escrever em
+    textura ja liberada
+  - destroy: clear()
+
+4. VERIFICACAO
+--------------------------------------------------------------------------------
+Harness em Node, com leitor de memoria stub, rodando createPlacements sobre
+mapas reais lidos dos ROMs (120 primeiros mapas validos de cada):
+
+  Emerald : 46 de 120 mapas com tiles animados | 197.459 posicoes animadas
+  FireRed : 13 de 120 mapas com tiles animados |  12.640 posicoes animadas
+
+Ou seja, a deteccao funciona e ha bastante conteudo animado - a ligacao nao
+e inocua. A diferenca entre os dois jogos e esperada: Hoenn tem muito mais
+agua e vegetacao animada que Kanto.
+
+  npx tsc --noEmit -> exit 0
+
+5. PONTO DE ATENCAO: CUSTO
+--------------------------------------------------------------------------------
+197 mil posicoes animadas em Emerald e bastante. O repintar acontece por
+posicao a cada ciclo de poll, na thread principal. Se aparecer queda de
+quadros em areas de muita agua, o caminho e:
+  - repintar apenas os mapas visiveis, nao todos os registrados
+  - ou mover a repintura para uma textura de tiles compartilhada, em vez de
+    reescrever cada posicao na textura do mapa
+Nao otimizei agora porque seria otimizar sem medir - preciso saber se o
+problema existe de fato na sua maquina.
+
+6. NAO VERIFICADO
+--------------------------------------------------------------------------------
+Sem teste visual (mesma limitacao de sempre). A conferir rodando:
+  - agua e plantas animando em sincronia com o emulador acima
+  - sem piscada ou artefato ao trocar de mapa
+  - desempenho em area de muita agua (ver secao 5)
+
+7. PROXIMAS ETAPAS
+--------------------------------------------------------------------------------
+  E3. Entidades 3D alem do jogador (NPCs via billboard, a partir do
+      objectState que o Gen3StateAdapter ja le para Emerald e FRLG)
+  E4. Voxel 2.5D - extrusao por metatile; o mais pesado, por ultimo
+
+================================================================================
+FIM DO RELATORIO 08
+================================================================================
