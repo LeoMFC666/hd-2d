@@ -1,0 +1,101 @@
+================================================================================
+RELATORIO 05 - PADDING DE MUNDO + CORRECAO DO PRIMEIRO CARREGAMENTO
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. FIRE RED NAO ABRIA SOZINHO - ERRO MEU NO PATCH ANTERIOR
+--------------------------------------------------------------------------------
+No commit 673d028 eu adicionei a auto-recuperacao do primeiro carregamento no
+ramo de retorno antecipado de updateActiveWorld, assim:
+
+    if (activeMap && !mapWorld.hasPosition(...)) {
+      this.rebuildWorldAround(state);
+    }
+    return;          <-- o erro
+
+rebuildWorldAround posiciona o mundo, mas todo o trabalho seguinte -
+queueMapBuild, syncMapVisualPositions, updateWorldVisibility - fica DEPOIS
+desse return. Ou seja: as posicoes eram calculadas e nada era enfileirado
+nem exibido. So quando o jogador trocava de mapa o caminho completo rodava
+e o mundo aparecia. Exatamente o sintoma relatado.
+
+CORRECAO: updateActiveWorld foi reescrito. Agora ha duas saidas rapidas
+explicitas (mesmo mapa com mundo ja montado; mesmo mapa com catalogo ainda
+nao disponivel) e, fora delas, o fluxo SEGUE para a montagem normal em vez
+de retornar no meio.
+
+2. PADDING: DE POR-MAPA PARA UM PLANO DE MUNDO
+--------------------------------------------------------------------------------
+O padding do relatorio 04 era por mapa e so visivel no mapa ativo. Isso nao
+alcanca os vazios reais, porque o mundo NAO e retangular: entre mapas
+conectados sobram recortes, e alem do mapa mais externo sobra o resto da
+tela. Dai as areas escuras das capturas.
+
+Agora existe UM plano unico cobrindo o bounding box de todos os mapas
+posicionados, expandido em 12 metatiles por lado, desenhado em y = -0.05,
+abaixo de tudo. Os mapas reais desenham por cima; o plano preenche todo o
+resto, inclusive os recortes internos.
+
+2.1 Por que a textura e minuscula
+    A textura gerada e apenas o bloco de borda (2x2 metatiles na maioria
+    dos casos), com wrapS/wrapT = RepeatWrapping; a repeticao fica por
+    conta da GPU, com repeat e offset calculados em unidades de bloco para
+    alinhar com a grade do mundo.
+    Gerar um bitmap do tamanho do mundo seria inviavel: a regiao conectada
+    de Hoenn passa de 500x500 metatiles, o que daria textura de mais de
+    8000px por lado - centenas de MB em RGBA. Este era um risco real da
+    abordagem anterior ao escalar.
+
+3. SOBRE USAR OS MAPAS DE REGIAO (KANTO/HOENN) COMO BASE
+--------------------------------------------------------------------------------
+Nao segui por esse caminho, e vale explicar por que - a ideia tem um
+problema de fundo.
+
+As imagens enviadas sao o "town map" do jogo: um desenho pictografico da
+regiao, com cerca de 240x160 pixels no total, em que cada cidade inteira
+ocupa poucos pixels. Nao ha correspondencia de escala nem de tiles com os
+mapas reais: um unico pixel daquele desenho cobre dezenas de metatiles de
+mapa. Usar aquilo como fonte de padding produziria um fundo borrado e
+infiel, do tipo que o projeto justamente quer evitar.
+
+E, mais importante: a informacao que voce quer JA EXISTE no ROM e em forma
+exata. As conexoes entre mapas sao dados do jogo, e MapWorld ja as usa para
+posicionar os vizinhos. Quando tudo conecta, os vizinhos sao renderizados
+de verdade, com os tiles reais - muito melhor que qualquer aproximacao
+tirada do town map.
+
+Por isso a divisao correta e:
+  - vizinhos conectados  -> renderizados de verdade (dado exato do ROM)
+  - fora do mundo        -> bloco de borda repetido (o que o GBA faz)
+Nao sobra papel para o mapa de regiao.
+
+4. OBSERVACAO IMPORTANTE SOBRE OS VAZIOS DO FIRE RED
+--------------------------------------------------------------------------------
+Nas capturas, o Emerald aparece com o mundo bem conectado e pouco vazio,
+enquanto o Fire Red mostra areas escuras grandes. Isso NAO e deficiencia do
+padding: e o problema 1, ainda em aberto, de conexao de mapas no Fire Red.
+Onde o mundo nao conecta, os mapas vizinhos nunca sao posicionados e nao ha
+o que renderizar ali - o padding apenas preenche o buraco.
+
+O plano de mundo deste relatorio reduz bastante o impacto visual, mas a
+correcao de verdade para o Fire Red continua sendo fazer o mundo conectar.
+Encher com borda um vazio que deveria ter cidade e maquiagem, nao solucao.
+
+5. VERIFICACAO
+--------------------------------------------------------------------------------
+  npx tsc --noEmit -> exit 0
+  Sem teste visual (mesma limitacao dos relatorios anteriores).
+  `vite build` segue falhando neste container por binding nativo do
+  rolldown - problema de ambiente, nao do codigo.
+
+  A conferir rodando:
+   - Fire Red deve abrir o mundo sem precisar sair e voltar de rota
+   - o fundo deve preencher os recortes entre mapas, nao so a volta
+   - alinhamento do padrao de borda: repeat/offset foram calculados sem
+     poder observar o resultado; se o padrao aparecer deslocado em relacao
+     a grade, o ajuste e no texture.offset de rebuildWorldBorder
+
+================================================================================
+FIM DO RELATORIO 05
+================================================================================

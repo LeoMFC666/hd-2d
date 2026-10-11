@@ -47,18 +47,6 @@ interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
 
-  // Plano de padding: repete o bloco de borda do layout em volta do mapa,
-  // eliminando o vazio preto nas bordas. Fica logo abaixo do mapa e so e
-  // exibido para o mapa ativo, para nunca disputar profundidade com os
-  // mapas vizinhos ja posicionados.
-  borderMesh?: THREE.Mesh;
-
-  borderTexture?:
-    THREE.DataTexture;
-
-  borderGeometry?:
-    THREE.PlaneGeometry;
-
   baseTexture:
     THREE.DataTexture;
 
@@ -130,6 +118,15 @@ export class PlayerRenderer {
 
   private nextCatalogBuildAt =
     0;
+
+  private worldBorderMesh?:
+    THREE.Mesh;
+
+  private worldBorderTexture?:
+    THREE.DataTexture;
+
+  private worldBorderGeometry?:
+    THREE.PlaneGeometry;
 
   private cinnabarDefinitionChecked =
     false;
@@ -917,26 +914,6 @@ export class PlayerRenderer {
     visual.geometry.dispose();
     visual.overlayMesh.geometry.dispose();
 
-    if (visual.borderMesh) {
-      this.root.remove(
-        visual.borderMesh,
-      );
-
-      const borderMaterial =
-        visual.borderMesh.material;
-
-      if (Array.isArray(borderMaterial)) {
-        borderMaterial.forEach(
-          material => material.dispose(),
-        );
-      } else {
-        borderMaterial.dispose();
-      }
-    }
-
-    visual.borderTexture?.dispose();
-    visual.borderGeometry?.dispose();
-
 
     const baseMaterial =
       visual.baseMesh.material;
@@ -1049,63 +1026,47 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
+    const sameMap =
+      mapKey === this.activeMapKey;
+
+    const positioned =
+      this.mapWorld.hasPosition(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
+
+    const catalogHasMap =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      ) !== null;
+
+    // Nada mudou e o mundo ja esta montado: nao ha o que fazer.
+    // Esta e a saida do caso comum, avaliado a cada frame.
     if (
-      mapKey ===
-      this.activeMapKey
+      sameMap &&
+      positioned
     ) {
-      const activeMap =
-        this.mapCatalog.get(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        );
+      return;
+    }
 
-      if (
-        activeMap &&
-        !this.mapVisuals.has(
-          mapKey,
-        ) &&
-        !this.queuedMaps.has(
-          mapKey,
-        )
-      ) {
-        this.queueMapBuild(
-          activeMap,
-        );
-      }
-
-      // Auto-recuperacao do primeiro carregamento: na primeira avaliacao o
-      // catalogo ainda pode estar vazio (ele e montado a partir do ROM com
-      // a varredura inicial). Nesse caso activeMapKey ja ficou definido,
-      // porem o mundo nunca foi posicionado - e o mapa so aparecia quando o
-      // jogador trocava de mapa e forcava a reconstrucao. Aqui posicionamos
-      // o mundo assim que o catalogo fica disponivel, sem precisar sair e
-      // voltar da rota.
-      if (
-        activeMap &&
-        !this.mapWorld.hasPosition(
-          state.map.mapGroup,
-          state.map.mapNumber,
-        )
-      ) {
-        this.rebuildWorldAround(
-          state,
-        );
-      }
-
+    // Mesmo mapa, mundo ainda nao posicionado: e o primeiro carregamento,
+    // em que o catalogo so fica pronto alguns frames depois do estado.
+    // Enquanto o catalogo nao chega nao da para montar nada; assim que
+    // chega, seguimos para a montagem normal abaixo - antes isto retornava
+    // cedo e o mapa so aparecia quando o jogador trocava de rota.
+    if (
+      sameMap &&
+      !catalogHasMap
+    ) {
       return;
     }
 
     this.activeMapKey =
       mapKey;
 
-    const alreadyPositioned =
-      this.mapWorld.hasPosition(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
     if (
-      !alreadyPositioned
+      !positioned
     ) {
       this.rebuildWorldAround(
         state,
@@ -1144,6 +1105,11 @@ export class PlayerRenderer {
       maps,
     );
 
+    this.rebuildWorldBorder(
+      maps,
+      activeMap,
+    );
+
     console.log(
       'Active World:',
       {
@@ -1154,9 +1120,265 @@ export class PlayerRenderer {
           mapKey,
 
         rebuilt:
-          !alreadyPositioned,
+          !positioned,
       },
     );
+  }
+
+  /**
+   * Monta UM plano de padding cobrindo todo o mundo posicionado.
+   *
+   * Por que um plano so, e nao um por mapa: o mundo nao e retangular. Entre
+   * mapas conectados sobram recortes vazios, e alem do mapa mais externo
+   * sobra o resto da tela. Padding por mapa nao alcanca esses buracos, e
+   * varios planos sobrepostos trariam de volta o z-fighting.
+   *
+   * A textura e apenas o bloco de borda (tipicamente 2x2 metatiles) com
+   * RepeatWrapping - a repeticao e feita pela GPU. Gerar um bitmap do
+   * tamanho do mundo inteiro seria inviavel: a regiao conectada de Hoenn
+   * passa de 500x500 metatiles, o que daria uma textura de mais de 8000px
+   * por lado (centenas de MB).
+   */
+  private rebuildWorldBorder(
+    maps: MapDefinition[],
+    activeMap: MapDefinition | null,
+  ): void {
+    this.disposeWorldBorder();
+
+    if (
+      !activeMap ||
+      maps.length === 0
+    ) {
+      return;
+    }
+
+    const borderMetatileIds =
+      this.readBorderMetatileIds(
+        activeMap,
+      );
+
+    if (
+      borderMetatileIds.length === 0
+    ) {
+      return;
+    }
+
+    // Bounding box do mundo posicionado.
+    let minX = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+
+    for (
+      const map of maps
+    ) {
+      const position =
+        this.mapWorld.getWorldPosition(
+          map.mapGroup,
+          map.mapNumber,
+        );
+
+      if (!position) {
+        continue;
+      }
+
+      minX = Math.min(minX, position.x);
+      minZ = Math.min(minZ, position.y);
+      maxX = Math.max(maxX, position.x + map.width);
+      maxZ = Math.max(maxZ, position.y + map.height);
+    }
+
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minZ)
+    ) {
+      return;
+    }
+
+    const planeMinX =
+      minX - MAP_PADDING_METATILES;
+
+    const planeMinZ =
+      minZ - MAP_PADDING_METATILES;
+
+    const planeWidth =
+      (maxX - minX) + MAP_PADDING_METATILES * 2;
+
+    const planeHeight =
+      (maxZ - minZ) + MAP_PADDING_METATILES * 2;
+
+    // Textura pequena: so o bloco de borda.
+    const blockWidth =
+      activeMap.borderWidth * GBA_METATILE_PIXELS;
+
+    const blockHeight =
+      activeMap.borderHeight * GBA_METATILE_PIXELS;
+
+    const pixels =
+      new Uint8ClampedArray(
+        blockWidth * blockHeight * 4,
+      );
+
+    const graphicsSource =
+      this.stateAdapter;
+
+    for (
+      let tileY = 0;
+      tileY < activeMap.borderHeight;
+      tileY++
+    ) {
+      for (
+        let tileX = 0;
+        tileX < activeMap.borderWidth;
+        tileX++
+      ) {
+        const metatileId =
+          borderMetatileIds[
+            tileY * activeMap.borderWidth + tileX
+          ];
+
+        if (metatileId === undefined) {
+          continue;
+        }
+
+        const graphics =
+          graphicsSource.getMetatileGraphics(
+            metatileId,
+          );
+
+        if (!graphics) {
+          continue;
+        }
+
+        for (
+          let sourceY = 0;
+          sourceY < GBA_METATILE_PIXELS;
+          sourceY++
+        ) {
+          for (
+            let sourceX = 0;
+            sourceX < GBA_METATILE_PIXELS;
+            sourceX++
+          ) {
+            const sourceOffset =
+              (sourceY * GBA_METATILE_PIXELS + sourceX) * 4;
+
+            // Mesma inversao vertical usada nas texturas de mapa.
+            const destinationY =
+              (activeMap.borderHeight - 1 - tileY) *
+                GBA_METATILE_PIXELS +
+              GBA_METATILE_PIXELS - 1 - sourceY;
+
+            const destinationX =
+              tileX * GBA_METATILE_PIXELS + sourceX;
+
+            const destinationOffset =
+              (destinationY * blockWidth + destinationX) * 4;
+
+            pixels[destinationOffset] =
+              graphics.basePixels[sourceOffset];
+
+            pixels[destinationOffset + 1] =
+              graphics.basePixels[sourceOffset + 1];
+
+            pixels[destinationOffset + 2] =
+              graphics.basePixels[sourceOffset + 2];
+
+            pixels[destinationOffset + 3] =
+              graphics.basePixels[sourceOffset + 3];
+          }
+        }
+      }
+    }
+
+    const texture =
+      this.createMapTexture(
+        pixels,
+        blockWidth,
+        blockHeight,
+      );
+
+    texture.wrapS =
+      THREE.RepeatWrapping;
+
+    texture.wrapT =
+      THREE.RepeatWrapping;
+
+    // Repeticao em unidades de bloco de borda, alinhada a grade do mundo.
+    texture.repeat.set(
+      planeWidth / activeMap.borderWidth,
+      planeHeight / activeMap.borderHeight,
+    );
+
+    texture.offset.set(
+      planeMinX / activeMap.borderWidth,
+      planeMinZ / activeMap.borderHeight,
+    );
+
+    texture.needsUpdate =
+      true;
+
+    const geometry =
+      new THREE.PlaneGeometry(
+        planeWidth,
+        planeHeight,
+      );
+
+    const mesh =
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: false,
+          depthWrite: true,
+          side: THREE.DoubleSide,
+        }),
+      );
+
+    mesh.rotation.x =
+      -Math.PI / 2;
+
+    // Abaixo de tudo: os mapas reais desenham por cima.
+    mesh.position.set(
+      planeMinX + planeWidth / 2,
+      -0.05,
+      planeMinZ + planeHeight / 2,
+    );
+
+    mesh.renderOrder =
+      -10;
+
+    this.worldBorderMesh = mesh;
+    this.worldBorderTexture = texture;
+    this.worldBorderGeometry = geometry;
+
+    this.root.add(mesh);
+  }
+
+  private disposeWorldBorder(): void {
+    if (this.worldBorderMesh) {
+      this.root.remove(
+        this.worldBorderMesh,
+      );
+
+      const material =
+        this.worldBorderMesh.material;
+
+      if (Array.isArray(material)) {
+        material.forEach(
+          entry => entry.dispose(),
+        );
+      } else {
+        material.dispose();
+      }
+    }
+
+    this.worldBorderTexture?.dispose();
+    this.worldBorderGeometry?.dispose();
+
+    this.worldBorderMesh = undefined;
+    this.worldBorderTexture = undefined;
+    this.worldBorderGeometry = undefined;
   }
 
   private queueMapBuild(
@@ -1284,11 +1506,6 @@ export class PlayerRenderer {
         centerZ,
       );
 
-      visual.borderMesh?.position.set(
-        centerX,
-        -0.01,
-        centerZ,
-      );
     }
   }
 
@@ -1326,13 +1543,6 @@ export class PlayerRenderer {
       visual.overlayMesh.visible =
         visible;
 
-      if (visual.borderMesh) {
-        // Apenas o mapa ativo mostra padding. Se todos mostrassem, os
-        // planos de padding de mapas vizinhos se sobreporiam entre si e
-        // voltaria o z-fighting.
-        visual.borderMesh.visible =
-          key === this.activeMapKey;
-      }
     }
   }
 
@@ -1733,200 +1943,10 @@ export class PlayerRenderer {
       overlayMesh,
     );
 
-    // --- padding de borda ---------------------------------------------
-    // Repete o bloco de borda do layout em volta do mapa. Fica abaixo do
-    // plano do mapa (y negativo) e so aparece para o mapa ativo, de modo
-    // que nunca dispute profundidade com os mapas vizinhos.
-    let borderMesh:
-      THREE.Mesh | undefined;
-
-    let borderTexture:
-      THREE.DataTexture | undefined;
-
-    let borderGeometry:
-      THREE.PlaneGeometry | undefined;
-
-    if (
-      borderMetatileIds.length > 0 &&
-      map.borderWidth > 0 &&
-      map.borderHeight > 0
-    ) {
-      const paddedWidth =
-        map.width +
-        MAP_PADDING_METATILES * 2;
-
-      const paddedHeight =
-        map.height +
-        MAP_PADDING_METATILES * 2;
-
-      const borderTextureWidth =
-        paddedWidth * GBA_METATILE_PIXELS;
-
-      const borderTextureHeight =
-        paddedHeight * GBA_METATILE_PIXELS;
-
-      const borderPixels =
-        new Uint8ClampedArray(
-          borderTextureWidth *
-          borderTextureHeight *
-          4,
-        );
-
-      for (
-        let gridY = 0;
-        gridY < paddedHeight;
-        gridY++
-      ) {
-        for (
-          let gridX = 0;
-          gridX < paddedWidth;
-          gridX++
-        ) {
-          const mapX =
-            gridX - MAP_PADDING_METATILES;
-
-          const mapY =
-            gridY - MAP_PADDING_METATILES;
-
-          // A area do proprio mapa fica transparente: quem desenha ali e
-          // o plano do mapa, que tem mais detalhe.
-          if (
-            mapX >= 0 &&
-            mapX < map.width &&
-            mapY >= 0 &&
-            mapY < map.height
-          ) {
-            continue;
-          }
-
-          const borderX =
-            ((mapX % map.borderWidth) +
-              map.borderWidth) %
-            map.borderWidth;
-
-          const borderY =
-            ((mapY % map.borderHeight) +
-              map.borderHeight) %
-            map.borderHeight;
-
-          const metatileId =
-            borderMetatileIds[
-              borderY * map.borderWidth + borderX
-            ];
-
-          if (
-            metatileId === undefined
-          ) {
-            continue;
-          }
-
-          const graphics =
-            renderData.graphics.get(
-              metatileId,
-            );
-
-          if (!graphics) {
-            continue;
-          }
-
-          for (
-            let sourceY = 0;
-            sourceY < GBA_METATILE_PIXELS;
-            sourceY++
-          ) {
-            const destinationY =
-              (paddedHeight - 1 - gridY) *
-                GBA_METATILE_PIXELS +
-              GBA_METATILE_PIXELS -
-              1 -
-              sourceY;
-
-            for (
-              let sourceX = 0;
-              sourceX < GBA_METATILE_PIXELS;
-              sourceX++
-            ) {
-              const destinationX =
-                gridX * GBA_METATILE_PIXELS +
-                sourceX;
-
-              const sourceOffset =
-                (sourceY * GBA_METATILE_PIXELS +
-                  sourceX) * 4;
-
-              const destinationOffset =
-                (destinationY * borderTextureWidth +
-                  destinationX) * 4;
-
-              borderPixels[destinationOffset] =
-                graphics.basePixels[sourceOffset];
-
-              borderPixels[destinationOffset + 1] =
-                graphics.basePixels[sourceOffset + 1];
-
-              borderPixels[destinationOffset + 2] =
-                graphics.basePixels[sourceOffset + 2];
-
-              borderPixels[destinationOffset + 3] =
-                graphics.basePixels[sourceOffset + 3];
-            }
-          }
-        }
-      }
-
-      borderTexture =
-        this.createMapTexture(
-          borderPixels,
-          borderTextureWidth,
-          borderTextureHeight,
-        );
-
-      borderGeometry =
-        new THREE.PlaneGeometry(
-          paddedWidth,
-          paddedHeight,
-        );
-
-      borderMesh =
-        new THREE.Mesh(
-          borderGeometry,
-          new THREE.MeshBasicMaterial({
-            map: borderTexture,
-            transparent: true,
-            depthWrite: true,
-            side: THREE.DoubleSide,
-          }),
-        );
-
-      borderMesh.rotation.x =
-        -Math.PI / 2;
-
-      // O plano de padding e simetrico, entao compartilha o mesmo centro
-      // do mapa; basta afunda-lo um pouco para ficar atras.
-      borderMesh.position.set(
-        centerX,
-        -0.01,
-        centerZ,
-      );
-
-      borderMesh.renderOrder =
-        -1;
-
-      borderMesh.visible =
-        false;
-
-      this.root.add(
-        borderMesh,
-      );
-    }
-
     const visual:
       MapVisual = {
         baseMesh,
         overlayMesh,
-        borderMesh,
-        borderTexture,
-        borderGeometry,
         baseTexture,
         overlayTexture,
         geometry,
@@ -2272,6 +2292,8 @@ export class PlayerRenderer {
       this.resizeHandler,
     );
 
+    this.disposeWorldBorder();
+
     for (
       const visual of
         this.mapVisuals.values()
@@ -2280,8 +2302,6 @@ export class PlayerRenderer {
       visual.overlayTexture.dispose();
       visual.geometry.dispose();
 
-      visual.borderTexture?.dispose();
-      visual.borderGeometry?.dispose();
 
       visual.overlayMesh
         .geometry
