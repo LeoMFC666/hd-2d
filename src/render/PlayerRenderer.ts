@@ -3,6 +3,16 @@ import * as THREE from 'three';
 // Teto de tentativas de montagem do catalogo e intervalo entre elas.
 // Sem isso a montagem (que varre o ROM inteiro) era refeita a cada frame
 // enquanto falhasse, travando a thread principal.
+// Quantos metatiles de borda desenhar em volta do mapa ativo.
+const MAP_PADDING_METATILES =
+  12;
+
+const GBA_ROM_BASE_ADDRESS =
+  0x08000000;
+
+const METATILE_ID_MASK =
+  0x03ff;
+
 const MAX_CATALOG_BUILD_ATTEMPTS =
   8;
 
@@ -36,6 +46,18 @@ const GBA_METATILE_PIXELS =
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
+
+  // Plano de padding: repete o bloco de borda do layout em volta do mapa,
+  // eliminando o vazio preto nas bordas. Fica logo abaixo do mapa e so e
+  // exibido para o mapa ativo, para nunca disputar profundidade com os
+  // mapas vizinhos ja posicionados.
+  borderMesh?: THREE.Mesh;
+
+  borderTexture?:
+    THREE.DataTexture;
+
+  borderGeometry?:
+    THREE.PlaneGeometry;
 
   baseTexture:
     THREE.DataTexture;
@@ -825,6 +847,12 @@ export class PlayerRenderer {
     const definition: MapDefinition = {
       mapGroup: state.map.mapGroup,
       mapNumber: state.map.mapNumber,
+      // Este caminho monta a definicao a partir do estado vivo, que nao
+      // carrega o bloco de borda; sem endereco, o renderizador apenas nao
+      // desenha padding neste mapa.
+      borderAddress: 0,
+      borderWidth: 2,
+      borderHeight: 2,
       mapLayoutId: state.map.mapLayoutId,
       mapHeaderAddress: state.map.mapHeaderAddress,
       mapLayoutAddress: state.map.mapLayoutAddress,
@@ -888,6 +916,27 @@ export class PlayerRenderer {
     visual.overlayTexture.dispose();
     visual.geometry.dispose();
     visual.overlayMesh.geometry.dispose();
+
+    if (visual.borderMesh) {
+      this.root.remove(
+        visual.borderMesh,
+      );
+
+      const borderMaterial =
+        visual.borderMesh.material;
+
+      if (Array.isArray(borderMaterial)) {
+        borderMaterial.forEach(
+          material => material.dispose(),
+        );
+      } else {
+        borderMaterial.dispose();
+      }
+    }
+
+    visual.borderTexture?.dispose();
+    visual.borderGeometry?.dispose();
+
 
     const baseMaterial =
       visual.baseMesh.material;
@@ -1234,6 +1283,12 @@ export class PlayerRenderer {
         0.002,
         centerZ,
       );
+
+      visual.borderMesh?.position.set(
+        centerX,
+        -0.01,
+        centerZ,
+      );
     }
   }
 
@@ -1270,7 +1325,66 @@ export class PlayerRenderer {
 
       visual.overlayMesh.visible =
         visible;
+
+      if (visual.borderMesh) {
+        // Apenas o mapa ativo mostra padding. Se todos mostrassem, os
+        // planos de padding de mapas vizinhos se sobreporiam entre si e
+        // voltaria o z-fighting.
+        visual.borderMesh.visible =
+          key === this.activeMapKey;
+      }
     }
+  }
+
+  /**
+   * Le os metatiles do bloco de borda do layout, direto do ROM.
+   * Devolve lista vazia quando o layout nao tem borda utilizavel - nesse
+   * caso o mapa simplesmente nao ganha padding.
+   */
+  private readBorderMetatileIds(
+    map: MapDefinition,
+  ): number[] {
+    if (
+      map.borderAddress === 0 ||
+      map.borderWidth <= 0 ||
+      map.borderHeight <= 0
+    ) {
+      return [];
+    }
+
+    const count =
+      map.borderWidth *
+      map.borderHeight;
+
+    const offset =
+      map.borderAddress -
+      GBA_ROM_BASE_ADDRESS;
+
+    if (
+      offset < 0 ||
+      offset + count * 2 >
+        this.romBytes.length
+    ) {
+      return [];
+    }
+
+    const ids: number[] = [];
+
+    for (
+      let index = 0;
+      index < count;
+      index++
+    ) {
+      const value =
+        this.romBytes[offset + index * 2] |
+        (this.romBytes[offset + index * 2 + 1] << 8);
+
+      ids.push(
+        value & METATILE_ID_MASK,
+      );
+    }
+
+    return ids;
   }
 
   private buildMapVisual(
@@ -1287,6 +1401,13 @@ export class PlayerRenderer {
       MapRenderData | null =
       null;
 
+    // Metatiles do bloco de borda, lidos direto do ROM. Sao u16 em
+    // sequencia; os 10 bits baixos identificam o metatile.
+    const borderMetatileIds =
+      this.readBorderMetatileIds(
+        map,
+      );
+
     if (
       !renderData
     ) {
@@ -1299,6 +1420,7 @@ export class PlayerRenderer {
               map.height,
               map.primaryTilesetAddress,
               map.secondaryTilesetAddress,
+              borderMetatileIds,
             );
       } catch (error) {
         console.warn(
@@ -1611,10 +1733,200 @@ export class PlayerRenderer {
       overlayMesh,
     );
 
+    // --- padding de borda ---------------------------------------------
+    // Repete o bloco de borda do layout em volta do mapa. Fica abaixo do
+    // plano do mapa (y negativo) e so aparece para o mapa ativo, de modo
+    // que nunca dispute profundidade com os mapas vizinhos.
+    let borderMesh:
+      THREE.Mesh | undefined;
+
+    let borderTexture:
+      THREE.DataTexture | undefined;
+
+    let borderGeometry:
+      THREE.PlaneGeometry | undefined;
+
+    if (
+      borderMetatileIds.length > 0 &&
+      map.borderWidth > 0 &&
+      map.borderHeight > 0
+    ) {
+      const paddedWidth =
+        map.width +
+        MAP_PADDING_METATILES * 2;
+
+      const paddedHeight =
+        map.height +
+        MAP_PADDING_METATILES * 2;
+
+      const borderTextureWidth =
+        paddedWidth * GBA_METATILE_PIXELS;
+
+      const borderTextureHeight =
+        paddedHeight * GBA_METATILE_PIXELS;
+
+      const borderPixels =
+        new Uint8ClampedArray(
+          borderTextureWidth *
+          borderTextureHeight *
+          4,
+        );
+
+      for (
+        let gridY = 0;
+        gridY < paddedHeight;
+        gridY++
+      ) {
+        for (
+          let gridX = 0;
+          gridX < paddedWidth;
+          gridX++
+        ) {
+          const mapX =
+            gridX - MAP_PADDING_METATILES;
+
+          const mapY =
+            gridY - MAP_PADDING_METATILES;
+
+          // A area do proprio mapa fica transparente: quem desenha ali e
+          // o plano do mapa, que tem mais detalhe.
+          if (
+            mapX >= 0 &&
+            mapX < map.width &&
+            mapY >= 0 &&
+            mapY < map.height
+          ) {
+            continue;
+          }
+
+          const borderX =
+            ((mapX % map.borderWidth) +
+              map.borderWidth) %
+            map.borderWidth;
+
+          const borderY =
+            ((mapY % map.borderHeight) +
+              map.borderHeight) %
+            map.borderHeight;
+
+          const metatileId =
+            borderMetatileIds[
+              borderY * map.borderWidth + borderX
+            ];
+
+          if (
+            metatileId === undefined
+          ) {
+            continue;
+          }
+
+          const graphics =
+            renderData.graphics.get(
+              metatileId,
+            );
+
+          if (!graphics) {
+            continue;
+          }
+
+          for (
+            let sourceY = 0;
+            sourceY < GBA_METATILE_PIXELS;
+            sourceY++
+          ) {
+            const destinationY =
+              (paddedHeight - 1 - gridY) *
+                GBA_METATILE_PIXELS +
+              GBA_METATILE_PIXELS -
+              1 -
+              sourceY;
+
+            for (
+              let sourceX = 0;
+              sourceX < GBA_METATILE_PIXELS;
+              sourceX++
+            ) {
+              const destinationX =
+                gridX * GBA_METATILE_PIXELS +
+                sourceX;
+
+              const sourceOffset =
+                (sourceY * GBA_METATILE_PIXELS +
+                  sourceX) * 4;
+
+              const destinationOffset =
+                (destinationY * borderTextureWidth +
+                  destinationX) * 4;
+
+              borderPixels[destinationOffset] =
+                graphics.basePixels[sourceOffset];
+
+              borderPixels[destinationOffset + 1] =
+                graphics.basePixels[sourceOffset + 1];
+
+              borderPixels[destinationOffset + 2] =
+                graphics.basePixels[sourceOffset + 2];
+
+              borderPixels[destinationOffset + 3] =
+                graphics.basePixels[sourceOffset + 3];
+            }
+          }
+        }
+      }
+
+      borderTexture =
+        this.createMapTexture(
+          borderPixels,
+          borderTextureWidth,
+          borderTextureHeight,
+        );
+
+      borderGeometry =
+        new THREE.PlaneGeometry(
+          paddedWidth,
+          paddedHeight,
+        );
+
+      borderMesh =
+        new THREE.Mesh(
+          borderGeometry,
+          new THREE.MeshBasicMaterial({
+            map: borderTexture,
+            transparent: true,
+            depthWrite: true,
+            side: THREE.DoubleSide,
+          }),
+        );
+
+      borderMesh.rotation.x =
+        -Math.PI / 2;
+
+      // O plano de padding e simetrico, entao compartilha o mesmo centro
+      // do mapa; basta afunda-lo um pouco para ficar atras.
+      borderMesh.position.set(
+        centerX,
+        -0.01,
+        centerZ,
+      );
+
+      borderMesh.renderOrder =
+        -1;
+
+      borderMesh.visible =
+        false;
+
+      this.root.add(
+        borderMesh,
+      );
+    }
+
     const visual:
       MapVisual = {
         baseMesh,
         overlayMesh,
+        borderMesh,
+        borderTexture,
+        borderGeometry,
         baseTexture,
         overlayTexture,
         geometry,
@@ -1967,6 +2279,9 @@ export class PlayerRenderer {
       visual.baseTexture.dispose();
       visual.overlayTexture.dispose();
       visual.geometry.dispose();
+
+      visual.borderTexture?.dispose();
+      visual.borderGeometry?.dispose();
 
       visual.overlayMesh
         .geometry

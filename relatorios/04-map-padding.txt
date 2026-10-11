@@ -1,0 +1,97 @@
+================================================================================
+RELATORIO 04 - ETAPA E1: MAP PADDING (BLOCO DE BORDA)
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. OBJETIVO
+--------------------------------------------------------------------------------
+Eliminar o vazio preto em volta dos mapas, repetindo o bloco de borda que o
+proprio layout do jogo define - o mesmo recurso que o GBA usa para preencher
+a tela fora dos limites do mapa.
+
+2. O QUE FOI IMPLEMENTADO
+--------------------------------------------------------------------------------
+2.1 MapDefinition ganhou borderAddress, borderWidth e borderHeight.
+
+2.2 MapCatalog.readBorder()
+    Le o ponteiro do bloco de borda no offset 0x08 do layout.
+    Dimensoes:
+      - FireRed/LeafGreen: lidas do layout (0x18 e 0x19), validadas em 1..8
+      - Ruby/Sapphire/Emerald: fixadas em 2x2, porque nesses jogos o layout
+        tem 0x18 bytes e esses offsets ja pertencem a outra estrutura - ler
+        de la daria lixo
+    Ponteiro invalido devolve borderAddress 0, e o mapa simplesmente nao
+    ganha padding em vez de ler fora do ROM.
+
+2.3 Gen3StateAdapter.getMapRenderData ganhou extraMetatileIds (opcional)
+    Antes so gerava grafico para metatiles presentes no corpo do mapa; os
+    da borda ficavam de fora. Agora o chamador injeta os ids que faltam.
+
+2.4 PlayerRenderer
+    - readBorderMetatileIds(): le os u16 do bloco de borda do ROM e aplica
+      a mascara 0x03FF para extrair o id do metatile.
+    - Monta um plano extra de (width + 24) x (height + 24) metatiles
+      (MAP_PADDING_METATILES = 12 por lado), com a area do proprio mapa
+      deixada transparente - quem desenha ali e o plano do mapa, que tem
+      mais detalhe.
+    - O plano fica em y = -0.01, renderOrder -1, e so e exibido para o
+      MAPA ATIVO.
+
+3. POR QUE O PADDING SO APARECE NO MAPA ATIVO
+--------------------------------------------------------------------------------
+Decisao deliberada, por causa do erro cometido no commit 597e1b2. Mapas
+conectados sao posicionados lado a lado; um padding de 12 metatiles invade
+o territorio do vizinho. Se todos os mapas exibissem padding ao mesmo tempo,
+os planos ficariam sobrepostos e coplanares e voltaria exatamente o
+z-fighting (faixas horizontais, triangulos pretos) daquele commit.
+Exibindo so no mapa ativo, e com o plano afundado em y, o padding nunca
+disputa profundidade com mapa nenhum.
+
+4. VALIDACAO EXECUTADA
+--------------------------------------------------------------------------------
+Harness em Node rodado contra os ROMs reais, medindo a leitura da borda em
+todos os mapas de cada jogo:
+
+  Emerald : 518 mapas | borda valida: 518 | sem borda: 0
+            dimensoes: 2x2 em 518 mapas
+            (correto: RSE sempre usa borda 2x2)
+
+  FireRed : 425 mapas | borda valida: 425 | sem borda: 0
+            dimensoes: 2x2 em 418 mapas, 3x2 em 7 mapas
+            (correto: FRLG permite bordas maiores em alguns mapas; se os
+             offsets 0x18/0x19 estivessem sendo lidos como lixo, as
+             dimensoes apareceriam espalhadas aleatoriamente, nao
+             concentradas em dois valores plausiveis)
+
+  npx tsc --noEmit -> exit 0, sem erros
+
+5. O QUE NAO FOI VERIFICADO
+--------------------------------------------------------------------------------
+Nenhum teste visual. Segue valendo a limitacao dos relatorios anteriores: o
+dev server subiria no container em nuvem e os navegadores que controlo rodam
+na maquina do usuario.
+
+Alem disso, `vite build` nao roda neste container: falha ao carregar o
+binding nativo do rolldown (erro de ambiente, nao do codigo). A verificacao
+disponivel foi o tsc, que passa limpo.
+
+Pontos a conferir rodando:
+  - a borda aparece em volta do mapa ativo, sem faixa preta
+  - ao andar para um mapa conectado, o padding migra para o novo mapa
+  - interiores: a borda de interior costuma ser preta por design no jogo
+    original, entao pouca ou nenhuma mudanca visivel ali e o esperado
+  - MAP_PADDING_METATILES = 12 e um chute informado; se sobrar borda alem
+    do campo de visao, reduzir, e se ainda faltar, aumentar
+
+6. PROXIMAS ETAPAS (inalteradas)
+--------------------------------------------------------------------------------
+  E2. Religar TilesetAnimationController (agua, plantas) - 1.161 linhas ja
+      escritas e nunca importadas
+  E3. Entidades 3D alem do jogador (NPCs via billboard, a partir do
+      objectState que o Gen3StateAdapter ja le)
+  E4. Voxel 2.5D - extrusao por metatile; o mais pesado, por ultimo
+
+================================================================================
+FIM DO RELATORIO 04
+================================================================================

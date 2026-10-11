@@ -34,8 +34,25 @@ const MAP_LAYOUT_WIDTH_OFFSET =
 const MAP_LAYOUT_HEIGHT_OFFSET =
   0x04;
 
+const MAP_LAYOUT_BORDER_OFFSET =
+  0x08;
+
 const MAP_LAYOUT_MAP_OFFSET =
   0x0c;
+
+// Em FireRed/LeafGreen o layout guarda as dimensoes do bloco de borda.
+// Em Ruby/Sapphire/Emerald nao existem: a borda e sempre 2x2.
+const MAP_LAYOUT_BORDER_WIDTH_OFFSET =
+  0x18;
+
+const MAP_LAYOUT_BORDER_HEIGHT_OFFSET =
+  0x19;
+
+const DEFAULT_BORDER_DIMENSION =
+  2;
+
+const MAX_BORDER_DIMENSION =
+  8;
 
 const MAP_LAYOUT_PRIMARY_TILESET_OFFSET =
   0x10;
@@ -681,6 +698,13 @@ export class MapCatalog {
             mapHeaderAddress,
           );
 
+        const border =
+          this.readBorder(
+            romBytes,
+            layoutOffset,
+            false,
+          );
+
         this.register({
           mapGroup,
           mapNumber,
@@ -692,6 +716,15 @@ export class MapCatalog {
 
           primaryTilesetAddress,
           secondaryTilesetAddress,
+
+          borderAddress:
+            border.borderAddress,
+
+          borderWidth:
+            border.borderWidth,
+
+          borderHeight:
+            border.borderHeight,
 
           width,
           height,
@@ -934,6 +967,13 @@ export class MapCatalog {
             mapHeaderAddress,
           );
 
+        const border =
+          this.readBorder(
+            romBytes,
+            layoutOffset,
+            true,
+          );
+
         this.register({
           mapGroup,
           mapNumber,
@@ -943,6 +983,15 @@ export class MapCatalog {
           mapDataAddress,
           primaryTilesetAddress,
           secondaryTilesetAddress,
+          borderAddress:
+            border.borderAddress,
+
+          borderWidth:
+            border.borderWidth,
+
+          borderHeight:
+            border.borderHeight,
+
           width,
           height,
           worldX: 0,
@@ -1065,9 +1114,19 @@ export class MapCatalog {
       const mapGroup = Number(mapKey.slice(0, separator));
       const mapNumber = Number(mapKey.slice(separator + 1));
 
+      const candidateBorder =
+        this.readBorder(
+          romBytes,
+          candidate.mapLayoutAddress - GBA_ROM_BASE,
+          true,
+        );
+
       this.register({
         mapGroup,
         mapNumber,
+        borderAddress: candidateBorder.borderAddress,
+        borderWidth: candidateBorder.borderWidth,
+        borderHeight: candidateBorder.borderHeight,
         mapLayoutId: candidate.mapLayoutId,
         mapHeaderAddress: candidate.mapHeaderAddress,
         mapLayoutAddress: candidate.mapLayoutAddress,
@@ -1836,6 +1895,87 @@ export class MapCatalog {
     }
 
     return result;
+  }
+
+  /**
+   * Le o bloco de borda de um layout.
+   *
+   * borderDimsInLayout deve ser true apenas para FireRed/LeafGreen, cujo
+   * layout tem 0x1C bytes e carrega largura/altura da borda em 0x18/0x19.
+   * Nos jogos RSE o layout tem 0x18 bytes e esses offsets ja pertencem a
+   * outra estrutura - ler de la daria lixo, por isso a borda e fixada em
+   * 2x2 nesse caso.
+   */
+  private readBorder(
+    romBytes: Uint8Array,
+    layoutOffset: number,
+    borderDimsInLayout: boolean,
+  ): {
+    borderAddress: number;
+    borderWidth: number;
+    borderHeight: number;
+  } {
+    const borderAddress =
+      this.readU32(
+        romBytes,
+        layoutOffset + MAP_LAYOUT_BORDER_OFFSET,
+      );
+
+    let borderWidth =
+      DEFAULT_BORDER_DIMENSION;
+
+    let borderHeight =
+      DEFAULT_BORDER_DIMENSION;
+
+    if (borderDimsInLayout) {
+      const rawWidth =
+        this.readU8(
+          romBytes,
+          layoutOffset + MAP_LAYOUT_BORDER_WIDTH_OFFSET,
+        );
+
+      const rawHeight =
+        this.readU8(
+          romBytes,
+          layoutOffset + MAP_LAYOUT_BORDER_HEIGHT_OFFSET,
+        );
+
+      if (
+        rawWidth >= 1 &&
+        rawWidth <= MAX_BORDER_DIMENSION
+      ) {
+        borderWidth = rawWidth;
+      }
+
+      if (
+        rawHeight >= 1 &&
+        rawHeight <= MAX_BORDER_DIMENSION
+      ) {
+        borderHeight = rawHeight;
+      }
+    }
+
+    // Ponteiro invalido: devolve 0 para o renderizador simplesmente nao
+    // desenhar padding, em vez de ler fora do ROM.
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        borderAddress,
+        borderWidth * borderHeight * 2,
+      )
+    ) {
+      return {
+        borderAddress: 0,
+        borderWidth,
+        borderHeight,
+      };
+    }
+
+    return {
+      borderAddress,
+      borderWidth,
+      borderHeight,
+    };
   }
 
   private isValidMapDimension(

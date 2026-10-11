@@ -909,6 +909,9 @@ export class Gen3StateAdapter {
     height: number,
     primaryTilesetAddress: number,
     secondaryTilesetAddress: number,
+    // Metatiles que nao aparecem no corpo do mapa mas cujo grafico o
+    // chamador precisa - hoje os do bloco de borda, usados no padding.
+    extraMetatileIds?: Iterable<number>,
   ): {
     blocks: MapBlockState[];
     graphics: Map<
@@ -976,6 +979,16 @@ export class Gen3StateAdapter {
         usedMetatiles.add(
           block.metatileId,
         );
+      }
+
+      if (extraMetatileIds) {
+        for (
+          const metatileId of extraMetatileIds
+        ) {
+          usedMetatiles.add(
+            metatileId,
+          );
+        }
       }
 
       const graphics =
