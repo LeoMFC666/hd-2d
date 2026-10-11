@@ -61,12 +61,8 @@ interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
 
-  // Guardados para a animacao de tiles: ela repinta diretamente neste
-  // buffer e marca a textura como suja. Os ids de metatile vao como
-  // Uint16Array (2 bytes por bloco) em vez da lista de objetos, que seria
-  // pesada demais com dezenas de mapas carregados.
-  basePixels: Uint8ClampedArray;
-
+  // Ids de metatile por bloco, para a animacao de tiles montar suas
+  // receitas. Uint16Array (2 bytes por bloco) em vez da lista de objetos.
   metatileIds: Uint16Array;
 
   baseTexture:
@@ -206,7 +202,6 @@ export class PlayerRenderer {
 
     this.tileAnimator =
       new TileAnimator(
-        romBytes,
         stateAdapter.getMemoryReader(),
         stateAdapter,
       );
@@ -2346,7 +2341,6 @@ export class PlayerRenderer {
       MapVisual = {
         baseMesh,
         overlayMesh,
-        basePixels: pixels,
         metatileIds,
         baseTexture,
         overlayTexture,

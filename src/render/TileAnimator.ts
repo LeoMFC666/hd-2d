@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 import type {
   MemoryReader,
@@ -10,51 +10,44 @@ import type {
 
 import type {
   Gen3StateAdapter,
+  TileAnimationSource,
 } from '../gen3/Gen3StateAdapter';
 
 /**
- * Animacao de tiles escrita do zero, substituindo
- * TilesetAnimationController (desligado em 6752e21 por regressao).
+ * Animacao de tiles (agua, borda da agua, flores, plantas e as animacoes
+ * dos tilesets secundarios).
  *
- * O que deu errado no anterior, e que este evita por construcao:
+ * PRINCIPIO: o animador nunca "pinta um tile por cima" do mapa. Ele
+ * RECOMPOE a celula 8x8 inteira, camada por camada, com exatamente as
+ * mesmas regras que Gen3StateAdapter usou para assar o mapa:
  *
- *  1. Tiles duplicados na tela. O anterior escrevia na textura sem usar a
- *     MESMA inversao vertical que PlayerRenderer.buildMapVisual aplica ao
- *     assar o mapa. Aqui a formula de destino e copiada literalmente de la
- *     (ver writeSubtile) - se uma mudar, a outra tem de mudar junto.
+ *   textura base   : [fundo 0x14, se NORMAL] -> camada de baixo ->
+ *                    [camada de cima, se COVERED]
+ *   textura overlay: [camada de cima, se NORMAL ou SPLIT]
  *
- *  2. Custo que derrubava o resto. O anterior registrava TODOS os mapas do
- *     mundo (medido: 197 mil posicoes animadas em Emerald) e repintava na
- *     thread principal, o que atrasava a montagem do catalogo a ponto de
- *     estourar o limite de tentativas - e ai caiam junto conexao de mapas,
- *     Cinnabar e padding. Aqui so o mapa ATIVO e animado, e um mapa acima
- *     de MAX_ANIMATED_POSITIONS e descartado inteiro em vez de travar.
+ * Pintar por cima foi o que apagava a borda da agua: a borda fica na
+ * camada de CIMA de metatiles COVERED, e repintar o tile de agua animado
+ * da camada de baixo depois cobria a borda. Recompondo a celula, a camada
+ * de cima e reaplicada em seguida, como no jogo.
  *
- *  3. Ambiguidade de camada. O anterior mexia nas duas camadas do metatile;
- *     a composicao de camada depende do layerType e divergir dela produz
- *     artefato. Aqui so a camada de baixo (subtiles 0-3) e animada - e onde
- *     ficam agua e vegetacao, que e o caso de uso real.
+ * DE ONDE VEM CADA COISA
+ *   - estrutura dos metatiles, camadas, paletas, divisao primario/
+ *     secundario (512 no RSE, 640 no FRLG): Gen3StateAdapter, as mesmas
+ *     rotinas que montam o mapa. Nada disso e reimplementado aqui.
+ *   - conteudo atual de cada tile: VRAM do emulador. Qualquer tile que o
+ *     jogo anime aparece la, seja do tileset primario ou do secundario -
+ *     nao ha faixa fixa de tiles "animaveis".
  *
- * O animador e puramente visual: le VRAM e paleta, escreve em texturas.
- * Nao toca em MapCatalog, MapWorld nem em nada do pipeline de mundo, entao
- * nao tem como reintroduzir aquelas regressoes.
+ * PROTECAO CONTRA BATALHA/MENUS
+ *   Fora do overworld a VRAM de tiles e reaproveitada (caixa de texto de
+ *   batalha, telas de bolsa e party). Antes de repintar, o animador
+ *   confere os tiles de numero baixo (abaixo de 416, onde o jogo nao
+ *   anima nada) contra o ROM: se divergirem, a VRAM nao esta mostrando
+ *   este mapa e o quadro e ignorado. Assim o mapa 3D nunca recebe lixo.
  */
 
 const GBA_VRAM_BASE =
   0x06000000;
-
-const GBA_PALETTE_RAM_BASE =
-  0x05000000;
-
-// Faixa de tiles do tileset primario que o jogo usa para animacao.
-const ANIMATED_TILE_START =
-  416;
-
-const ANIMATED_TILE_END =
-  512;
-
-const ANIMATED_TILE_COUNT =
-  ANIMATED_TILE_END - ANIMATED_TILE_START;
 
 const TILE_BYTES =
   32;
@@ -62,201 +55,206 @@ const TILE_BYTES =
 const TILE_PIXELS =
   8;
 
+const TILE_AREA =
+  TILE_PIXELS * TILE_PIXELS;
+
 const METATILE_PIXELS =
   16;
 
-// Metatiles do tileset primario; acima disso e secundario, que nao anima.
-const PRIMARY_METATILE_COUNT =
-  512;
+const LAYER_TYPE_NORMAL =
+  0;
 
-const METATILE_ENTRY_BYTES =
-  16;
-
-// Offset do ponteiro de metatiles na struct de tileset. Vale tanto para
-// RSE quanto para FRLG - as structs so divergem depois deste campo.
-const TILESET_METATILES_OFFSET =
-  0x0c;
-
-const GBA_ROM_BASE =
-  0x08000000;
-
-const BG_PALETTE_BYTES =
-  512;
-
-// Offset do ponteiro de paletas na struct de tileset.
-const TILESET_PALETTES_OFFSET =
-  0x08;
-
-// Regra de composicao de camada, identica a de Gen3StateAdapter:
-// camada de baixo sempre na textura base; camada de cima vai para a base
-// quando o metatile e COVERED, e para a overlay quando e NORMAL ou SPLIT.
-const METATILE_LAYER_TYPE_COVERED =
+const LAYER_TYPE_COVERED =
   1;
 
-// Teto de posicoes animadas por mapa. Acima disso o mapa nao anima: e
-// preferivel perder a animacao de um mapa a comprometer a taxa de quadros.
-const MAX_ANIMATED_POSITIONS =
-  6000;
+const LAYER_TYPE_SPLIT =
+  2;
 
-// Intervalo minimo entre leituras da VRAM.
+// Abaixo deste tile o jogo nao anima nada nos tilesets gerais (RSE e FRLG
+// animam a partir do 416). Divergencia aqui significa que a VRAM nao esta
+// com o mapa: batalha, menu de tela cheia ou transicao.
+const FIRST_ANIMATED_GENERAL_TILE =
+  416;
+
+// Tolerancia de tiles baixos divergentes antes de considerar que a VRAM
+// nao e do overworld (hackroms as vezes animam algo fora do padrao).
+const LOW_TILE_MISMATCH_ABSOLUTE =
+  2;
+
+const LOW_TILE_MISMATCH_RATIO =
+  0.05;
+
 const POLL_INTERVAL_MS =
-  60;
+  50;
 
-interface AnimatedPosition {
-  // Onde escrever, em pixels da textura do mapa.
-  destinationX: number;
-  destinationY: number;
-
+interface LayerRef {
   tileId: number;
   palette: number;
   hFlip: boolean;
   vFlip: boolean;
+}
 
-  // Camada de baixo vai na textura base; a de cima, na overlay. Plantas e
-  // flores animam na camada DE CIMA - ignora-la era o motivo de so a agua
-  // animar.
+// Uma celula 8x8 de um metatile numa das texturas. Todos os blocos do
+// mapa que usam o mesmo metatile compartilham a receita: a celula e
+// composta uma vez e copiada para cada bloco.
+interface CellRecipe {
+  quadrant: number;
   overlay: boolean;
+  layers: LayerRef[];
+  blocks: number[];
 }
 
 export class TileAnimator {
-  private readonly romBytes: Uint8Array;
-
   private readonly memoryReader: MemoryReader;
 
-  private readonly stateAdapter: Gen3StateAdapter;
-
-  private positions: AnimatedPosition[] = [];
-
-  private texture: THREE.DataTexture | null = null;
-
-  private overlayTexture: THREE.DataTexture | null = null;
-
-  private overlayPixels: Uint8Array | null = null;
-
-  // Buffer da PROPRIA textura (texture.image.data). Antes o animador
-  // escrevia no array que PlayerRenderer usou para assar o mapa, mas
-  // createMapTexture faz new Uint8Array(pixels) - uma copia. Escrever la
-  // nao mudava nada na tela: a animacao rodava inerte.
-  private texturePixels: Uint8Array | null = null;
-
-  private textureWidth = 0;
+  private readonly adapter: Gen3StateAdapter;
 
   private activeKey: string | null = null;
 
+  private mapWidth = 0;
+
+  private mapHeight = 0;
+
+  private baseTexture: THREE.DataTexture | null = null;
+
+  private overlayTexture: THREE.DataTexture | null = null;
+
+  private basePixels: Uint8Array | null = null;
+
+  private overlayPixels: Uint8Array | null = null;
+
+  private recipes: CellRecipe[] = [];
+
+  private recipesByTile =
+    new Map<number, number[]>();
+
+  // Verdade do ROM para cada tile referenciado (indices 0-15).
+  private romTiles =
+    new Map<number, Uint8Array>();
+
+  // O que esta pintado AGORA nas texturas, por tile. Comeca igual ao ROM,
+  // porque o mapa foi assado a partir do ROM.
+  private paintedTiles =
+    new Map<number, Uint8Array>();
+
+  private palettes: Array<Uint8Array | null> = [];
+
+  private referencedTiles: number[] = [];
+
+  // Tiles abaixo de 416 com verdade no ROM: os do mapa mais as sentinelas
+  // do inicio do tileset. Usados so para decidir se a VRAM e do overworld.
+  private gateTiles: number[] = [];
+
   private lastPollAt = 0;
 
-  private lastTileSignature = '';
-
-  // Desarme automatico: se a animacao lancar, ela se desliga em vez de
-  // derrubar o loop de render. Nenhuma falha aqui pode parar o jogo.
   private disabled = false;
 
-  // Diagnostico: relatado uma vez por mapa, para distinguir "nao ha tile
-  // animado neste mapa" de "a leitura da VRAM nao esta trazendo dado".
-  private vramReported = false;
+  private gateReported = false;
 
-  private palettes: Uint8Array | null = null;
+  private firstFrameReported = false;
+
+  private readonly vramScratch =
+    new Uint8Array(TILE_AREA);
+
+  private readonly cellScratch =
+    new Uint8Array(TILE_AREA * 4);
 
   constructor(
-    romBytes: Uint8Array,
     memoryReader: MemoryReader,
-    stateAdapter: Gen3StateAdapter,
+    adapter: Gen3StateAdapter,
   ) {
-    this.romBytes = romBytes;
     this.memoryReader = memoryReader;
-    this.stateAdapter = stateAdapter;
+    this.adapter = adapter;
   }
 
   /**
-   * Passa a animar este mapa, descartando o anterior. Chamar sempre que o
-   * mapa ativo mudar.
+   * Passa a animar este mapa. Chamar todo frame e seguro: sai na hora se
+   * o mapa ja e o ativo.
    */
   setActiveMap(
     key: string,
     map: MapDefinition,
     metatileIds: Uint16Array,
-    texture: THREE.DataTexture,
+    baseTexture: THREE.DataTexture,
     overlayTexture: THREE.DataTexture,
   ): void {
     if (this.activeKey === key) {
       return;
     }
 
+    this.clear();
+
     this.activeKey = key;
-    this.texture = texture;
 
-    this.texturePixels =
-      (texture.image as { data?: Uint8Array }).data ?? null;
-
-    this.overlayTexture = overlayTexture;
-
-    this.overlayPixels =
-      (overlayTexture.image as { data?: Uint8Array }).data ?? null;
-    this.textureWidth = map.width * METATILE_PIXELS;
-    this.lastTileSignature = '';
-
-    this.palettes =
-      this.readTilesetPalettes(
+    const source =
+      this.adapter.getTileAnimationSource(
         map.primaryTilesetAddress,
-      );
-
-    this.positions =
-      this.collectPositions(
-        map,
+        map.secondaryTilesetAddress,
         metatileIds,
       );
 
-    this.vramReported = false;
+    if (!source) {
+      console.warn(
+        '[anim] mapa',
+        key,
+        '- tilesets nao resolvidos; sem animacao.',
+      );
+
+      return;
+    }
+
+    this.baseTexture = baseTexture;
+    this.overlayTexture = overlayTexture;
+
+    this.basePixels =
+      (baseTexture.image as { data?: Uint8Array }).data ?? null;
+
+    this.overlayPixels =
+      (overlayTexture.image as { data?: Uint8Array }).data ?? null;
+
+    this.mapWidth = map.width;
+    this.mapHeight = map.height;
+
+    this.buildRecipes(
+      metatileIds,
+      source,
+    );
 
     console.log(
       '[anim] mapa',
       key,
-      '- posicoes animadas:',
-      this.positions.length,
-      '| paletas do ROM:',
-      this.palettes ? 'ok' : 'FALHOU',
-      '| buffer da textura:',
-      this.texturePixels ? this.texturePixels.length : 'FALHOU',
+      '- celulas:',
+      this.recipes.length,
+      '| tiles referenciados:',
+      this.referencedTiles.length,
     );
   }
 
   clear(): void {
     this.activeKey = null;
-    this.texture = null;
-    this.texturePixels = null;
+    this.baseTexture = null;
     this.overlayTexture = null;
+    this.basePixels = null;
     this.overlayPixels = null;
-    this.positions = [];
-    this.lastTileSignature = '';
+    this.recipes = [];
+    this.recipesByTile = new Map();
+    this.romTiles = new Map();
+    this.paintedTiles = new Map();
+    this.palettes = [];
+    this.referencedTiles = [];
+    this.gateTiles = [];
+    this.gateReported = false;
+    this.firstFrameReported = false;
   }
 
   /**
-   * Repinta as posicoes animadas, se a VRAM mudou desde a ultima leitura.
-   * Seguro de chamar todo frame: faz throttle e sai cedo quando nao ha o
-   * que fazer.
+   * Seguro de chamar todo frame: limita a frequencia e, se algo der
+   * errado, desliga a animacao em vez de derrubar o loop de render.
    */
   update(): void {
-    if (this.disabled) {
-      return;
-    }
-
-    try {
-      this.updateInternal();
-    } catch (error) {
-      this.disabled = true;
-
-      console.warn(
-        'Animacao de tiles desligada apos erro:',
-        error,
-      );
-    }
-  }
-
-  private updateInternal(): void {
     if (
-      this.positions.length === 0 ||
-      !this.texture ||
-      !this.texturePixels
+      this.disabled ||
+      this.referencedTiles.length === 0
     ) {
       return;
     }
@@ -272,510 +270,481 @@ export class TileAnimator {
 
     this.lastPollAt = now;
 
-    const tileBytes =
-      this.memoryReader.readRange(
-        GBA_VRAM_BASE +
-          ANIMATED_TILE_START * TILE_BYTES,
-        ANIMATED_TILE_COUNT * TILE_BYTES,
+    try {
+      this.poll();
+    } catch (error) {
+      this.disabled = true;
+
+      console.warn(
+        '[anim] desligada apos erro:',
+        error,
       );
-
-    if (
-      tileBytes.length <
-      ANIMATED_TILE_COUNT * TILE_BYTES
-    ) {
-      return;
-    }
-
-    // Assinatura barata: so repinta quando os tiles realmente mudaram.
-    // Evita trabalho em mapas sem animacao ativa no momento.
-    if (!this.vramReported) {
-      this.vramReported = true;
-
-      this.probeMemory(
-        tileBytes,
-      );
-    }
-
-    const signature =
-      this.buildSignature(
-        tileBytes,
-      );
-
-    if (
-      signature === this.lastTileSignature
-    ) {
-      return;
-    }
-
-    this.lastTileSignature = signature;
-
-    // Paletas do ROM, nao da palette RAM: medido neste build, uma leitura
-    // de 512 bytes em 0x05000000 volta inteiramente zerada, o que pintaria
-    // tudo de preto. As paletas do tileset no ROM sao as mesmas que o jogo
-    // carrega, e estao sempre disponiveis.
-    const paletteBytes =
-      this.palettes;
-
-    if (!paletteBytes) {
-      return;
-    }
-
-    for (
-      const position of this.positions
-    ) {
-      this.writeSubtile(
-        position,
-        tileBytes,
-        paletteBytes,
-      );
-    }
-
-    this.texture.needsUpdate = true;
-
-    if (this.overlayTexture) {
-      this.overlayTexture.needsUpdate = true;
     }
   }
 
-  /**
-   * Le as 16 paletas do tileset primario direto do ROM.
-   */
-  private readTilesetPalettes(
-    tilesetAddress: number,
-  ): Uint8Array | null {
-    const palettesAddress =
-      this.readU32(
-        tilesetAddress -
-          GBA_ROM_BASE +
-          TILESET_PALETTES_OFFSET,
-      );
+  // ----------------------------------------------------------------------
 
-    if (
-      palettesAddress < GBA_ROM_BASE
-    ) {
-      return null;
-    }
-
-    const offset =
-      palettesAddress - GBA_ROM_BASE;
-
-    if (
-      offset + BG_PALETTE_BYTES >
-      this.romBytes.length
-    ) {
-      return null;
-    }
-
-    return this.romBytes.slice(
-      offset,
-      offset + BG_PALETTE_BYTES,
-    );
-  }
-
-  /**
-   * Sonda de diagnostico, uma vez por mapa.
-   *
-   * A leitura em 0x06003400 voltou inteiramente zerada, mas as leituras de
-   * ROM e EWRAM funcionam (o estado do jogo depende delas). Isso aponta
-   * para o ENDERECO, nao para a leitura em si: os tiles do mapa podem
-   * estar em outra base de caracteres da VRAM. Em vez de adivinhar, esta
-   * sonda varre a VRAM inteira em blocos de 4 KB e mostra onde ha dado,
-   * alem de conferir paleta e EWRAM como controle.
-   */
-  private probeMemory(
-    tileBytes: Uint8Array,
-  ): void {
-    const countNonZero =
-      (bytes: Uint8Array): number => {
-        let total = 0;
-
-        for (
-          let index = 0;
-          index < bytes.length;
-          index++
-        ) {
-          if (bytes[index] !== 0) {
-            total++;
-          }
-        }
-
-        return total;
-      };
-
-    console.log(
-      '[anim] faixa usada 0x06003400:',
-      countNonZero(tileBytes),
-      'de',
-      tileBytes.length,
-      'nao-zero',
-    );
-
-    // Controle: se estes vierem zerados, o problema e a leitura, nao o
-    // endereco.
-    console.log(
-      '[anim] controle EWRAM 0x02000000:',
-      countNonZero(
-        this.memoryReader.readRange(0x02000000, 256),
-      ),
-      '/256  | paleta 0x05000000:',
-      countNonZero(
-        this.memoryReader.readRange(GBA_PALETTE_RAM_BASE, 512),
-      ),
-      '/512',
-    );
-
-    // Mapa da VRAM: 96 KB em blocos de 4 KB.
-    const chunks: string[] = [];
-
-    for (
-      let offset = 0;
-      offset < 0x18000;
-      offset += 0x1000
-    ) {
-      const bytes =
-        this.memoryReader.readRange(
-          GBA_VRAM_BASE + offset,
-          256,
-        );
-
-      const nonZero =
-        countNonZero(bytes);
-
-      chunks.push(
-        '0x' +
-          (GBA_VRAM_BASE + offset).toString(16) +
-          ':' +
-          nonZero,
-      );
-    }
-
-    console.log(
-      '[anim] mapa da VRAM (amostra de 256B por bloco de 4KB):',
-      chunks.join('  '),
-    );
-  }
-
-  /**
-   * Varre o mapa e anota cada subtile da camada de baixo que usa um tile
-   * da faixa animada, ja convertendo para coordenada de pixel na textura.
-   */
-  private collectPositions(
-    map: MapDefinition,
+  private buildRecipes(
     metatileIds: Uint16Array,
-  ): AnimatedPosition[] {
-    const metatilesAddress =
-      this.readU32(
-        map.primaryTilesetAddress -
-          GBA_ROM_BASE +
-          TILESET_METATILES_OFFSET,
-      );
-
-    if (
-      metatilesAddress < GBA_ROM_BASE
-    ) {
-      return [];
-    }
-
-    const metatilesOffset =
-      metatilesAddress - GBA_ROM_BASE;
-
-    const secondaryMetatilesAddress =
-      this.readU32(
-        map.secondaryTilesetAddress -
-          GBA_ROM_BASE +
-          TILESET_METATILES_OFFSET,
-      );
-
-    const secondaryMetatilesOffset =
-      secondaryMetatilesAddress >= GBA_ROM_BASE
-        ? secondaryMetatilesAddress - GBA_ROM_BASE
-        : -1;
-
-    const result: AnimatedPosition[] = [];
+    source: TileAnimationSource,
+  ): void {
+    const blocksByMetatile =
+      new Map<number, number[]>();
 
     for (
-      let blockY = 0;
-      blockY < map.height;
-      blockY++
+      let blockIndex = 0;
+      blockIndex < metatileIds.length;
+      blockIndex++
     ) {
-      for (
-        let blockX = 0;
-        blockX < map.width;
-        blockX++
-      ) {
-        const metatileId =
-          metatileIds[blockY * map.width + blockX];
+      const metatileId =
+        metatileIds[blockIndex];
 
-        if (metatileId === undefined) {
-          continue;
+      let blocks =
+        blocksByMetatile.get(metatileId);
+
+      if (!blocks) {
+        blocks = [];
+        blocksByMetatile.set(metatileId, blocks);
+      }
+
+      blocks.push(blockIndex);
+    }
+
+    const background: LayerRef = {
+      tileId: source.backgroundTileId,
+      palette: source.backgroundPalette,
+      hFlip: false,
+      vFlip: false,
+    };
+
+    for (
+      const [metatileId, blocks] of blocksByMetatile
+    ) {
+      const layout =
+        source.layouts.get(metatileId);
+
+      if (!layout) {
+        continue;
+      }
+
+      const layerType =
+        layout.layerType;
+
+      // Outros layerTypes nao sao desenhados pelo adapter; mantem igual.
+      if (
+        layerType !== LAYER_TYPE_NORMAL &&
+        layerType !== LAYER_TYPE_COVERED &&
+        layerType !== LAYER_TYPE_SPLIT
+      ) {
+        continue;
+      }
+
+      for (
+        let quadrant = 0;
+        quadrant < 4;
+        quadrant++
+      ) {
+        const bottom =
+          layout.tiles[quadrant];
+
+        const top =
+          layout.tiles[quadrant + 4];
+
+        const baseLayers: LayerRef[] = [];
+
+        if (layerType === LAYER_TYPE_NORMAL) {
+          baseLayers.push(background);
         }
 
-        // Metatiles do tileset SECUNDARIO tambem contam. A borda da agua
-        // costuma ser um metatile secundario que usa os tiles animados do
-        // tileset primario; ignorar o secundario era o que deixava a
-        // orla parada.
-        const entryOffset =
-          metatileId < PRIMARY_METATILE_COUNT
-            ? metatilesOffset +
-              metatileId * METATILE_ENTRY_BYTES
-            : secondaryMetatilesOffset +
-              (metatileId - PRIMARY_METATILE_COUNT) *
-                METATILE_ENTRY_BYTES;
+        baseLayers.push(bottom);
+
+        if (layerType === LAYER_TYPE_COVERED) {
+          baseLayers.push(top);
+        }
+
+        this.addRecipe({
+          quadrant,
+          overlay: false,
+          layers: baseLayers,
+          blocks,
+        });
 
         if (
-          entryOffset < 0 ||
-          entryOffset + METATILE_ENTRY_BYTES >
-            this.romBytes.length
+          layerType === LAYER_TYPE_NORMAL ||
+          layerType === LAYER_TYPE_SPLIT
         ) {
-          continue;
-        }
-
-        const layerType =
-          this.stateAdapter.getMetatileGraphics(
-            metatileId,
-          )?.layerType ?? 0;
-
-        // As 8 subtiles: 0-3 camada de baixo, 4-7 camada de cima.
-        for (
-          let subtile = 0;
-          subtile < 8;
-          subtile++
-        ) {
-          const raw =
-            this.readU16(
-              entryOffset + subtile * 2,
-            );
-
-          const tileId =
-            raw & 0x03ff;
-
-          if (
-            tileId < ANIMATED_TILE_START ||
-            tileId >= ANIMATED_TILE_END
-          ) {
-            continue;
-          }
-
-          if (
-            result.length >= MAX_ANIMATED_POSITIONS
-          ) {
-            // Mapa denso demais: desiste da animacao dele inteiro em vez
-            // de arrastar a taxa de quadros.
-            return [];
-          }
-
-          const positionInLayer =
-            subtile % 4;
-
-          const columnInMetatile =
-            positionInLayer % 2;
-
-          const rowInMetatile =
-            Math.floor(positionInLayer / 2);
-
-          // Origem do subtile dentro do metatile, em pixels.
-          const sourceX =
-            columnInMetatile * TILE_PIXELS;
-
-          const sourceY =
-            rowInMetatile * TILE_PIXELS;
-
-          // MESMA formula de buildMapVisual. A textura do mapa e assada
-          // invertida na vertical; escrever sem esta inversao foi o que
-          // duplicava os tiles na versao anterior.
-          const destinationX =
-            blockX * METATILE_PIXELS + sourceX;
-
-          const destinationY =
-            (map.height - 1 - blockY) * METATILE_PIXELS +
-            METATILE_PIXELS - 1 - sourceY -
-            (TILE_PIXELS - 1);
-
-          result.push({
-            destinationX,
-            destinationY,
-            tileId,
-            palette: (raw >> 12) & 0x0f,
-            hFlip: (raw & 0x0400) !== 0,
-            vFlip: (raw & 0x0800) !== 0,
-            // COVERED desenha a camada de cima na propria textura base.
-            overlay:
-              subtile >= 4 &&
-              layerType !== METATILE_LAYER_TYPE_COVERED,
+          this.addRecipe({
+            quadrant,
+            overlay: true,
+            layers: [top],
+            blocks,
           });
         }
       }
     }
 
-    return result;
-  }
+    this.palettes =
+      source.palettes;
 
-  /**
-   * Decodifica um tile 4bpp da VRAM e escreve seus 8x8 pixels na textura.
-   */
-  private writeSubtile(
-    position: AnimatedPosition,
-    tileBytes: Uint8Array,
-    paletteBytes: Uint8Array,
-  ): void {
-    const pixels =
-      position.overlay
-        ? this.overlayPixels
-        : this.texturePixels;
+    this.romTiles =
+      source.romTiles;
 
-    if (!pixels) {
-      return;
+    // So tiles com verdade no ROM entram: o adapter nao desenha tile que
+    // nao resolve, entao o animador tambem nao.
+    for (
+      const tileId of this.recipesByTile.keys()
+    ) {
+      const rom =
+        source.romTiles.get(tileId);
+
+      if (!rom) {
+        continue;
+      }
+
+      this.paintedTiles.set(tileId, Uint8Array.from(rom));
+      this.referencedTiles.push(tileId);
     }
 
-    const tileOffset =
-      (position.tileId - ANIMATED_TILE_START) *
-      TILE_BYTES;
-
-    const paletteOffset =
-      position.palette * 32;
-
     for (
-      let y = 0;
-      y < TILE_PIXELS;
-      y++
+      const tileId of source.romTiles.keys()
     ) {
-      for (
-        let x = 0;
-        x < TILE_PIXELS;
-        x++
-      ) {
-        const sampleX =
-          position.hFlip
-            ? TILE_PIXELS - 1 - x
-            : x;
-
-        const sampleY =
-          position.vFlip
-            ? TILE_PIXELS - 1 - y
-            : y;
-
-        // 4bpp: dois pixels por byte, nibble baixo primeiro.
-        const byteIndex =
-          tileOffset +
-          sampleY * 4 +
-          (sampleX >> 1);
-
-        if (
-          byteIndex >= tileBytes.length
-        ) {
-          continue;
-        }
-
-        const byte =
-          tileBytes[byteIndex];
-
-        const colorIndex =
-          (sampleX & 1) === 0
-            ? byte & 0x0f
-            : (byte >> 4) & 0x0f;
-
-        // Indice 0 e transparente no GBA. Pintar a cor 0 por cima
-        // apagava o que ja estava assado ali - era o que deixava tiles
-        // "invisiveis" e comia a borda da agua. Agora o pixel original
-        // fica intacto.
-        if (colorIndex === 0) {
-          continue;
-        }
-
-        const colorOffset =
-          paletteOffset + colorIndex * 2;
-
-        if (
-          colorOffset + 1 >= paletteBytes.length
-        ) {
-          continue;
-        }
-
-        const color =
-          paletteBytes[colorOffset] |
-          (paletteBytes[colorOffset + 1] << 8);
-
-        // BGR555 -> RGB888
-        const red =
-          Math.round(((color & 0x1f) * 255) / 31);
-
-        const green =
-          Math.round((((color >> 5) & 0x1f) * 255) / 31);
-
-        const blue =
-          Math.round((((color >> 10) & 0x1f) * 255) / 31);
-
-        // A textura e invertida na vertical, entao a linha do tile tambem
-        // cresce ao contrario dentro do bloco de destino.
-        const targetY =
-          position.destinationY +
-          (TILE_PIXELS - 1 - y);
-
-        const targetX =
-          position.destinationX + x;
-
-        const destinationOffset =
-          (targetY * this.textureWidth + targetX) * 4;
-
-        if (
-          destinationOffset < 0 ||
-          destinationOffset + 3 >= pixels.length
-        ) {
-          continue;
-        }
-
-        pixels[destinationOffset] = red;
-        pixels[destinationOffset + 1] = green;
-        pixels[destinationOffset + 2] = blue;
-        pixels[destinationOffset + 3] = 255;
+      if (tileId < FIRST_ANIMATED_GENERAL_TILE) {
+        this.gateTiles.push(tileId);
       }
     }
   }
 
-  /**
-   * Amostra barata dos bytes de tile, so para detectar mudanca.
-   */
-  private buildSignature(
-    tileBytes: Uint8Array,
-  ): string {
-    let signature = '';
+  private addRecipe(
+    recipe: CellRecipe,
+  ): void {
+    const index =
+      this.recipes.length;
+
+    this.recipes.push(recipe);
 
     for (
-      let index = 0;
-      index < tileBytes.length;
-      index += 16
+      const layer of recipe.layers
     ) {
-      signature += tileBytes[index].toString(16);
+      let list =
+        this.recipesByTile.get(layer.tileId);
+
+      if (!list) {
+        list = [];
+        this.recipesByTile.set(layer.tileId, list);
+      }
+
+      if (list[list.length - 1] !== index) {
+        list.push(index);
+      }
+    }
+  }
+
+  private poll(): void {
+    // 1) A VRAM esta mostrando este mapa? Confere os tiles que nunca
+    //    animam contra o ROM antes de tocar em qualquer textura.
+    let lowMismatch = 0;
+
+    for (
+      const tileId of this.gateTiles
+    ) {
+      const rom =
+        this.romTiles.get(tileId);
+
+      if (
+        rom &&
+        !sameIndices(this.readVramTile(tileId), rom)
+      ) {
+        lowMismatch++;
+      }
     }
 
-    return signature;
-  }
+    const tolerance =
+      Math.max(
+        LOW_TILE_MISMATCH_ABSOLUTE,
+        Math.ceil(this.gateTiles.length * LOW_TILE_MISMATCH_RATIO),
+      );
 
-  private readU16(
-    offset: number,
-  ): number {
-    return (
-      this.romBytes[offset] |
-      (this.romBytes[offset + 1] << 8)
-    );
-  }
+    if (lowMismatch > tolerance) {
+      if (!this.gateReported) {
+        this.gateReported = true;
 
-  private readU32(
-    offset: number,
-  ): number {
-    if (
-      offset < 0 ||
-      offset + 3 >= this.romBytes.length
-    ) {
-      return 0;
+        console.log(
+          '[anim] VRAM fora do overworld (',
+          lowMismatch,
+          'tiles base divergem do ROM ); aguardando.',
+        );
+      }
+
+      return;
     }
 
-    return (
-      (this.romBytes[offset] |
-        (this.romBytes[offset + 1] << 8) |
-        (this.romBytes[offset + 2] << 16) |
-        (this.romBytes[offset + 3] << 24)) >>>
-      0
-    );
+    // 2) Quais tiles do mapa mudaram desde a ultima pintura.
+    const changedTiles: number[] = [];
+
+    const freshTiles =
+      new Map<number, Uint8Array>();
+
+    for (
+      const tileId of this.referencedTiles
+    ) {
+      const vram =
+        this.readVramTile(tileId);
+
+      const painted =
+        this.paintedTiles.get(tileId);
+
+      if (
+        painted &&
+        !sameIndices(vram, painted)
+      ) {
+        changedTiles.push(tileId);
+        freshTiles.set(tileId, Uint8Array.from(vram));
+      }
+    }
+
+    if (changedTiles.length === 0) {
+      return;
+    }
+
+    for (
+      const [tileId, indices] of freshTiles
+    ) {
+      this.paintedTiles.set(tileId, indices);
+    }
+
+    const dirty =
+      new Set<number>();
+
+    for (
+      const tileId of changedTiles
+    ) {
+      for (
+        const recipeIndex of this.recipesByTile.get(tileId) ?? []
+      ) {
+        dirty.add(recipeIndex);
+      }
+    }
+
+    let touchedBase = false;
+    let touchedOverlay = false;
+
+    for (
+      const recipeIndex of dirty
+    ) {
+      const recipe =
+        this.recipes[recipeIndex];
+
+      if (
+        this.paintRecipe(recipe)
+      ) {
+        if (recipe.overlay) {
+          touchedOverlay = true;
+        } else {
+          touchedBase = true;
+        }
+      }
+    }
+
+    if (touchedBase && this.baseTexture) {
+      this.baseTexture.needsUpdate = true;
+    }
+
+    if (touchedOverlay && this.overlayTexture) {
+      this.overlayTexture.needsUpdate = true;
+    }
+
+    if (!this.firstFrameReported) {
+      this.firstFrameReported = true;
+
+      console.log(
+        '[anim] primeiro quadro aplicado:',
+        changedTiles.length,
+        'tiles mudaram,',
+        dirty.size,
+        'celulas recompostas.',
+      );
+    }
   }
+
+  /**
+   * Compoe a celula 8x8 e copia para todos os blocos que usam o metatile.
+   */
+  private paintRecipe(
+    recipe: CellRecipe,
+  ): boolean {
+    const target =
+      recipe.overlay
+        ? this.overlayPixels
+        : this.basePixels;
+
+    if (!target) {
+      return false;
+    }
+
+    const cell =
+      this.cellScratch;
+
+    // Celula comeca transparente, exatamente como o buffer do adapter.
+    cell.fill(0);
+
+    for (
+      const layer of recipe.layers
+    ) {
+      const indices =
+        this.paintedTiles.get(layer.tileId);
+
+      const palette =
+        this.palettes[layer.palette];
+
+      if (!indices || !palette) {
+        continue;
+      }
+
+      for (
+        let y = 0;
+        y < TILE_PIXELS;
+        y++
+      ) {
+        const sourceY =
+          layer.vFlip
+            ? TILE_PIXELS - 1 - y
+            : y;
+
+        for (
+          let x = 0;
+          x < TILE_PIXELS;
+          x++
+        ) {
+          const sourceX =
+            layer.hFlip
+              ? TILE_PIXELS - 1 - x
+              : x;
+
+          const colorIndex =
+            indices[sourceY * TILE_PIXELS + sourceX];
+
+          // Indice 0 e transparente: deixa aparecer a camada de baixo.
+          if (colorIndex === 0) {
+            continue;
+          }
+
+          const offset =
+            (y * TILE_PIXELS + x) * 4;
+
+          cell[offset] = palette[colorIndex * 3];
+          cell[offset + 1] = palette[colorIndex * 3 + 1];
+          cell[offset + 2] = palette[colorIndex * 3 + 2];
+          cell[offset + 3] = 255;
+        }
+      }
+    }
+
+    const textureWidth =
+      this.mapWidth * METATILE_PIXELS;
+
+    const quadrantX =
+      (recipe.quadrant % 2) * TILE_PIXELS;
+
+    const quadrantY =
+      Math.floor(recipe.quadrant / 2) * TILE_PIXELS;
+
+    for (
+      const blockIndex of recipe.blocks
+    ) {
+      const blockX =
+        blockIndex % this.mapWidth;
+
+      const blockY =
+        Math.floor(blockIndex / this.mapWidth);
+
+      for (
+        let y = 0;
+        y < TILE_PIXELS;
+        y++
+      ) {
+        // MESMA inversao vertical de PlayerRenderer.buildMapVisual:
+        // pixel (mx, my) do metatile vai para
+        // (bx*16 + mx, (H-1-by)*16 + 15 - my).
+        const metatileY =
+          quadrantY + y;
+
+        const textureY =
+          (this.mapHeight - 1 - blockY) * METATILE_PIXELS +
+          METATILE_PIXELS - 1 - metatileY;
+
+        const rowStart =
+          (textureY * textureWidth +
+            blockX * METATILE_PIXELS +
+            quadrantX) * 4;
+
+        target.set(
+          cell.subarray(
+            y * TILE_PIXELS * 4,
+            (y + 1) * TILE_PIXELS * 4,
+          ),
+          rowStart,
+        );
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Le um tile 4bpp da VRAM e devolve 64 indices, no mesmo layout de
+   * TileGraphicsDecoder.decode4bppTile (nibble baixo primeiro).
+   */
+  private readVramTile(
+    tileId: number,
+  ): Uint8Array {
+    const out =
+      this.vramScratch;
+
+    const address =
+      GBA_VRAM_BASE + tileId * TILE_BYTES;
+
+    for (
+      let word = 0;
+      word < 8;
+      word++
+    ) {
+      const value =
+        this.memoryReader.readU32(
+          address + word * 4,
+        );
+
+      // Cada palavra de 32 bits = uma linha de 8 pixels.
+      for (
+        let pixel = 0;
+        pixel < 8;
+        pixel++
+      ) {
+        out[word * 8 + pixel] =
+          (value >>> (pixel * 4)) & 0x0f;
+      }
+    }
+
+    return out;
+  }
+}
+
+function sameIndices(
+  left: Uint8Array,
+  right: Uint8Array,
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (
+    let index = 0;
+    index < left.length;
+    index++
+  ) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }

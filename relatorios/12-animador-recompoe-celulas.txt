@@ -1,0 +1,87 @@
+================================================================================
+RELATORIO 12 - ANIMADOR DE TILES: RECOMPOSICAO DE CELULAS (VERIFICADO)
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. POR QUE A BORDA DA AGUA SUMIA NO FIRE RED - DUAS CAUSAS
+--------------------------------------------------------------------------------
+1.1 Metatile errado no FRLG
+    O tileset primario do FRLG tem 640 metatiles; o do RSE tem 512. O
+    animador usava 512 nos dois jogos, entao no Fire Red os metatiles
+    512-639 (primarios) eram lidos da tabela SECUNDARIA - metatile errado,
+    tiles errados escritos no mapa.
+
+1.2 O animador pintava por cima da camada de cima
+    A borda da agua fica na camada de CIMA de metatiles COVERED, desenhada
+    por cima da agua. O animador repintava o tile de agua animado depois,
+    cobrindo a borda. Pular o indice 0 nao ajudava: agua e opaca.
+
+2. A REESCRITA
+--------------------------------------------------------------------------------
+2.1 O animador nao reimplementa mais nada do jogo
+    Novo Gen3StateAdapter.getTileAnimationSource() devolve estrutura dos
+    metatiles, camadas, paletas (ja em RGB, com a mesma conversao 5->8
+    bits) e os tiles do ROM, usando as MESMAS rotinas que montam o mapa:
+    resolveMetatileSource, readMetatile, resolvePaletteSource, readPalette,
+    resolveTileSource. A divisao 512/640 vem de la. Nao ha como divergir.
+
+2.2 Recompoe a celula 8x8 inteira, camada por camada
+      base   : [fundo 0x14 se NORMAL] -> baixo -> [cima se COVERED]
+      overlay: [cima se NORMAL ou SPLIT]
+    Mesma ordem de Gen3StateAdapter.readMetatileRgba. A borda e
+    reaplicada depois da agua, como no jogo.
+
+2.3 Qualquer tile animado, de qualquer tileset
+    Nao ha mais faixa fixa 416-512. O animador compara cada tile do mapa
+    com o que esta pintado e recompoe as celulas que usam os tiles que
+    mudaram. Animacoes de tilesets SECUNDARIOS (flores de Mauville, agua de
+    Pacifidlog/Sootopolis, fonte de Celadon etc.) entram automaticamente.
+
+2.4 Receitas por metatile
+    Todos os blocos com o mesmo metatile compartilham a celula composta:
+    compoe uma vez, copia para todos. Custo proporcional a metatiles
+    distintos, nao ao tamanho do mapa.
+
+2.5 Protecao contra batalha e menus
+    Antes de tocar em textura, o animador confere contra o ROM os tiles
+    que o jogo NUNCA anima: os do mapa abaixo de 416 e mais 128 sentinelas
+    do inicio do tileset primario. Batalha e menus de tela cheia
+    sobrescrevem essa faixa primeiro; divergiu, o quadro e ignorado.
+    As sentinelas foram adicionadas depois que o teste pegou 5 mapas (rotas
+    de mar, quase so agua) em que a protecao sem elas falhava.
+
+3. VERIFICACAO - tools/verify-animator.mjs
+--------------------------------------------------------------------------------
+O harness roda o Gen3StateAdapter REAL em Node contra os ROMs, assa cada
+mapa replicando buildMapVisual literalmente e faz tres testes em TODOS os
+mapas de cada jogo:
+
+  1. IDENTIDADE: com VRAM == ROM, o animador recompoe todas as celulas e o
+     resultado tem de ser byte a byte igual ao mapa assado.
+  2. BORDA: simula um quadro de animacao trocando a cor dos tiles animados;
+     em toda celula COVERED com agua animada embaixo, cada pixel visivel da
+     camada de cima tem de continuar com a cor da camada de cima.
+  3. BATALHA: sobrescreve a faixa baixa da VRAM; nenhum pixel pode mudar.
+
+RESULTADOS
+  FireRed rev1     : 425/425 identicos | 462.625 px de borda, 0 perdidos | 0/169 alterados
+  Perfect Fire Red : 425/425 identicos | 466.423 px de borda, 0 perdidos | 0/168 alterados
+  Emerald          : 518/518 identicos | 1.442.480 px de borda, 0 perdidos | 0/100 alterados
+
+Este e o primeiro componente do projeto verificado contra o pipeline real
+de ponta a ponta antes de ir para o usuario.
+
+Rodar: compilar Gen3StateAdapter, TileAnimator e MapCatalog para JS e
+executar `node tools/verify-animator.mjs <rom.gba> ...` (detalhes no topo
+do arquivo).
+
+4. O QUE O HARNESS NAO COBRE
+--------------------------------------------------------------------------------
+A leitura real da VRAM do mGBA (o harness simula a VRAM). Essa parte ja foi
+confirmada em execucao pelos logs do usuario no relatorio 10: a faixa
+0x06003400 trazia 2.338 de 3.072 bytes nao-zero.
+
+================================================================================
+FIM DO RELATORIO 12
+================================================================================

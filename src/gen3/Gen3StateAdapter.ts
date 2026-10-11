@@ -126,6 +126,10 @@ const FRLG_NUM_PALS_IN_PRIMARY =
 const NUM_PALS_TOTAL =
   13;
 
+// Tiles do inicio do tileset primario usados como sentinela pela animacao.
+const TILE_ANIMATION_SENTINEL_TILES =
+  128;
+
 const MAPGRID_METATILE_ID_MASK =
   0x03ff;
 
@@ -194,6 +198,34 @@ const METATILE_SIZE =
 
 const RGBA_CHANNEL_COUNT =
   4;
+
+/**
+ * Dados para a animacao de tiles de UM mapa, resolvidos com as mesmas
+ * rotinas que montam o mapa assado (resolveMetatileSource, readMetatile,
+ * resolvePaletteSource, readPalette, resolveTileSource). O animador nao
+ * reimplementa nada disso: divisao primario/secundario (512 no RSE, 640 no
+ * FRLG), paletas e camadas vem daqui, entao nao tem como divergir do mapa.
+ */
+export interface TileAnimationSource {
+  layouts: Map<
+    number,
+    {
+      layerType: number;
+      tiles: MetatileTileState[];
+    }
+  >;
+
+  // Paletas de BG ja convertidas para RGB (16 cores x 3 bytes), com a
+  // mesma conversao 5->8 bits usada no mapa. null quando nao resolve.
+  palettes: Array<Uint8Array | null>;
+
+  // Indices de cor (64 por tile, 0-15) de cada tile do tileset, lidos do
+  // ROM. E a "verdade" contra a qual a VRAM e comparada.
+  romTiles: Map<number, Uint8Array>;
+
+  backgroundTileId: number;
+  backgroundPalette: number;
+}
 
 export interface Gen3MetatileGraphics {
   metatileId: number;
@@ -1050,6 +1082,212 @@ export class Gen3StateAdapter {
     return this.mapBlocks;
   }
 
+
+  /**
+   * Coleta, para um par de tilesets, tudo que a animacao de tiles precisa.
+   * Troca temporariamente os tilesets correntes, como getMapRenderData, e
+   * restaura no finally.
+   */
+  getTileAnimationSource(
+    primaryTilesetAddress: number,
+    secondaryTilesetAddress: number,
+    metatileIds: Iterable<number>,
+  ): TileAnimationSource | null {
+    const previousPrimary =
+      this.currentPrimaryTileset;
+
+    const previousSecondary =
+      this.currentSecondaryTileset;
+
+    try {
+      const primaryTileset =
+        this.readTileset(
+          primaryTilesetAddress,
+        );
+
+      const secondaryTileset =
+        this.readTileset(
+          secondaryTilesetAddress,
+        );
+
+      if (
+        primaryTileset.address === 0 ||
+        secondaryTileset.address === 0
+      ) {
+        return null;
+      }
+
+      this.currentPrimaryTileset =
+        primaryTileset;
+
+      this.currentSecondaryTileset =
+        secondaryTileset;
+
+      const layouts: TileAnimationSource['layouts'] =
+        new Map();
+
+      for (
+        const metatileId of new Set(metatileIds)
+      ) {
+        const source =
+          this.resolveMetatileSource(
+            metatileId,
+          );
+
+        if (!source) {
+          continue;
+        }
+
+        const metatile =
+          this.readMetatile(
+            source.tileset,
+            source.localId,
+          );
+
+        if (
+          !metatile ||
+          metatile.tiles.length !== METATILE_TILE_COUNT
+        ) {
+          continue;
+        }
+
+        layouts.set(
+          metatileId,
+          {
+            layerType:
+              metatile.layerType,
+            tiles:
+              metatile.tiles,
+          },
+        );
+      }
+
+      const palettes:
+        Array<Uint8Array | null> = [];
+
+      for (
+        let paletteIndex = 0;
+        paletteIndex < NUM_PALS_TOTAL;
+        paletteIndex++
+      ) {
+        const paletteSource =
+          this.resolvePaletteSource(
+            paletteIndex,
+          );
+
+        const colors =
+          paletteSource
+            ? this.readPalette(
+                paletteSource.palettesAddress,
+                paletteSource.paletteIndex,
+              )
+            : null;
+
+        if (!colors) {
+          palettes.push(null);
+
+          continue;
+        }
+
+        const rgb =
+          new Uint8Array(
+            GBA_PALETTE_COLORS * 3,
+          );
+
+        for (
+          const color of colors
+        ) {
+          rgb[color.index * 3] = color.r;
+          rgb[color.index * 3 + 1] = color.g;
+          rgb[color.index * 3 + 2] = color.b;
+        }
+
+        palettes.push(rgb);
+      }
+
+      // Os tiles referenciados pelos metatiles do mapa (e o tile de fundo
+      // dos metatiles NORMAL), mais os 128 primeiros tiles do tileset
+      // primario como SENTINELAS: o jogo nunca os anima e a batalha e os
+      // menus de tela cheia os sobrescrevem primeiro, entao servem para o
+      // animador saber se a VRAM ainda mostra o overworld - mesmo em mapas
+      // que quase so usam agua. Nao lemos o tileset inteiro porque os
+      // ultimos tiles podem estar alem do fim real dos dados.
+      const referencedTiles =
+        new Set<number>([
+          NORMAL_METATILE_BACKGROUND_TILE_ID,
+        ]);
+
+      for (
+        let sentinel = 0;
+        sentinel < TILE_ANIMATION_SENTINEL_TILES;
+        sentinel++
+      ) {
+        referencedTiles.add(sentinel);
+      }
+
+      for (
+        const layout of layouts.values()
+      ) {
+        for (
+          const tile of layout.tiles
+        ) {
+          referencedTiles.add(
+            tile.tileId,
+          );
+        }
+      }
+
+      const romTiles =
+        new Map<number, Uint8Array>();
+
+      for (
+        const tileId of referencedTiles
+      ) {
+        const tileSource =
+          this.resolveTileSource(
+            tileId,
+          );
+
+        if (!tileSource) {
+          continue;
+        }
+
+        const graphics =
+          this.tileGraphicsDecoder.readTile(
+            tileSource.tileset.tilesAddress,
+            tileSource.localTileId,
+            tileSource.tileset.isCompressed,
+          );
+
+        if (!graphics) {
+          continue;
+        }
+
+        romTiles.set(
+          tileId,
+          Uint8Array.from(
+            graphics.pixels,
+          ),
+        );
+      }
+
+      return {
+        layouts,
+        palettes,
+        romTiles,
+        backgroundTileId:
+          NORMAL_METATILE_BACKGROUND_TILE_ID,
+        backgroundPalette:
+          NORMAL_METATILE_BACKGROUND_PALETTE,
+      };
+    } finally {
+      this.currentPrimaryTileset =
+        previousPrimary;
+
+      this.currentSecondaryTileset =
+        previousSecondary;
+    }
+  }
 
   getMetatileGraphics(
     metatileId: number,
