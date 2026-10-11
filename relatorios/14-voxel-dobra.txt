@@ -1,0 +1,61 @@
+================================================================================
+RELATORIO 14 - RECONSTRUCAO 2.5D (VOXEL POR DOBRA)
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. O QUE O ROM DIZ SOBRE CADA BLOCO
+--------------------------------------------------------------------------------
+Medido na grade de Pallet Town (tools: grid de colisao/elevacao):
+  casas 5x4 e laboratorio 7x4 .... impassaveis, elevacao 0
+  arvores da borda ................ colunas impassaveis de alto a baixo
+  cercas, placas .................. uma linha impassavel
+  agua ............................ passavel (surf), elevacao 1
+Regra: SOLIDO = colisao != 0 e elevacao != 1. Nao precisa catalogar tile.
+
+2. A DOBRA (src/render/VoxelFolding.ts)
+--------------------------------------------------------------------------------
+Em cada coluna, cada sequencia vertical de blocos solidos:
+  - ultimas ate 2 linhas (fachada, onde fica a porta) -> parede vertical
+    na borda sul, voltada para a camera;
+  - linhas de cima (telhado) -> teto horizontal na altura da parede.
+Colunas vizinhas iguais sao fundidas. Laterais so quando ha teto, com a
+coluna central do bloco da borda (no contorno, arvores viravam "vidro" e
+placas ganhavam "abas" escuras - os dois defeitos apareceram no render de
+teste e foram corrigidos antes do commit).
+A geometria usa as MESMAS texturas do mapa: a animacao de tiles vale nas
+casas sem codigo extra. Interiores e bases secretas ficam planos.
+
+3. VERIFICACAO VISUAL OFFLINE (tools/render-fold.mjs)
+--------------------------------------------------------------------------------
+Renderizador de software com a camera do app (fov 48, (x,10,z+11) olhando
+(x,0,z)), z-buffer e textura com correcao de perspectiva, sobre o mapa
+assado pelo adapter real. Imagens em relatorios/imagens/:
+  pallet-flat.png ...... antes (plano)
+  pallet-fold.png ...... casas com fachada e porta, telhado, laboratorio,
+                         arvores, cerca e caixas de correio em pe
+  littleroot-fold2.png . Emerald, depois da correcao das laterais
+  route1-fold.png ...... arvores em pe e LEDGES virando degraus
+
+4. MUDANCA NO CHAO
+--------------------------------------------------------------------------------
+A camada de cima do chao (overlay) era desenhada SEM teste de profundidade.
+Com volume, ela pintaria o chao por cima das paredes. Agora testa
+profundidade, com polygonOffset para nao brigar com o chao.
+
+5. CHAVES
+--------------------------------------------------------------------------------
+  VOXEL_FOLDING = false ........ volta ao mapa plano
+  VOXEL_MAX_WALL_ROWS = 2 ...... altura maxima da fachada
+
+6. LIMITACOES
+--------------------------------------------------------------------------------
+  - Bordas de floresta viram plataformas de copa; nos cantos, o chao pode
+    aparecer pelos pixels transparentes das arvores.
+  - Telhados sao planos (sem caimento).
+  - Penhascos por elevacao ainda nao sao modelados.
+  - Sem teste no navegador.
+
+================================================================================
+FIM DO RELATORIO 14
+================================================================================

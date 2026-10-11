@@ -14,6 +14,16 @@ const MAP_PADDING_METATILES =
 const SMOOTH_ENTITY_MOVEMENT =
   true;
 
+// Reconstrucao 2.5D (dobra de casas, arvores, cercas, ledges).
+// false volta ao mapa plano.
+const VOXEL_FOLDING =
+  true;
+
+// Altura maxima da fachada, em blocos. 2 reproduz bem casas da Gen 3
+// (telhado ~2 linhas + fachada ~2 linhas).
+const VOXEL_MAX_WALL_ROWS =
+  2;
+
 const WALK_TILES_PER_SECOND =
   60 / 16;
 
@@ -34,6 +44,12 @@ const PIXELS_PER_TILE =
 // 1 TOWN, 2 CITY, 3 ROUTE, 5 UNDERWATER, 6 OCEAN_ROUTE.
 // Ficam de fora 4 UNDERGROUND, 8 INDOOR e 9 SECRET_BASE: no jogo original
 // o espaco fora desses mapas e preto mesmo.
+const INDOOR_MAP_TYPE =
+  8;
+
+const SECRET_BASE_MAP_TYPE =
+  9;
+
 const OUTDOOR_MAP_TYPES =
   new Set<number>([1, 2, 3, 5, 6]);
 
@@ -65,6 +81,10 @@ import type {
 import {
   TileAnimator,
 } from './TileAnimator';
+
+import {
+  buildFoldGeometry,
+} from './VoxelFolding';
 
 import {
   OverworldSprites,
@@ -117,6 +137,10 @@ interface MapVisual {
 
   geometry:
     THREE.PlaneGeometry;
+
+  // Volume reconstruido (paredes e tetos), mesmas texturas do mapa.
+  voxelGroup?:
+    THREE.Group;
 
   mapDataAddress:
     number;
@@ -1075,6 +1099,8 @@ export class PlayerRenderer {
     visual.overlayTexture.dispose();
     visual.geometry.dispose();
     visual.overlayMesh.geometry.dispose();
+
+    this.disposeVoxelGroup(visual);
 
 
     const baseMaterial =
@@ -2069,6 +2095,11 @@ export class PlayerRenderer {
         centerZ,
       );
 
+      visual.voxelGroup?.position.set(
+        position.x,
+        0,
+        position.y,
+      );
     }
   }
 
@@ -2105,6 +2136,11 @@ export class PlayerRenderer {
 
       visual.overlayMesh.visible =
         visible;
+
+      if (visual.voxelGroup) {
+        visual.voxelGroup.visible =
+          visible;
+      }
 
     }
   }
@@ -2158,6 +2194,128 @@ export class PlayerRenderer {
     }
 
     return ids;
+  }
+
+  /**
+   * Volume 2.5D do mapa (ver VoxelFolding). Duas malhas sobre a MESMA
+   * geometria: textura base e camada de cima, como o chao.
+   */
+  private disposeVoxelGroup(
+    visual: MapVisual,
+  ): void {
+    if (!visual.voxelGroup) {
+      return;
+    }
+
+    this.root.remove(visual.voxelGroup);
+
+    const meshes =
+      visual.voxelGroup.children as THREE.Mesh[];
+
+    // As duas malhas compartilham a geometria.
+    meshes[0]?.geometry.dispose();
+
+    for (const mesh of meshes) {
+      (mesh.material as THREE.Material).dispose();
+    }
+
+    visual.voxelGroup = undefined;
+  }
+
+  private buildVoxelGroup(
+    map: MapDefinition,
+    blocks: readonly { collision: number; elevation: number }[],
+    baseTexture: THREE.DataTexture,
+    overlayTexture: THREE.DataTexture,
+  ): THREE.Group | undefined {
+    // Solido = impassavel e nao e agua (elevacao 1 na grade da Gen 3).
+    // Medido em Pallet Town: casas, laboratorio, arvores, cercas e placas
+    // sao impassaveis; a agua e passavel (surf) e tem elevacao 1.
+    // Interiores ficam planos: parede de interior dobrada cobriria o
+    // comodo inteiro diante da camera.
+    if (
+      map.mapType === INDOOR_MAP_TYPE ||
+      map.mapType === SECRET_BASE_MAP_TYPE
+    ) {
+      return undefined;
+    }
+
+    const data =
+      buildFoldGeometry(
+        map.width,
+        map.height,
+        (x, y) => {
+          const block =
+            blocks[y * map.width + x];
+
+          return (
+            !!block &&
+            block.collision !== 0 &&
+            block.elevation !== 1
+          );
+        },
+        VOXEL_MAX_WALL_ROWS,
+      );
+
+    if (data.quadCount === 0) {
+      return undefined;
+    }
+
+    const geometry =
+      new THREE.BufferGeometry();
+
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(data.positions, 3),
+    );
+
+    geometry.setAttribute(
+      'uv',
+      new THREE.BufferAttribute(data.uvs, 2),
+    );
+
+    geometry.setIndex(
+      new THREE.BufferAttribute(data.indices, 1),
+    );
+
+    const group =
+      new THREE.Group();
+
+    const base =
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          map: baseTexture,
+          transparent: true,
+          alphaTest: 0.5,
+          side: THREE.DoubleSide,
+        }),
+      );
+
+    // Depois do chao, antes da camada de cima e dos sprites.
+    base.renderOrder = 1;
+
+    const overlay =
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          map: overlayTexture,
+          transparent: true,
+          alphaTest: 0.5,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -4,
+        }),
+      );
+
+    overlay.renderOrder = 2;
+
+    group.add(base);
+    group.add(overlay);
+
+    return group;
   }
 
   private buildMapVisual(
@@ -2421,6 +2579,9 @@ export class PlayerRenderer {
           THREE.DoubleSide,
       });
 
+    // A camada de cima do chao agora TESTA profundidade: com volume, sem
+    // isso ela era pintada por cima das paredes. polygonOffset evita a
+    // briga com o chao (estao a 0.002 de distancia).
     const overlayMaterial =
       new THREE.MeshBasicMaterial({
         map:
@@ -2430,10 +2591,19 @@ export class PlayerRenderer {
           true,
 
         depthTest:
-          false,
+          true,
 
         depthWrite:
           false,
+
+        polygonOffset:
+          true,
+
+        polygonOffsetFactor:
+          -1,
+
+        polygonOffsetUnits:
+          -4,
 
         side:
           THREE.DoubleSide,
@@ -2520,6 +2690,28 @@ export class PlayerRenderer {
         renderData.blocks[index]?.metatileId ?? 0;
     }
 
+    const voxelGroup =
+      VOXEL_FOLDING
+        ? this.buildVoxelGroup(
+            map,
+            renderData.blocks,
+            baseTexture,
+            overlayTexture,
+          )
+        : undefined;
+
+    if (voxelGroup) {
+      voxelGroup.position.set(
+        position.x,
+        0,
+        position.y,
+      );
+
+      this.root.add(
+        voxelGroup,
+      );
+    }
+
     const visual:
       MapVisual = {
         baseMesh,
@@ -2528,6 +2720,7 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         geometry,
+        voxelGroup,
         mapDataAddress:
           map.mapDataAddress,
       };
@@ -2968,6 +3161,8 @@ export class PlayerRenderer {
       visual.baseTexture.dispose();
       visual.overlayTexture.dispose();
       visual.geometry.dispose();
+
+      this.disposeVoxelGroup(visual);
 
 
       visual.overlayMesh
