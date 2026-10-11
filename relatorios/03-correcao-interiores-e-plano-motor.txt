@@ -1,0 +1,121 @@
+================================================================================
+RELATORIO 03 - CORRECAO DA CARGA EM INTERIORES + PLANO DO MOTOR 3D
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. CAUSA RAIZ DO BUG DE INTERIORES - ENCONTRADA E COMPROVADA
+--------------------------------------------------------------------------------
+Sintoma: carregar save dentro de casa/centro pokemon trava o app e o mapa
+nunca renderiza. Exteriores funcionam normalmente.
+
+Sao DOIS defeitos encadeados.
+
+1.1 Ancora resolvia para o mapa ERRADO (MapCatalog.findStaticMapHeader)
+    A funcao procurava no ROM o cabecalho cujo layoutAddress + layoutId
+    batessem com a ancora lida da memoria, e devolvia o PRIMEIRO acerto.
+    O problema: interiores REAPROVEITAM layouts entre dezenas de mapas.
+
+    MEDICAO (harness rodado contra os ROMs reais):
+      Emerald : 518 mapas, 406 layouts distintos
+                31 layouts compartilhados por mais de um mapa
+                143 mapas (27,6%) compartilham layout
+                pior caso: 1 layout usado por 17 mapas
+                (ex. 2:3, 3:2, 4:6, 5:5, 6:5, 7:1 - casas/centros de
+                 cidades diferentes)
+      FireRed : 425 mapas, 309 layouts distintos
+                134 mapas (31,5%) compartilham layout
+                pior caso: 1 layout usado por 18 mapas
+
+    Ou seja: ao carregar dentro de um interior havia ate 17 candidatos e a
+    funcao pegava sempre o primeiro - chance de acertar em torno de 6%.
+    Para exteriores, cujo layout costuma ser unico, ela sempre acertava.
+    E exatamente por isso que exterior funcionava e interior nao.
+
+    Com o cabecalho errado, findMapGroupsAddress nao valida, buildGen3FromRom
+    devolve 0 e o catalogo nunca e montado.
+
+1.2 Retentativa a cada frame (PlayerRenderer.ensureWorldCatalog)
+    Quando a montagem falhava (count <= 0), o codigo fazia:
+        this.worldCatalogBuildAttempted = false;
+    sem qualquer teto. Resultado: a montagem era refeita A CADA FRAME
+    enquanto falhasse. Cada tentativa varre o ROM inteiro (16 MB) duas
+    vezes na thread principal. A 60fps isso e o travamento relatado - e
+    como nunca tinha sucesso, o mapa nunca aparecia.
+
+    Nota: no relatorio 02 eu atribui a lentidao a uma suposta complexidade
+    O(n^2) em findMapGroupsAddress. Essa leitura estava errada: na pratica
+    o endereco procurado aparece uma unica vez, entao sao duas varreduras
+    lineares, nao quadratica. O custo real vinha da REPETICAO por frame.
+
+2. CORRECOES APLICADAS
+--------------------------------------------------------------------------------
+2.1 findStaticMapHeader -> findStaticMapHeaderCandidates
+    Passa a devolver todos os cabecalhos compativeis (teto de 64).
+2.2 Novo resolveMapGroupsAddress
+    Testa candidato por candidato em findMapGroupsAddress e aceita o
+    primeiro que validar de fato. Usado pelos dois caminhos de build
+    (Emerald e FireRed/LeafGreen).
+2.3 Teto de tentativas no PlayerRenderer
+    MAX_CATALOG_BUILD_ATTEMPTS = 8 e CATALOG_BUILD_RETRY_MS = 500.
+    Mesmo que a ancora falhe, a thread principal nao trava mais.
+
+3. ESTADO DOS PROBLEMAS ANTERIORES
+--------------------------------------------------------------------------------
+  [RESOLVIDO]  Regressao grafica do commit 597e1b2 (z-fighting por nao
+               descartar o mundo anterior) - revertida em e0f6363.
+  [RESOLVIDO]  Camera rigida, sem o balanco por interpolacao.
+  [PROVAVEL]   Interiores: corrigido conforme secao 2, sem teste em execucao.
+  [EM ABERTO]  Conexao de mapas em hackroms. Vale notar que a correcao 2.1
+               ataca justamente a resolucao da ancora, que era a principal
+               suspeita levantada no relatorio 02. Pode ter sido corrigido
+               junto - precisa de teste com o Perfect Fire Red para saber.
+
+4. ACHADO RELEVANTE PARA A PROXIMA ETAPA
+--------------------------------------------------------------------------------
+TilesetAnimationController.ts tem 1.161 linhas e NAO E IMPORTADO EM LUGAR
+NENHUM. E codigo morto. A animacao de tiles (agua, plantas) que esta no
+pedido ja tem uma implementacao escrita que nunca foi ligada ao renderizador.
+Antes de escrever qualquer animacao nova, o certo e avaliar esse arquivo:
+religar o que presta custa muito menos que reescrever.
+
+Tambem nao existe nenhuma renderizacao de entidades alem do jogador: nao ha
+referencia a objectEvent, NPC, billboard ou Sprite no PlayerRenderer. O
+Gen3StateAdapter ja le objectState (posicao e direcao de NPCs) para Emerald
+e FRLG - o dado existe, falta o lado visual.
+
+5. PLANO PROPOSTO PARA O MOTOR (ordem sugerida)
+--------------------------------------------------------------------------------
+  E1. Map padding - preencher a borda dos mapas com o tile de borda do
+      layout. E o menor dos itens e remove as faixas pretas visiveis nas
+      capturas. Baixo risco.
+  E2. Religar TilesetAnimationController (agua, plantas). O dado de
+      animacao ja e lido; avaliar e conectar.
+  E3. Entidades 3D alem do jogador - billboards para NPCs a partir do
+      objectState ja existente.
+  E4. Voxel 2.5D (extrusao de altura por metatile, no estilo dos mods de
+      voxel do gen2recomp e do FireRed Faithful). E o item mais pesado:
+      depende do atributo de elevacao/colisao do metatile e muda a geracao
+      de geometria inteira. Deve vir por ultimo, ja com os anteriores
+      estaveis.
+
+Nao comecei E1-E4 nesta etapa. Motivo na secao 6.
+
+6. LIMITACAO DE TESTE - PEDIDO AO USUARIO
+--------------------------------------------------------------------------------
+Continuo sem conseguir executar o projeto: o dev server subiria no container
+em nuvem e os navegadores que controlo rodam na maquina do usuario, sem
+alcance ao localhost do container.
+
+Na etapa anterior eu avancei sem validacao e introduzi uma regressao grafica
+seria. Por isso, em vez de escrever as quatro features do motor as cegas em
+cima de um motor cujo carregamento ainda nao foi confirmado, esta etapa
+entrega apenas a correcao de interiores - que tem causa medida e comprovada -
+e aguarda confirmacao antes de E1-E4.
+
+O que foi efetivamente verificado aqui: o harness em Node contra os ROMs
+reais (secao 1.1) e npx tsc --noEmit sem erros.
+
+================================================================================
+FIM DO RELATORIO 03
+================================================================================

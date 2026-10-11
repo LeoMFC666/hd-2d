@@ -76,6 +76,12 @@ const MAX_MAPS_PER_GROUP =
 const MAX_GROUP_SCAN =
   MAX_MAPS_PER_GROUP;
 
+// Quantos cabecalhos compativeis com a ancora testar antes de desistir.
+// Interiores reaproveitam layouts, entao um layout pode casar com dezenas
+// de mapas; precisamos tentar varios, mas com teto para nao varrer sem fim.
+const MAX_HEADER_CANDIDATES =
+  64;
+
 const MAP_DIRECTION_BY_VALUE:
   Record<
     number,
@@ -481,24 +487,10 @@ export class MapCatalog {
       return 0;
     }
 
-    const staticHeader =
-      this.findStaticMapHeader(
+    const mapGroupsAddress =
+      this.resolveMapGroupsAddress(
         romBytes,
         anchor,
-      );
-
-    if (
-      staticHeader === 0
-    ) {
-      return 0;
-    }
-
-    const mapGroupsAddress =
-      this.findMapGroupsAddress(
-        romBytes,
-        staticHeader,
-        anchor.mapGroup,
-        anchor.mapNumber,
         groupLengths,
       );
 
@@ -753,24 +745,10 @@ export class MapCatalog {
       return 0;
     }
 
-    const staticHeader =
-      this.findStaticMapHeader(
+    const mapGroupsAddress =
+      this.resolveMapGroupsAddress(
         romBytes,
         anchor,
-      );
-
-    if (
-      staticHeader === 0
-    ) {
-      return 0;
-    }
-
-    const mapGroupsAddress =
-      this.findMapGroupsAddress(
-        romBytes,
-        staticHeader,
-        anchor.mapGroup,
-        anchor.mapNumber,
         groupLengths,
       );
 
@@ -1425,10 +1403,25 @@ export class MapCatalog {
         return 'WEST';
     }
   }
-  private findStaticMapHeader(
+  /**
+   * Retorna TODOS os cabecalhos de mapa compativeis com a ancora.
+   *
+   * Antes isto devolvia so o primeiro acerto, e era ai que a carga de save
+   * em interiores quebrava: casas, centros pokemon e lojas reaproveitam o
+   * MESMO layout entre dezenas de mapas, entao o primeiro cabecalho com
+   * aquele layoutAddress/layoutId quase nunca e o mapa onde o jogador
+   * esta. Com o cabecalho errado, findMapGroupsAddress nao valida, o build
+   * retorna 0 e o catalogo nunca sai do lugar.
+   *
+   * Devolvendo a lista, quem chama consegue testar candidato por candidato
+   * ate um validar de fato.
+   */
+  private findStaticMapHeaderCandidates(
     romBytes: Uint8Array,
     anchor: Gen3MapCatalogAnchor,
-  ): number {
+  ): number[] {
+    const candidates: number[] = [];
+
     for (
       let offset = 0;
       offset <=
@@ -1464,10 +1457,50 @@ export class MapCatalog {
         continue;
       }
 
-      return (
-        GBA_ROM_BASE +
-        offset
+      candidates.push(
+        GBA_ROM_BASE + offset,
       );
+
+      if (
+        candidates.length >=
+        MAX_HEADER_CANDIDATES
+      ) {
+        break;
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Resolve gMapGroups testando cada cabecalho candidato da ancora.
+   */
+  private resolveMapGroupsAddress(
+    romBytes: Uint8Array,
+    anchor: Gen3MapCatalogAnchor,
+    groupLengths: readonly number[],
+  ): number {
+    const candidates =
+      this.findStaticMapHeaderCandidates(
+        romBytes,
+        anchor,
+      );
+
+    for (
+      const staticHeader of candidates
+    ) {
+      const mapGroupsAddress =
+        this.findMapGroupsAddress(
+          romBytes,
+          staticHeader,
+          anchor.mapGroup,
+          anchor.mapNumber,
+          groupLengths,
+        );
+
+      if (mapGroupsAddress !== 0) {
+        return mapGroupsAddress;
+      }
     }
 
     return 0;

@@ -1,5 +1,14 @@
 import * as THREE from 'three';
 
+// Teto de tentativas de montagem do catalogo e intervalo entre elas.
+// Sem isso a montagem (que varre o ROM inteiro) era refeita a cada frame
+// enquanto falhasse, travando a thread principal.
+const MAX_CATALOG_BUILD_ATTEMPTS =
+  8;
+
+const CATALOG_BUILD_RETRY_MS =
+  500;
+
 import type {
   Gen3StateAdapter,
   Gen3MetatileGraphics,
@@ -93,6 +102,12 @@ export class PlayerRenderer {
 
   private worldCatalogBuildAttempted =
     false;
+
+  private worldCatalogBuildFailures =
+    0;
+
+  private nextCatalogBuildAt =
+    0;
 
   private cinnabarDefinitionChecked =
     false;
@@ -308,6 +323,20 @@ export class PlayerRenderer {
     }
 
     if (
+      this.worldCatalogBuildFailures >=
+      MAX_CATALOG_BUILD_ATTEMPTS
+    ) {
+      return;
+    }
+
+    if (
+      performance.now() <
+      this.nextCatalogBuildAt
+    ) {
+      return;
+    }
+
+    if (
       state.map
         .mapLayoutAddress === 0
     ) {
@@ -340,11 +369,37 @@ export class PlayerRenderer {
     if (
       count <= 0
     ) {
+      // Antes isto zerava worldCatalogBuildAttempted incondicionalmente,
+      // e a montagem do catalogo era refeita A CADA FRAME enquanto
+      // falhasse. Cada tentativa varre o ROM inteiro (16 MB) duas vezes na
+      // thread principal - era essa repeticao a 60fps que travava o app ao
+      // carregar save em interior, onde a ancora costumava falhar.
+      // Agora ha teto de tentativas e intervalo minimo entre elas.
+      this.worldCatalogBuildFailures++;
+
+      if (
+        this.worldCatalogBuildFailures >=
+        MAX_CATALOG_BUILD_ATTEMPTS
+      ) {
+        console.warn(
+          'Gen 3 map catalog: desistindo apos',
+          this.worldCatalogBuildFailures,
+          'tentativas.',
+        );
+
+        return;
+      }
+
+      this.nextCatalogBuildAt =
+        performance.now() +
+        CATALOG_BUILD_RETRY_MS;
+
       this.worldCatalogBuildAttempted =
         false;
 
       console.warn(
-        'Unable to build Gen 3 map catalog.',
+        'Unable to build Gen 3 map catalog. Tentativa',
+        this.worldCatalogBuildFailures,
       );
 
       return;
