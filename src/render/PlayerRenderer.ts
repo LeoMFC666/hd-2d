@@ -7,6 +7,29 @@ import * as THREE from 'three';
 const MAP_PADDING_METATILES =
   12;
 
+// Movimento suave das entidades: o jogo move o sprite 1 tile em 16 quadros
+// (60 fps) ao caminhar. As coordenadas na RAM pulam para o tile de destino
+// no INICIO do passo; o sprite percorre o caminho nesse tempo.
+// Desligar (false) volta ao comportamento antigo de pular de tile em tile.
+const SMOOTH_ENTITY_MOVEMENT =
+  true;
+
+const WALK_TILES_PER_SECOND =
+  60 / 16;
+
+// Distancia acima da qual nao ha caminhada possivel: warp, porta,
+// reconstrucao do mundo. Teleporta em vez de deslizar.
+const ENTITY_SNAP_DISTANCE =
+  3;
+
+// Abaixo disto a entidade e considerada parada (animacao de pe).
+const ENTITY_MOVING_EPSILON =
+  0.02;
+
+// Escala: 16 pixels do GBA = 1 tile = 1 unidade do mundo.
+const PIXELS_PER_TILE =
+  16;
+
 // Tipos de mapa (offset 0x17 do cabecalho) que recebem padding.
 // 1 TOWN, 2 CITY, 3 ROUTE, 5 UNDERWATER, 6 OCEAN_ROUTE.
 // Ficam de fora 4 UNDERGROUND, 8 INDOOR e 9 SECRET_BASE: no jogo original
@@ -35,12 +58,18 @@ import type {
 } from '../gen3/Gen3StateAdapter';
 
 import type {
+  Direction,
   GameState,
 } from '../gen3/GameState';
 
 import {
   TileAnimator,
 } from './TileAnimator';
+
+import {
+  OverworldSprites,
+  type SpriteFrame,
+} from '../gen3/OverworldSprites';
 
 import type {
   MapDefinition,
@@ -56,6 +85,21 @@ import {
 
 const GBA_METATILE_PIXELS =
   16;
+
+interface EntityVisual {
+  mesh: THREE.Mesh;
+  frameKey: string;
+  geometryKey: string;
+
+  // Posicao exibida (suavizada) e alvo (tile atual na RAM).
+  displayX: number;
+  displayZ: number;
+  targetX: number;
+  targetZ: number;
+
+  moving: boolean;
+  walkStartedAt: number;
+}
 
 interface MapVisual {
   baseMesh: THREE.Mesh;
@@ -143,12 +187,26 @@ export class PlayerRenderer {
   private readonly tileAnimator:
     TileAnimator;
 
-  // Entidades do overworld (NPCs, caminhao do Emerald, itens). Uma malha
-  // por slot de ObjectEvent, reaproveitada entre frames.
-  private readonly entityMeshes =
-    new Map<number, THREE.Mesh>();
+  // Sprites do overworld lidos do ROM (jogador, NPCs, caminhao, itens).
+  private readonly overworldSprites:
+    OverworldSprites;
 
-  private entityProbeDone = false;
+  // Um visual por slot de ObjectEvent, reaproveitado entre frames.
+  private readonly entityVisuals =
+    new Map<number, EntityVisual>();
+
+  private playerVisual:
+    EntityVisual | null = null;
+
+  private readonly spriteTextures =
+    new Map<string, THREE.DataTexture>();
+
+  private readonly spriteGeometries =
+    new Map<string, THREE.PlaneGeometry>();
+
+  private lastFrameAt = 0;
+
+  private frameDeltaMs = 0;
 
   private cinnabarDefinitionChecked =
     false;
@@ -199,6 +257,11 @@ export class PlayerRenderer {
 
     this.mapCatalog =
       new MapCatalog();
+
+    this.overworldSprites =
+      new OverworldSprites(
+        romBytes,
+      );
 
     this.tileAnimator =
       new TileAnimator(
@@ -1582,27 +1645,28 @@ export class PlayerRenderer {
   }
 
   /**
-   * Posiciona as entidades do overworld lidas de state.objects.
-   *
-   * Hoje cada entidade e um painel que olha para a camera. O sprite real
-   * ainda nao e desenhado: a fonte dos pixels depende de qual regiao de
-   * memoria este build do mGBA deixa ler, e isso esta sendo medido pela
-   * sonda abaixo em vez de chutado - foi chutar endereco que custou as
-   * ultimas rodadas.
+   * NPCs e demais entidades do overworld (caminhao do Emerald, itens,
+   * Pokemon de overworld), com o sprite real do ROM.
    */
   private updateEntities(
     state: GameState,
   ): void {
-    this.probeSpriteSources(
-      state,
-    );
+    const now =
+      performance.now();
 
-    const seen = new Set<number>();
+    const seen =
+      new Set<number>();
 
     for (
       const object of state.objects
     ) {
-      // So entidades do mapa onde o jogador esta.
+      // O jogador tem visual proprio (updatePlayer) e a camera presa nele.
+      if (object.isPlayer) {
+        continue;
+      }
+
+      // So entidades do mapa onde o jogador esta: as coordenadas sao
+      // relativas a ele.
       if (
         object.mapGroup !== state.map.mapGroup ||
         object.mapNumber !== state.map.mapNumber
@@ -1610,65 +1674,253 @@ export class PlayerRenderer {
         continue;
       }
 
-      seen.add(object.id);
-
-      let mesh =
-        this.entityMeshes.get(object.id);
-
-      if (!mesh) {
-        mesh =
-          new THREE.Mesh(
-            new THREE.PlaneGeometry(1, 1.4),
-            new THREE.MeshBasicMaterial({
-              color:
-                new THREE.Color().setHSL(
-                  ((object.graphicsId ?? 0) % 16) / 16,
-                  0.6,
-                  0.55,
-                ),
-              transparent: true,
-              side: THREE.DoubleSide,
-            }),
-          );
-
-        this.entityMeshes.set(object.id, mesh);
-        this.root.add(mesh);
-      }
-
-      const world =
+      const target =
         this.getEntityWorldPosition(
           state,
           object.x,
           object.y,
         );
 
-      if (!world) {
-        mesh.visible = false;
-
+      if (!target) {
         continue;
       }
 
-      mesh.visible = true;
+      seen.add(object.id);
 
-      mesh.position.set(
-        world.x,
-        0.7,
-        world.z,
-      );
+      let visual =
+        this.entityVisuals.get(object.id) ?? null;
 
-      // Billboard: sempre de frente para a camera.
-      mesh.quaternion.copy(
-        this.camera.quaternion,
-      );
+      visual =
+        this.updateSpriteVisual(
+          visual,
+          object.graphicsId ?? 0,
+          (object.direction as Direction | undefined) ?? 'DOWN',
+          target.x,
+          target.z,
+          now,
+        );
+
+      if (visual) {
+        this.entityVisuals.set(object.id, visual);
+        visual.mesh.visible = true;
+      }
     }
 
     for (
-      const [id, mesh] of this.entityMeshes
+      const [id, visual] of this.entityVisuals
     ) {
       if (!seen.has(id)) {
-        mesh.visible = false;
+        visual.mesh.visible = false;
       }
     }
+
+    // Sprites voltados para a camera (inclusive o do jogador).
+    for (
+      const visual of this.entityVisuals.values()
+    ) {
+      visual.mesh.quaternion.copy(this.camera.quaternion);
+    }
+
+    if (this.playerVisual) {
+      this.playerVisual.mesh.quaternion.copy(this.camera.quaternion);
+    }
+  }
+
+  /**
+   * Cria ou atualiza o visual de uma entidade: quadro do sprite, posicao
+   * suavizada e animacao de caminhada. Devolve null se o sprite nao puder
+   * ser resolvido (o chamador decide o fallback).
+   */
+  private updateSpriteVisual(
+    visual: EntityVisual | null,
+    graphicsId: number,
+    direction: Direction,
+    targetX: number,
+    targetZ: number,
+    now: number,
+  ): EntityVisual | null {
+    // ---- posicao ----
+    if (visual) {
+      visual.targetX = targetX;
+      visual.targetZ = targetZ;
+
+      const dx = targetX - visual.displayX;
+      const dz = targetZ - visual.displayZ;
+      const distance = Math.hypot(dx, dz);
+
+      if (
+        !SMOOTH_ENTITY_MOVEMENT ||
+        distance > ENTITY_SNAP_DISTANCE
+      ) {
+        visual.displayX = targetX;
+        visual.displayZ = targetZ;
+      } else if (distance > 0) {
+        // Velocidade de caminhada; se ficar para tras (corrida, bike),
+        // acelera proporcionalmente para nunca acumular atraso.
+        const step =
+          (WALK_TILES_PER_SECOND * Math.max(1, distance) *
+            this.frameDeltaMs) / 1000;
+
+        if (step >= distance) {
+          visual.displayX = targetX;
+          visual.displayZ = targetZ;
+        } else {
+          visual.displayX += (dx / distance) * step;
+          visual.displayZ += (dz / distance) * step;
+        }
+      }
+    }
+
+    const displayX = visual ? visual.displayX : targetX;
+    const displayZ = visual ? visual.displayZ : targetZ;
+
+    const moving =
+      Math.hypot(targetX - displayX, targetZ - displayZ) >
+      ENTITY_MOVING_EPSILON;
+
+    if (visual && moving && !visual.moving) {
+      visual.walkStartedAt = now;
+    }
+
+    // ---- quadro ----
+    const frame =
+      this.overworldSprites.getFrame(
+        graphicsId,
+        direction,
+        moving,
+        visual ? now - visual.walkStartedAt : 0,
+      );
+
+    if (!frame) {
+      return visual;
+    }
+
+    const texture =
+      this.getSpriteTexture(frame);
+
+    const geometryKey =
+      frame.width + 'x' + frame.height;
+
+    if (!visual) {
+      const material =
+        new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          // Recorte por pixel: borda nitida e profundidade correta entre
+          // sprites sobrepostos.
+          alphaTest: 0.5,
+          side: THREE.DoubleSide,
+        });
+
+      const mesh =
+        new THREE.Mesh(
+          this.getSpriteGeometry(frame),
+          material,
+        );
+
+      // Depois do mapa (0) e da camada de cima (2): a camada de cima e
+      // desenhada sem teste de profundidade e cobriria o sprite.
+      mesh.renderOrder = 3;
+
+      this.root.add(mesh);
+
+      visual = {
+        mesh,
+        frameKey: frame.key,
+        geometryKey,
+        displayX: targetX,
+        displayZ: targetZ,
+        targetX,
+        targetZ,
+        moving: false,
+        walkStartedAt: now,
+      };
+    } else {
+      if (visual.frameKey !== frame.key) {
+        (visual.mesh.material as THREE.MeshBasicMaterial).map = texture;
+        visual.frameKey = frame.key;
+      }
+
+      // Bike e surf trocam o tamanho do sprite.
+      if (visual.geometryKey !== geometryKey) {
+        visual.mesh.geometry = this.getSpriteGeometry(frame);
+        visual.geometryKey = geometryKey;
+      }
+    }
+
+    visual.moving = moving;
+
+    // Pes no chao, no centro do tile.
+    visual.mesh.position.set(
+      visual.displayX,
+      0,
+      visual.displayZ,
+    );
+
+    return visual;
+  }
+
+  private getSpriteTexture(
+    frame: SpriteFrame,
+  ): THREE.DataTexture {
+    const cached =
+      this.spriteTextures.get(frame.key);
+
+    if (cached) {
+      return cached;
+    }
+
+    const texture =
+      new THREE.DataTexture(
+        frame.rgba,
+        frame.width,
+        frame.height,
+        THREE.RGBAFormat,
+        THREE.UnsignedByteType,
+      );
+
+    // Mesmos parametros das texturas de mapa.
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    this.spriteTextures.set(frame.key, texture);
+
+    return texture;
+  }
+
+  private getSpriteGeometry(
+    frame: SpriteFrame,
+  ): THREE.PlaneGeometry {
+    const key =
+      frame.width + 'x' + frame.height;
+
+    const cached =
+      this.spriteGeometries.get(key);
+
+    if (cached) {
+      return cached;
+    }
+
+    const width =
+      frame.width / PIXELS_PER_TILE;
+
+    const height =
+      frame.height / PIXELS_PER_TILE;
+
+    const geometry =
+      new THREE.PlaneGeometry(width, height);
+
+    // Origem na borda de baixo: os pes ficam no ponto de apoio e o sprite
+    // inclina em volta deles ao encarar a camera.
+    geometry.translate(0, height / 2, 0);
+
+    this.spriteGeometries.set(key, geometry);
+
+    return geometry;
   }
 
   private getEntityWorldPosition(
@@ -1682,13 +1934,7 @@ export class PlayerRenderer {
         state.map.mapNumber,
       );
 
-    const map =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    if (!position || !map) {
+    if (!position) {
       return null;
     }
 
@@ -1696,69 +1942,6 @@ export class PlayerRenderer {
       x: position.x + tileX + 0.5,
       z: position.y + tileY + 0.5,
     };
-  }
-
-  /**
-   * Sonda, uma vez: quantas entidades foram lidas e quais fontes de sprite
-   * este build deixa acessar. Decide o proximo passo com dado, nao palpite.
-   */
-  private probeSpriteSources(
-    state: GameState,
-  ): void {
-    if (this.entityProbeDone) {
-      return;
-    }
-
-    if (state.objects.length === 0) {
-      return;
-    }
-
-    this.entityProbeDone = true;
-
-    const reader =
-      this.stateAdapter.getMemoryReader();
-
-    const countNonZero =
-      (address: number, size: number): number => {
-        const bytes =
-          reader.readRange(address, size);
-
-        let total = 0;
-
-        for (
-          let index = 0;
-          index < bytes.length;
-          index++
-        ) {
-          if (bytes[index] !== 0) {
-            total++;
-          }
-        }
-
-        return total;
-      };
-
-    console.log(
-      '[ent] entidades lidas:',
-      state.objects.length,
-      state.objects.map(
-        object =>
-          `#${object.id} gfx=${object.graphicsId} (${object.x},${object.y}) ${object.direction}`,
-      ),
-    );
-
-    console.log(
-      '[ent] fontes de sprite --',
-      'OAM 0x07000000:',
-      countNonZero(0x07000000, 1024),
-      '/1024 |',
-      'OBJ VRAM 0x06010000:',
-      countNonZero(0x06010000, 1024),
-      '/1024 |',
-      'paleta OBJ 0x05000200:',
-      countNonZero(0x05000200, 512),
-      '/512',
-    );
   }
 
   private queueMapBuild(
@@ -2622,6 +2805,19 @@ export class PlayerRenderer {
         requestAnimationFrame(
           this.animate,
         );
+
+      const frameNow =
+        performance.now();
+
+      // Tempo desde o quadro anterior, limitado para a aba voltando do
+      // segundo plano nao teleportar tudo de uma vez.
+      this.frameDeltaMs =
+        this.lastFrameAt === 0
+          ? 0
+          : Math.min(100, frameNow - this.lastFrameAt);
+
+      this.lastFrameAt =
+        frameNow;
 
       const state =
         this.stateAdapter

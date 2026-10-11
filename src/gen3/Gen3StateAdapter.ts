@@ -2751,6 +2751,14 @@ export class Gen3StateAdapter {
         continue;
       }
 
+      // Byte 0x01, bit 5 = invisible: objeto escondido pelo script do
+      // jogo (ex.: NPC que so aparece depois de um evento).
+      if (
+        (this.memoryReader.readU8(base + 0x01) & 0x20) !== 0
+      ) {
+        continue;
+      }
+
       const coordsAddress =
         base + layout.objectEventCurrentCoordsOffset;
 
@@ -2793,6 +2801,8 @@ export class Gen3StateAdapter {
           this.memoryReader.readU8(
             base + layout.objectEventMovementActionIdOffset,
           ),
+        isPlayer:
+          (this.memoryReader.readU8(base + 0x02) & 0x01) !== 0,
       });
     }
 

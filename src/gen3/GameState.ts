@@ -109,6 +109,9 @@ export interface WorldObject {
   mapGroup?: number;
   mapNumber?: number;
   movementActionId?: number;
+
+  // Bit isPlayer (byte 0x02, bit 0): o ObjectEvent do proprio jogador.
+  isPlayer?: boolean;
 }
 
 export interface GameInfo {
