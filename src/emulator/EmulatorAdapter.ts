@@ -13,4 +13,8 @@ export interface EmulatorAdapter {
   reset(): void;
   destroy(): void;
   setInput?(map: Record<string, string>): void;
+
+  // Quadro atual do GBA, RGBA 8 bits por canal, direto do framebuffer do
+  // emulador. A view aponta para a memoria do WASM: copiar antes de guardar.
+  getVideoFrame?(): { width: number; height: number; rgba: Uint8Array } | null;
 }

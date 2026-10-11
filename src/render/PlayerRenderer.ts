@@ -267,8 +267,6 @@ export class PlayerRenderer {
 
   private frameDeltaMs = 0;
 
-  private cinnabarDefinitionChecked =
-    false;
 
   private activeMapKey =
     '';
@@ -457,6 +455,18 @@ export class PlayerRenderer {
     this.animate();
   }
 
+  /**
+   * O jogo esta no overworld, com o mapa que o 3D esta mostrando? Fora
+   * disso (batalha, menus de tela cheia, titulo) a interface mostra a tela
+   * do GBA inteira por cima.
+   */
+  isOverworldVisible(): boolean {
+    return (
+      this.worldCatalogBuilt &&
+      this.tileAnimator.isShowingMap()
+    );
+  }
+
   private resize(): void {
     const width =
       this.container
@@ -587,63 +597,13 @@ export class PlayerRenderer {
       return;
     }
 
-    // VALIDACAO DA ANCORA
-    //
-    // Este teste so passou a valer alguma coisa agora que gMapGroups e
-    // localizada pela estrutura do ROM. Enquanto a tabela era derivada da
-    // propria ancora, conferir que o mapa da ancora apontava para o layout
-    // da ancora era TAUTOLOGICO: o catalogo era construido exatamente para
-    // que isso fosse verdade, e o teste nunca podia falhar.
-    //
-    // Com a tabela vindo de uma fonte independente, a comparacao passa a
-    // ter conteudo: se o mapa registrado na posicao da ancora nao apontar
-    // para o layout que a ancora leu da RAM, ou a RAM ainda nao estava
-    // valida, ou a tabela nao corresponde a este ROM. Nos dois casos o
-    // certo e descartar e tentar de novo, nunca fixar o erro.
-    const anchored =
-      this.mapCatalog.get(
-        state.map.mapGroup,
-        state.map.mapNumber,
-      );
-
-    if (
-      !anchored ||
-      anchored.mapLayoutAddress !==
-        state.map.mapLayoutAddress
-    ) {
-      this.mapCatalog.clear();
-
-      this.worldCatalogBuildFailures++;
-
-      if (
-        this.worldCatalogBuildFailures <
-        MAX_CATALOG_BUILD_ATTEMPTS
-      ) {
-        this.nextCatalogBuildAt =
-          performance.now() +
-          CATALOG_BUILD_RETRY_MS;
-
-        this.worldCatalogBuildAttempted =
-          false;
-      }
-
-      console.warn(
-        'Catalogo inconsistente com a ancora; descartado.',
-        {
-          esperado:
-            state.map.mapLayoutAddress,
-
-          obtido:
-            anchored?.mapLayoutAddress ?? null,
-
-          tentativa:
-            this.worldCatalogBuildFailures,
-        },
-      );
-
-      return;
-    }
-
+    // Divergencia entre o layout da ancora (RAM) e o do cabecalho NAO
+    // invalida o catalogo: a tabela vem da estrutura do ROM, e a Gen 3
+    // carrega o layout do mapa atual a partir do save (mapLayoutId), que
+    // pode ser outro (setmaplayoutindex). Medido na Perfect Fire Red em
+    // Cinnabar. Antes isto descartava o catalogo a cada tentativa, e com
+    // ele todas as conexoes; agora syncActiveMapLayout usa o layout vivo
+    // so no mapa ativo.
     this.worldCatalogBuilt =
       true;
 
@@ -661,379 +621,6 @@ export class PlayerRenderer {
       state.game.region === 'firered' ||
       state.game.region === 'leafgreen'
     );
-  }
-
-  private ensureFireRedCinnabarDefinition(
-    state: GameState,
-  ): void {
-    if (
-      this.cinnabarDefinitionChecked ||
-      !this.isFireRedFamily(state) ||
-      state.map.mapGroup !== 3 ||
-      state.map.mapNumber !== 8
-    ) {
-      return;
-    }
-
-    const existing =
-      this.mapCatalog.get(
-        3,
-        8,
-      );
-
-    if (!existing) {
-      return;
-    }
-
-    this.cinnabarDefinitionChecked =
-      true;
-
-    const headerSize =
-      0x1c;
-
-    const layoutSize =
-      0x18;
-
-    const romBase =
-      0x08000000;
-
-    const isValidPointer = (
-      address: number,
-      size: number,
-    ): boolean => {
-      if (
-        address <
-        romBase
-      ) {
-        return false;
-      }
-
-      const offset =
-        address -
-        romBase;
-
-      return (
-        offset >= 0 &&
-        offset + size <=
-          this.romBytes.length
-      );
-    };
-
-    const readU8 = (
-      offset: number,
-    ): number => {
-      if (
-        offset < 0 ||
-        offset >=
-          this.romBytes.length
-      ) {
-        return 0;
-      }
-
-      return this.romBytes[offset];
-    };
-
-    const readU16 = (
-      offset: number,
-    ): number => {
-      return (
-        readU8(offset) |
-        (
-          readU8(offset + 1) <<
-          8
-        )
-      );
-    };
-
-    const readU32 = (
-      offset: number,
-    ): number => {
-      return (
-        (
-          readU8(offset) |
-          (
-            readU8(offset + 1) <<
-            8
-          ) |
-          (
-            readU8(offset + 2) <<
-            16
-          ) |
-          (
-            readU8(offset + 3) *
-            0x1000000
-          )
-        ) >>> 0
-      );
-    };
-
-    const readI32 = (
-      offset: number,
-    ): number => {
-      return (
-        readU32(offset) |
-        0
-      );
-    };
-
-    const hasCinnabarConnections = (
-      headerAddress: number,
-    ): boolean => {
-      const headerOffset =
-        headerAddress -
-        romBase;
-
-      const connectionsAddress =
-        readU32(
-          headerOffset +
-          0x0c,
-        );
-
-      if (
-        connectionsAddress === 0
-      ) {
-        return false;
-      }
-
-      if (
-        !isValidPointer(
-          connectionsAddress,
-          8,
-        )
-      ) {
-        return false;
-      }
-
-      const connectionsOffset =
-        connectionsAddress -
-        romBase;
-
-      const count =
-        readI32(
-          connectionsOffset,
-        );
-
-      if (
-        count < 0 ||
-        count > 64
-      ) {
-        return false;
-      }
-
-      if (
-        count === 0
-      ) {
-        return false;
-      }
-
-      const dataAddress =
-        readU32(
-          connectionsOffset +
-          4,
-        );
-
-      if (
-        !isValidPointer(
-          dataAddress,
-          count * 0x0c,
-        )
-      ) {
-        return false;
-      }
-
-      const dataOffset =
-        dataAddress -
-        romBase;
-
-      let north =
-        false;
-
-      let east =
-        false;
-
-      for (
-        let index = 0;
-        index < count;
-        index++
-      ) {
-        const entry =
-          dataOffset +
-          index * 0x0c;
-
-        const direction =
-          readU8(
-            entry,
-          );
-
-        const offset =
-          readI32(
-            entry + 4,
-          );
-
-        const mapGroup =
-          readU8(
-            entry + 8,
-          );
-
-        const mapNumber =
-          readU8(
-            entry + 9,
-          );
-
-        if (
-          direction === 2 &&
-          offset === 0 &&
-          mapGroup === 3 &&
-          mapNumber === 40
-        ) {
-          north = true;
-        }
-
-        if (
-          direction === 4 &&
-          offset === 0 &&
-          mapGroup === 3 &&
-          mapNumber === 38
-        ) {
-          east = true;
-        }
-      }
-
-      return (
-        north &&
-        east
-      );
-    };
-
-    for (
-      let offset = 0;
-      offset <=
-        this.romBytes.length -
-          headerSize;
-      offset += 4
-    ) {
-      const headerAddress =
-        romBase +
-        offset;
-
-      const mapLayoutAddress =
-        readU32(
-          offset,
-        );
-
-      if (
-        !isValidPointer(
-          mapLayoutAddress,
-          layoutSize,
-        )
-      ) {
-        continue;
-      }
-
-      const layoutOffset =
-        mapLayoutAddress -
-        romBase;
-
-      const width =
-        readU32(
-          layoutOffset,
-        );
-
-      const height =
-        readU32(
-          layoutOffset + 4,
-        );
-
-      if (
-        width !== 24 ||
-        height !== 20
-      ) {
-        continue;
-      }
-
-      const mapDataAddress =
-        readU32(
-          layoutOffset + 0x0c,
-        );
-
-      const primaryTilesetAddress =
-        readU32(
-          layoutOffset + 0x10,
-        );
-
-      const secondaryTilesetAddress =
-        readU32(
-          layoutOffset + 0x14,
-        );
-
-      if (
-        !isValidPointer(
-          mapDataAddress,
-          width *
-          height *
-          2,
-        ) ||
-        !isValidPointer(
-          primaryTilesetAddress,
-          4,
-        ) ||
-        !isValidPointer(
-          secondaryTilesetAddress,
-          4,
-        )
-      ) {
-        continue;
-      }
-
-      if (
-        !hasCinnabarConnections(
-          headerAddress,
-        )
-      ) {
-        continue;
-      }
-
-      const mapLayoutId =
-        readU16(
-          offset + 0x12,
-        );
-
-      const corrected: MapDefinition = {
-        ...existing,
-        mapLayoutId,
-        mapHeaderAddress:
-          headerAddress,
-        mapLayoutAddress,
-        mapDataAddress,
-        primaryTilesetAddress,
-        secondaryTilesetAddress,
-        width,
-        height,
-        connections:
-          existing.connections,
-      };
-
-      if (
-        existing.mapHeaderAddress ===
-          corrected.mapHeaderAddress &&
-        existing.mapLayoutAddress ===
-          corrected.mapLayoutAddress &&
-        existing.mapDataAddress ===
-          corrected.mapDataAddress &&
-        existing.primaryTilesetAddress ===
-          corrected.primaryTilesetAddress &&
-        existing.secondaryTilesetAddress ===
-          corrected.secondaryTilesetAddress
-      ) {
-        return;
-      }
-
-      this.mapCatalog.register(
-        corrected,
-      );
-
-      return;
-    }
   }
 
   private ensureCurrentMapDefinition(
@@ -1091,44 +678,108 @@ export class PlayerRenderer {
     );
   }
 
-  private repairCinnabarVisual(
+  /**
+   * Usa o layout que o JOGO esta usando para o mapa ativo.
+   *
+   * Na Gen 3 o layout do mapa atual vem do save (mapLayoutId ->
+   * gMapLayouts), nao do cabecalho: scripts trocam o visual de um mapa com
+   * setmaplayoutindex. Medido na Perfect Fire Red: o cabecalho de Cinnabar
+   * (3:8) aponta para o layout 0x082E3B20, mas o save usa 0x08338738 - e
+   * a ilha na tela do GBA e a do layout do save. Antes, essa divergencia
+   * fazia o catalogo inteiro ser descartado (sem conexoes) ou, com os
+   * remendos antigos so para 3:8 no FRLG, o mapa errado aparecia.
+   *
+   * Agora vale para qualquer mapa e qualquer jogo: a definicao do mapa
+   * ativo recebe o layout vivo (mantendo as conexoes do cabecalho) e o
+   * visual e reconstruido se ja tinha sido montado com o layout antigo.
+   */
+  private syncActiveMapLayout(
     state: GameState,
   ): void {
+    const live =
+      state.map;
+
     if (
-      !this.isFireRedFamily(state) ||
-      state.map.mapGroup !== 3 ||
-      state.map.mapNumber !== 8
+      !this.worldCatalogBuilt ||
+      live.mapLayoutAddress < GBA_ROM_BASE_ADDRESS ||
+      live.mapLayoutAddress - GBA_ROM_BASE_ADDRESS >= this.romBytes.length ||
+      live.width <= 0 ||
+      live.height <= 0 ||
+      live.mapDataAddress === 0 ||
+      live.primaryTilesetAddress === 0 ||
+      live.secondaryTilesetAddress === 0
     ) {
       return;
     }
 
-    const definition =
-      this.mapCatalog.get(
-        3,
-        8,
+    const key =
+      this.createMapKey(live.mapGroup, live.mapNumber);
+
+    let definition =
+      this.mapCatalog.get(live.mapGroup, live.mapNumber);
+
+    if (!definition) {
+      return;
+    }
+
+    if (definition.mapLayoutAddress !== live.mapLayoutAddress) {
+      const border =
+        this.mapCatalog.readLayoutBorder(
+          this.romBytes,
+          live.mapLayoutAddress,
+          this.isFireRedFamily(state),
+        );
+
+      const resized =
+        definition.width !== live.width ||
+        definition.height !== live.height;
+
+      definition = {
+        ...definition,
+        mapLayoutId: live.mapLayoutId,
+        mapLayoutAddress: live.mapLayoutAddress,
+        mapDataAddress: live.mapDataAddress,
+        primaryTilesetAddress: live.primaryTilesetAddress,
+        secondaryTilesetAddress: live.secondaryTilesetAddress,
+        width: live.width,
+        height: live.height,
+        borderAddress: border.borderAddress,
+        borderWidth: border.borderWidth,
+        borderHeight: border.borderHeight,
+      };
+
+      this.mapCatalog.register(definition);
+
+      console.log(
+        '[mapa]',
+        key,
+        'usa o layout do save (0x' + live.mapLayoutAddress.toString(16) +
+          '), diferente do padrao do cabecalho.',
       );
+
+      // Outro tamanho muda a posicao dos vizinhos: remonta o mundo.
+      if (resized) {
+        this.mapWorld.clearPositions();
+        this.activeMapKey = '';
+      }
+
+      this.borderTextures.get(key)?.dispose();
+      this.borderTextures.delete(key);
+      this.paddingDirty = true;
+    }
 
     const visual =
-      this.mapVisuals.get(
-        '3:8',
-      );
+      this.mapVisuals.get(key);
 
     if (
-      !definition ||
       !visual ||
-      visual.mapDataAddress ===
-        definition.mapDataAddress
+      visual.mapDataAddress === definition.mapDataAddress
     ) {
       return;
     }
 
-    this.root.remove(
-      visual.baseMesh,
-    );
-
-    this.root.remove(
-      visual.overlayMesh,
-    );
+    this.root.remove(visual.baseMesh);
+    this.root.remove(visual.overlayMesh);
 
     visual.baseTexture.dispose();
     visual.overlayTexture.dispose();
@@ -1137,55 +788,24 @@ export class PlayerRenderer {
 
     this.disposeVoxelGroup(visual);
 
+    for (const mesh of [visual.baseMesh, visual.overlayMesh]) {
+      const material = mesh.material;
 
-    const baseMaterial =
-      visual.baseMesh.material;
-
-    if (
-      Array.isArray(
-        baseMaterial,
-      )
-    ) {
-      baseMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      baseMaterial.dispose();
+      if (Array.isArray(material)) {
+        material.forEach(entry => entry.dispose());
+      } else {
+        material.dispose();
+      }
     }
 
-    const overlayMaterial =
-      visual.overlayMesh.material;
+    this.mapVisuals.delete(key);
+    this.tileAnimator.clear();
 
-    if (
-      Array.isArray(
-        overlayMaterial,
-      )
-    ) {
-      overlayMaterial.forEach(
-        material =>
-          material.dispose(),
-      );
-    } else {
-      overlayMaterial.dispose();
-    }
-
-    this.mapVisuals.delete(
-      '3:8',
-    );
-
-    this.queuedMaps.delete(
-      '3:8',
-    );
-
-    this.buildQueue.push(
-      definition,
-    );
-
-    this.queuedMaps.add(
-      '3:8',
-    );
+    this.queuedMaps.delete(key);
+    this.buildQueue.push(definition);
+    this.queuedMaps.add(key);
   }
+
 
   /**
    * Posiciona o mundo em torno do mapa atual.
@@ -1239,7 +859,7 @@ export class PlayerRenderer {
   private updateActiveWorld(
     state: GameState,
   ): void {
-    this.repairCinnabarVisual(
+    this.syncActiveMapLayout(
       state,
     );
 
@@ -3027,9 +2647,6 @@ export class PlayerRenderer {
       if (
         this.isFireRedFamily(state)
       ) {
-        this.ensureFireRedCinnabarDefinition(
-          state,
-        );
 
         this.ensureCurrentMapDefinition(
           state,

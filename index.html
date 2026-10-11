@@ -1,44 +1,64 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GEN 3 Faithful 2.5D</title>
+    <title>Gen 3 Faithful 2.5D</title>
     <meta
       name="description"
-      content="Minimal static browser harness for a user-provided GBA ROM running through mGBA WebAssembly."
+      content="Pokémon da terceira geração em 2.5D no navegador, rodando o seu próprio ROM no mGBA."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">GEN 3 FAITHFUL 2.5D</p>
-          <h1>Phase 1 — mGBA Boot Harness</h1>
-        </div>
-      </header>
+      <main class="stage-area">
+        <!-- O palco: cena 3D com a interface do GBA por cima, em 3:2 como a
+             tela original, para as janelas do jogo cairem no lugar certo. -->
+        <div id="stage" class="stage" data-mode="off">
+          <div id="sceneContainer" aria-label="Mundo em 2.5D"></div>
 
-      <main class="content">
-        <div class="emulator-panel">
-          <canvas id="emulator" aria-label="GBA emulator output"></canvas>
-        </div>
+          <canvas
+            id="uiOverlay"
+            class="ui-overlay"
+            width="240"
+            height="160"
+            aria-hidden="true"
+          ></canvas>
 
-        <div id="sceneContainer" aria-label="Three.js player preview"></div>
+          <p class="stage-empty">
+            Escolha o ROM de um jogo da terceira geração para começar.
+          </p>
 
-        <div class="status-row">
-          <span id="status">Ready. Select a ROM to boot the emulator.</span>
+          <!-- Tela crua do GBA, em miniatura: referência e depuração. -->
+          <figure id="pip" class="pip">
+            <canvas id="emulator" aria-label="Tela original do GBA"></canvas>
+          </figure>
         </div>
       </main>
 
       <footer class="toolbar">
+        <span class="brand">Gen 3 Faithful 2.5D</span>
+
         <input id="romInput" type="file" accept=".gba,.gb,.gbc,.zip" hidden />
         <input id="saveInput" type="file" accept=".sav" hidden />
-        <button id="loadRom" type="button">ROM</button>
-        <button id="importSave" type="button">Import Save</button>
-        <button id="exportSave" type="button">Export Save</button>
-        <button id="pauseToggle" type="button">Pause</button>
-        <button id="resetGame" type="button">Reset</button>
+
+        <div class="controls">
+          <button id="loadRom" type="button" class="primary">Abrir ROM</button>
+          <button id="importSave" type="button">Importar save</button>
+          <button id="exportSave" type="button">Exportar save</button>
+          <button id="pauseToggle" type="button" data-state="running">Pausar</button>
+          <button id="resetGame" type="button">Reiniciar</button>
+          <button id="togglePip" type="button" aria-pressed="true">Esconder tela GBA</button>
+        </div>
+
+        <p id="status" class="status" role="status">Nenhum ROM aberto.</p>
       </footer>
     </div>
 

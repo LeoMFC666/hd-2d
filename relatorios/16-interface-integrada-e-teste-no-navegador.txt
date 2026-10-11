@@ -1,0 +1,85 @@
+================================================================================
+RELATORIO 16 - INTERFACE INTEGRADA + PRIMEIRO TESTE REAL NO NAVEGADOR
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. CORRECAO DE UM ERRO MEU QUE ATRAVESSOU A CONVERSA
+--------------------------------------------------------------------------------
+Desde o relatorio 02 eu afirmei que nao era possivel testar no navegador.
+Estava errado: o ambiente tem Chromium e Playwright em /opt/pw-browsers e
+/opt/npm-tools; eu procurei com `which chromium` e nao olhei ali. Esta etapa
+foi a primeira com o app rodando de verdade, com os ROMs e saves do projeto.
+
+O Vite nao roda neste ambiente (o node_modules commitado traz o binario
+nativo do rolldown para Windows, e o registro do npm e bloqueado aqui).
+Contornado empacotando com esbuild: tools/build-test-site.sh.
+
+2. INTERFACE INTEGRADA (src/ui/GameUiOverlay.ts)
+--------------------------------------------------------------------------------
+A cena 3D virou a tela do jogo, como no FireRed Faithful 2.5D:
+
+  - JANELAS no overworld: caixas de texto, menu Start, escolhas. Vivem no
+    BG0 do GBA. O tilemap do BG0 e lido da VRAM (endereco pelo BG0CNT) e,
+    nas celulas com janela, so os pixels opacos do proprio tile (cor != 0)
+    sao copiados do quadro do GBA para cima do 3D. Copiar a celula inteira
+    trazia o mapa 2D pelas bordas transparentes da moldura (visto na
+    primeira rodada do Emerald e corrigido).
+  - TELA INTEIRA em batalha, bolsa, party, titulo: decidido pela mesma
+    verificacao de VRAM da animacao de tiles (testada com batalha simulada).
+  - Pixels do framebuffer do emulador (mesmo buffer que o SDK desenha).
+  - Miniatura da tela crua do GBA no canto; some quando ha janela ou tela
+    inteira (cobria a caixa de texto) e tem botao para esconder.
+
+Layout: palco 3:2 como a tela do GBA, para as janelas cairem no lugar;
+controles numa barra embaixo, rotulos em portugues. O botao de pausa
+comparava o texto "Pause" - com rotulo traduzido quebraria; agora usa um
+atributo de estado.
+
+3. PERFECT FIRE RED: A CAUSA REAL DO "MAPA BETA"
+--------------------------------------------------------------------------------
+Com o app rodando, o console mostrou: a RAM diz que o mapa 3:8 usa o layout
+0x08338738; o cabecalho do ROM diz 0x082E3B20. Investigado offline:
+  - a tabela de mapas encontrada e a que o jogo usa (referenciada pelo
+    codigo em 0x805524C), nao uma copia velha;
+  - na Gen 3 o layout do mapa atual vem do SAVE (mapLayoutId ->
+    gMapLayouts), nao do cabecalho. O save da Perfect usa outro layout para
+    Cinnabar, e e esse que aparece na tela do GBA.
+A validacao da ancora descartava o catalogo inteiro por isso - sem
+conexoes. Os remendos antigos so para 3:8 no FRLG tentavam contornar.
+
+CORRECAO: syncActiveMapLayout, geral (qualquer mapa, qualquer jogo): se o
+layout vivo difere do catalogo, o mapa ativo recebe o layout vivo, com as
+conexoes do cabecalho; o visual e refeito. Remendos da Cinnabar removidos.
+Resultado no navegador: Cinnabar correta e com 37 mapas conectados (Route
+21 continua ao sul, igual a tela do GBA).
+
+4. O QUE FOI VISTO RODANDO (relatorios/imagens/ui-*.png)
+--------------------------------------------------------------------------------
+  FireRed + save(6).sav : Cinnabar no 1o carregamento, predios com volume,
+     sprites reais, padding de mar; menu Start + caixa de descricao sobre
+     o 3D na posicao do GBA; personagem andou com a camera junto.
+  Emerald + .sav        : carregou direto dentro do Centro Pokemon (o caso
+     que travava no inicio da conversa), NPCs andando, menu sobre o 3D.
+  Perfect + save(6).sav : Cinnabar correta, conectada.
+
+5. COMO RODAR O TESTE NO NAVEGADOR
+--------------------------------------------------------------------------------
+  tools/build-test-site.sh /tmp/site
+  python3 -m http.server 8080 --directory /tmp/site &
+  node tools/drive-browser.cjs <rom.gba> <save.sav> <prefixo> \
+    "Enter:4000,Enter:4000,...,KeyX:3000,KeyZ:2000"
+Gera capturas do palco e da tela GBA (chegada, andou, menu) e o console.
+Precisa do playwright (o roteiro aponta para /opt/npm-tools; ajuste o
+require para o seu).
+
+6. PENDENCIAS
+--------------------------------------------------------------------------------
+  - Linha fina na emenda entre Cinnabar e Route 21.
+  - Batalha nao exercitada no navegador ainda (logica testada offline).
+  - A fonte Atkinson Hyperlegible vem do Google Fonts; sem rede cai na
+    fonte do sistema.
+
+================================================================================
+FIM DO RELATORIO 16
+================================================================================

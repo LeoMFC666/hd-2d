@@ -14,6 +14,10 @@ import {
   PlayerRenderer,
 } from './render/PlayerRenderer';
 
+import {
+  GameUiOverlay,
+} from './ui/GameUiOverlay';
+
 export function setupApp(): void {
   const canvas =
     document.querySelector<HTMLCanvasElement>(
@@ -65,6 +69,21 @@ export function setupApp(): void {
       '#status',
     );
 
+  const stage =
+    document.querySelector<HTMLElement>(
+      '#stage',
+    );
+
+  const uiCanvas =
+    document.querySelector<HTMLCanvasElement>(
+      '#uiOverlay',
+    );
+
+  const pipToggle =
+    document.querySelector<HTMLButtonElement>(
+      '#togglePip',
+    );
+
   if (
     !canvas ||
     !sceneContainer ||
@@ -75,7 +94,10 @@ export function setupApp(): void {
     !exportSaveButton ||
     !pauseToggle ||
     !resetButton ||
-    !statusEl
+    !statusEl ||
+    !stage ||
+    !uiCanvas ||
+    !pipToggle
   ) {
     throw new Error(
       'Missing required app elements.',
@@ -91,6 +113,13 @@ export function setupApp(): void {
   let scene:
     PlayerRenderer | null =
     null;
+
+  let overlay:
+    GameUiOverlay | null =
+    null;
+
+  stage.dataset.loaded = 'false';
+  stage.dataset.pip = 'visible';
 
   const updateStatus =
     (
@@ -120,14 +149,14 @@ export function setupApp(): void {
         ].includes(extension)
       ) {
         updateStatus(
-          'Unsupported ROM format. Please select a .gba or compatible cartridge image.',
+          'Formato nao suportado. Escolha um arquivo .gba.',
         );
 
         return;
       }
 
       updateStatus(
-        `Loading ${file.name}...`,
+        `Abrindo ${file.name}...`,
       );
 
       try {
@@ -161,8 +190,30 @@ export function setupApp(): void {
             romBytes,
           );
 
+        overlay?.destroy();
+
+        const activeScene =
+          scene;
+
+        // Interface do jogo por cima do 3D: janelas no overworld, tela
+        // inteira em batalha e menus de tela cheia.
+        overlay =
+          new GameUiOverlay(
+            uiCanvas,
+            emulator,
+            memoryReader,
+            () => activeScene.isOverworldVisible(),
+            mode => {
+              stage.dataset.mode = mode;
+            },
+          );
+
+        overlay.start();
+
+        stage.dataset.loaded = 'true';
+
         updateStatus(
-          `ROM loaded: ${file.name}`,
+          `${file.name} aberto.`,
         );
       } catch (
         error
@@ -170,10 +221,10 @@ export function setupApp(): void {
         const message =
           error instanceof Error
             ? error.message
-            : 'Unknown ROM load error.';
+            : 'erro desconhecido';
 
         updateStatus(
-          `ROM failed to load: ${message}`,
+          `Nao foi possivel abrir o ROM: ${message}`,
         );
       }
     };
@@ -195,14 +246,14 @@ export function setupApp(): void {
         )
       ) {
         updateStatus(
-          'Unsupported save format. Please select a .sav file.',
+          'Formato nao suportado. Escolha um arquivo .sav.',
         );
 
         return;
       }
 
       updateStatus(
-        `Loading save ${file.name}...`,
+        `Importando save ${file.name}...`,
       );
 
       try {
@@ -214,7 +265,7 @@ export function setupApp(): void {
         );
 
         updateStatus(
-          `Save loaded: ${file.name}`,
+          `Save ${file.name} importado.`,
         );
       } catch (
         error
@@ -222,10 +273,10 @@ export function setupApp(): void {
         const message =
           error instanceof Error
             ? error.message
-            : 'Unknown save load error.';
+            : 'erro desconhecido';
 
         updateStatus(
-          `Save failed to load: ${message}`,
+          `Nao foi possivel importar o save: ${message}`,
         );
       }
     };
@@ -240,7 +291,7 @@ export function setupApp(): void {
           !bytes.length
         ) {
           updateStatus(
-            'No save data is available to export yet.',
+            'Ainda nao ha save para exportar.',
           );
 
           return;
@@ -287,7 +338,7 @@ export function setupApp(): void {
         );
 
         updateStatus(
-          'Save exported as save.sav',
+          'Save exportado como save.sav.',
         );
       } catch (
         error
@@ -295,10 +346,10 @@ export function setupApp(): void {
         const message =
           error instanceof Error
             ? error.message
-            : 'Unknown save export error.';
+            : 'erro desconhecido';
 
         updateStatus(
-          `Save failed to export: ${message}`,
+          `Nao foi possivel exportar o save: ${message}`,
         );
       }
     };
@@ -362,33 +413,35 @@ export function setupApp(): void {
     },
   );
 
+  // O estado vem do atributo, nao do texto do botao (o rotulo e traduzido).
   pauseToggle.addEventListener(
     'click',
     () => {
-      if (
-        pauseToggle.textContent ===
-        'Pause'
-      ) {
+      if (pauseToggle.dataset.state !== 'paused') {
         emulator.pause();
-
-        pauseToggle.textContent =
-          'Resume';
-
-        updateStatus(
-          'Emulator paused.',
-        );
+        pauseToggle.dataset.state = 'paused';
+        pauseToggle.textContent = 'Continuar';
+        updateStatus('Jogo pausado.');
 
         return;
       }
 
       emulator.resume();
+      pauseToggle.dataset.state = 'running';
+      pauseToggle.textContent = 'Pausar';
+      updateStatus('Jogo em andamento.');
+    },
+  );
 
-      pauseToggle.textContent =
-        'Pause';
+  pipToggle.addEventListener(
+    'click',
+    () => {
+      const visible =
+        stage.dataset.pip !== 'hidden';
 
-      updateStatus(
-        'Emulator resumed.',
-      );
+      stage.dataset.pip = visible ? 'hidden' : 'visible';
+      pipToggle.setAttribute('aria-pressed', String(!visible));
+      pipToggle.textContent = visible ? 'Mostrar tela GBA' : 'Esconder tela GBA';
     },
   );
 
@@ -398,7 +451,7 @@ export function setupApp(): void {
       emulator.reset();
 
       updateStatus(
-        'Emulator reset.',
+        'Jogo reiniciado.',
       );
     },
   );
@@ -406,6 +459,7 @@ export function setupApp(): void {
   window.addEventListener(
     'beforeunload',
     () => {
+      overlay?.destroy();
       scene?.destroy();
       emulator.destroy();
     },

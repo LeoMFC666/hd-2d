@@ -149,6 +149,11 @@ export class TileAnimator {
 
   private disabled = false;
 
+  // Resultado da ultima verificacao da VRAM contra o ROM: a tela do GBA
+  // esta mostrando este mapa (overworld)? Usado pela interface para saber
+  // quando sobrepor so as janelas e quando mostrar a tela inteira.
+  private gateOpen = false;
+
   private gateReported = false;
 
   private firstFrameReported = false;
@@ -227,6 +232,18 @@ export class TileAnimator {
       this.recipes.length,
       '| tiles referenciados:',
       this.referencedTiles.length,
+    );
+  }
+
+  /**
+   * A tela do GBA mostra o overworld deste mapa? (false em batalha, bolsa,
+   * party, tela titulo, ou antes de qualquer mapa ser registrado)
+   */
+  isShowingMap(): boolean {
+    return (
+      !this.disabled &&
+      this.referencedTiles.length > 0 &&
+      this.gateOpen
     );
   }
 
@@ -463,6 +480,9 @@ export class TileAnimator {
         LOW_TILE_MISMATCH_ABSOLUTE,
         Math.ceil(this.gateTiles.length * LOW_TILE_MISMATCH_RATIO),
       );
+
+    this.gateOpen =
+      lowMismatch <= tolerance;
 
     if (lowMismatch > tolerance) {
       if (!this.gateReported) {

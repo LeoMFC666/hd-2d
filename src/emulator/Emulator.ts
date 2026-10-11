@@ -96,6 +96,34 @@ export class MgbaEmulatorAdapter implements EmulatorAdapter {
     this.engine.start();
   }
 
+  getVideoFrame(): { width: number; height: number; rgba: Uint8Array } | null {
+    const mod = this.runtimeModule;
+
+    if (
+      !mod ||
+      typeof mod._mgbawasm_video_ptr !== 'function' ||
+      typeof mod._mgbawasm_video_width !== 'function'
+    ) {
+      return null;
+    }
+
+    const width = mod._mgbawasm_video_width();
+    const height = mod._mgbawasm_video_height();
+
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+
+    // Mesmo buffer que o SDK copia para o canvas (RGBA, 4 bytes por pixel).
+    const pointer = mod._mgbawasm_video_ptr();
+
+    return {
+      width,
+      height,
+      rgba: mod.HEAPU8.subarray(pointer, pointer + width * height * 4),
+    };
+  }
+
   async importSave(save: ArrayBuffer | Uint8Array): Promise<void> {
     const bytes =
       save instanceof Uint8Array ? save : new Uint8Array(save);

@@ -1,13 +1,26 @@
+/*
+ * Gen 3 Faithful 2.5D - frontend.
+ *
+ * O palco e a unica peca chamativa: a cena 3D com a interface do GBA por
+ * cima, em 3:2. Todo o resto fica quieto. Cobalto vem da carcaca do GBA SP;
+ * amarelo so aparece no foco de teclado.
+ */
+
 :root {
   color-scheme: dark;
-  --bg: #0a0f1b;
-  --panel: #121b2a;
-  --panel-alt: #1a2536;
-  --border: rgba(148, 163, 184, 0.32);
-  --text: #edf3ff;
-  --muted: #9ab0d4;
-  --accent: #66d9ef;
-  --shadow: rgba(10, 15, 27, 0.6);
+
+  --night: #15132a;
+  --panel: #221f3d;
+  --panel-raised: #2d2950;
+  --ink: #ece9f8;
+  --muted: #a39fc9;
+  --cobalt: #4c6edb;
+  --cobalt-bright: #6f8ce6;
+  --focus: #f2c14e;
+  --line: rgba(163, 159, 201, 0.22);
+
+  --radius-stage: 14px;
+  --radius-control: 8px;
 }
 
 * {
@@ -18,16 +31,11 @@ html,
 body {
   margin: 0;
   min-height: 100%;
-  background: radial-gradient(circle at top, #152236 0%, var(--bg) 48%);
-  color: var(--text);
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-
-body {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  background: var(--night);
+  color: var(--ink);
+  font-family: 'Atkinson Hyperlegible', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
 }
 
 button,
@@ -36,54 +44,40 @@ input {
 }
 
 .app-shell {
-  width: min(960px, 100%);
-  background: rgba(18, 27, 42, 0.92);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: 0 20px 45px var(--shadow);
-  overflow: hidden;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: 1fr auto;
 }
 
-.topbar {
-  padding: 18px 22px 8px;
-}
+/* ------------------------------------------------------------- palco */
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: var(--accent);
-  letter-spacing: 0.16em;
-  font-size: 0.7rem;
-  font-weight: 700;
-}
-
-h1 {
-  margin: 0;
-  font-size: clamp(1.35rem, 3vw, 2rem);
-}
-
-.content {
-  padding: 0 22px 18px;
-}
-
-.emulator-panel {
-  width: 100%;
-  min-height: 280px;
+.stage-area {
   display: grid;
   place-items: center;
-  background: linear-gradient(180deg, rgba(12, 17, 27, 1), rgba(17, 23, 35, 1));
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px;
+  padding: 24px 24px 12px;
+  min-height: 0;
+}
+
+.stage {
+  position: relative;
+
+  /* 3:2 como a tela do GBA: as janelas do jogo caem no lugar certo. */
+  aspect-ratio: 3 / 2;
+  width: min(100%, calc((100vh - 130px) * 1.5));
+
+  border-radius: var(--radius-stage);
+  overflow: hidden;
+  background: #0b0a18;
+
+  /* Moldura de tela de portatil: sombra interna funda, sem enfeite. */
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
 #sceneContainer {
-  width: 100%;
-  height: 360px;
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: radial-gradient(circle at top, rgba(13, 37, 52, 0.9), rgba(8, 15, 24, 1));
-  overflow: hidden;
+  position: absolute;
+  inset: 0;
 }
 
 #sceneContainer canvas {
@@ -92,73 +86,157 @@ h1 {
   height: 100%;
 }
 
-#emulator {
-  display: block;
-  width: min(100%, 720px);
-  max-height: 72vh;
-  aspect-ratio: 3 / 2;
-  border-radius: 8px;
-  background: #000;
+.ui-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   image-rendering: pixelated;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
 }
 
-.status-row {
-  margin-top: 16px;
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(17, 23, 35, 0.75);
-  padding: 8px 12px;
-  color: var(--muted);
-  text-align: center;
-  font-size: 0.96rem;
+.stage[data-mode='windows'] .ui-overlay,
+.stage[data-mode='full'] .ui-overlay {
+  opacity: 1;
 }
+
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 1.125rem;
+}
+
+.stage[data-loaded='true'] .stage-empty {
+  display: none;
+}
+
+/* Miniatura da tela crua do GBA. */
+.pip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  margin: 0;
+  width: clamp(120px, 22%, 240px);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 8px 24px rgba(0, 0, 0, 0.5);
+  transition: opacity 160ms ease-out;
+}
+
+.pip canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+  image-rendering: pixelated;
+}
+
+/* A miniatura sai do caminho quando ha janela do jogo ou tela inteira:
+   no canto ela cobriria a caixa de texto. */
+.stage[data-pip='hidden'] .pip,
+.stage[data-loaded='false'] .pip,
+.stage[data-mode='windows'] .pip,
+.stage[data-mode='full'] .pip {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------- controles */
 
 .toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'brand controls'
+    'status status';
+  align-items: center;
+  gap: 10px 20px;
+  padding: 12px 24px 20px;
+}
+
+.brand {
+  grid-area: brand;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.controls {
+  grid-area: controls;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 18px 22px 22px;
-  background: rgba(14, 19, 29, 0.9);
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  justify-content: flex-end;
 }
 
-button {
-  appearance: none;
-  border: 1px solid rgba(102, 217, 239, 0.5);
-  background: linear-gradient(180deg, rgba(17, 45, 68, 0.9), rgba(11, 29, 43, 0.9));
-  color: var(--text);
-  padding: 10px 16px;
-  border-radius: 10px;
+.controls button {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--ink);
   cursor: pointer;
-  min-width: 110px;
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(102, 217, 239, 0.9);
-  box-shadow: 0 0 0 3px rgba(102, 217, 239, 0.08);
+.controls button:hover {
+  background: var(--panel-raised);
 }
 
-button:active {
-  transform: translateY(0);
+.controls button.primary {
+  background: var(--cobalt);
+  border-color: var(--cobalt);
 }
 
-@media (max-width: 640px) {
-  body {
-    padding: 14px;
+.controls button.primary:hover {
+  background: var(--cobalt-bright);
+}
+
+.controls button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.status {
+  grid-area: status;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+@media (max-width: 720px) {
+  .stage-area {
+    padding: 12px 12px 8px;
+  }
+
+  .stage {
+    width: 100%;
   }
 
   .toolbar {
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'brand'
+      'controls'
+      'status';
+    padding: 8px 12px 16px;
   }
 
-  button {
-    width: 100%;
+  .controls {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-overlay,
+  .pip {
+    transition: none;
   }
 }

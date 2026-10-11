@@ -2121,6 +2121,40 @@ export class MapCatalog {
     };
   }
 
+  /**
+   * Borda de um layout pelo ENDERECO do layout (para layouts que vem da
+   * RAM, quando o save usa um layout diferente do padrao do cabecalho).
+   */
+  readLayoutBorder(
+    romBytes: Uint8Array,
+    layoutAddress: number,
+    borderDimsInLayout: boolean,
+  ): {
+    borderAddress: number;
+    borderWidth: number;
+    borderHeight: number;
+  } {
+    if (
+      !this.isValidRomPointer(
+        romBytes,
+        layoutAddress,
+        MAP_LAYOUT_SIZE,
+      )
+    ) {
+      return {
+        borderAddress: 0,
+        borderWidth: DEFAULT_BORDER_DIMENSION,
+        borderHeight: DEFAULT_BORDER_DIMENSION,
+      };
+    }
+
+    return this.readBorder(
+      romBytes,
+      layoutAddress - GBA_ROM_BASE,
+      borderDimsInLayout,
+    );
+  }
+
   private isValidMapDimension(
     value: number,
   ): boolean {
