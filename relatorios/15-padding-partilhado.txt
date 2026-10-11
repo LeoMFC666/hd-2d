@@ -1,0 +1,68 @@
+================================================================================
+RELATORIO 15 - MAP PADDING PARTILHADO (E AJUSTES DA DOBRA)
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. O QUE ESTAVA ERRADO NO PADDING ANTERIOR
+--------------------------------------------------------------------------------
+1.1 Retangulos sobrepostos. Cada mapa desenhava um retangulo inteiro de
+    borda; empilhados em alturas diferentes para nao brigar. Sobravam
+    buracos de um lado e borda errada do outro (anexos 6 e 8 do Emerald).
+1.2 Borda de vizinho com grafico errado (achado agora). A textura da borda
+    vinha de getMetatileGraphics, que le dos tilesets do mapa ATIVO. Vizinho
+    com outro tileset secundario saia com a borda desenhada errada.
+1.3 Degrau com a dobra. As arvores da borda do mapa ficaram em pe (relatorio
+    14), mas o padding em volta continuava no chao.
+
+2. COMO FICOU (src/render/PaddingBuilder.ts)
+--------------------------------------------------------------------------------
+2.1 Vazio partilhado. Uma expansao (BFS, 8 vizinhos) parte das celulas de
+    TODOS os mapas ao mesmo tempo; cada celula vazia fica com o mapa mais
+    proximo e recebe a borda dele. Nenhuma celula com dois donos, nenhuma
+    sem dono ate o raio, padding nunca cobre mapa vizinho. Interiores
+    bloqueiam mas nao espalham.
+2.2 Alinhamento do GBA. Bloco escolhido por (mapX + 8) mod largura da
+    borda - o deslocamento interno 7 do jogo mais 1. Para 2x2 e mapX mod 2;
+    para as bordas 3x2 do FRLG faz diferenca.
+2.3 Borda com os graficos do proprio mapa. A textura e montada em
+    buildMapVisual a partir do renderData daquele mapa, que ja resolve os
+    metatiles da borda com os tilesets certos.
+2.4 Padding elevado. O jogo grava a borda SEM colisao (forca impassavel na
+    leitura), entao colisao nao serve. isBorderRaised olha dentro do mapa:
+    os metatiles da borda aparecem nas bordas internas; se a maioria das
+    ocorrencias ganhou volume na dobra, o padding sobe junto, com fachada
+    voltada para a camera onde termina.
+    Medido: Pallet e Route 1 (arvores) elevados; Route 21 (mar) plano;
+    em volta de Mauville, rotas 111 e 117 elevadas, 110 e 118 planas.
+2.5 Ordem de construcao. Os mapas sao montados ao longo de varios quadros;
+    quando a textura ou a elevacao de um mapa chega depois do padding, uma
+    flag refaz o padding no quadro seguinte.
+
+3. AJUSTES DA DOBRA NESTA ETAPA
+--------------------------------------------------------------------------------
+  - Laterais de fileiras compridas viravam listras esticadas. A cor da
+    lateral agora varia ao longo do comprimento, seguindo as linhas do teto.
+
+4. VERIFICACAO
+--------------------------------------------------------------------------------
+tools/render-world.mjs: carrega o mapa e os vizinhos pelas conexoes reais
+do ROM, dobra cada um, monta o padding com o modulo real e renderiza com a
+camera do app.
+  relatorios/imagens/pallet-padding.png   - Pallet + Route 1 + Route 21
+  relatorios/imagens/mauville-padding.png - Mauville + rotas 110/111/117/118
+Sem buraco entre mapas, cada regiao com a propria borda, arvores do padding
+continuando as do mapa.
+  npx tsc --noEmit -> exit 0
+
+5. PENDENCIAS CONHECIDAS
+--------------------------------------------------------------------------------
+  - Dois triangulos escuros pequenos no encontro de cantos de mapas
+    elevados (visiveis na imagem de Pallet, no alto).
+  - Cercas norte-sul (coluna de 1 bloco, comprida) dobram como faixa
+    elevada com os mouroes em cima, em vez de cerca em pe.
+  - Sem teste no navegador.
+
+================================================================================
+FIM DO RELATORIO 15
+================================================================================

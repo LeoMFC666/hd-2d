@@ -1,0 +1,86 @@
+// Renderiza um mapa + vizinhos conectados, com dobra e o padding novo,
+// usando a camera do app. Para conferir o encontro entre mapas.
+import { readFileSync, writeFileSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
+import { Gen3StateAdapter } from './b4/gen3/Gen3StateAdapter.js';
+import { MapCatalog } from './b4/gen3/world/MapCatalog.js';
+import { buildFoldGeometry, computeFoldMask } from './b7/VoxelFolding.js';
+import { buildPadding, isBorderRaised } from './b7/PaddingBuilder.js';
+const BASE=0x08000000, PX=16;
+const u16=(r,o)=>r[o]|(r[o+1]<<8), u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
+function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
+function romReader(rom){const u8=a=>a>=BASE&&a-BASE<rom.length?rom[a-BASE]:0;return{readU8:u8,readU16:a=>u8(a)|(u8(a+1)<<8),readU32:a=>(u8(a)|(u8(a+1)<<8)|(u8(a+2)<<16)|(u8(a+3)<<24))>>>0,readRange:(a,n)=>{const o=new Uint8Array(n);for(let i=0;i<n;i++)o[i]=u8(a+i);return o;}};}
+const [file, G, M, out, camDX, camDZ, neighborsFlag] = process.argv.slice(2);
+const rom=new Uint8Array(readFileSync(file)); const code=String.fromCharCode(...rom.slice(0xac,0xb0));
+const frlg=code.startsWith('BPR')||code.startsWith('BPG');
+const ad=new Gen3StateAdapter(romReader(rom),rom); const cat=new MapCatalog();
+const groups=cat.findMapGroupsByStructure(rom);
+const header=(g,m)=>u32(rom,u32(rom,groups-BASE+g*4)-BASE+m*4);
+const log=console.log; console.log=()=>{};
+function loadMap(g,m,x,z){
+  const hdr=header(g,m), lay=u32(rom,hdr-BASE), lo=lay-BASE;
+  const W=u32(rom,lo),H=u32(rom,lo+4), border=cat.readBorder(rom,lo,frlg);
+  const borderRaw=[];for(let i=0;i<border.borderWidth*border.borderHeight;i++)borderRaw.push(u16(rom,border.borderAddress-BASE+i*2));
+  const rd=ad.getMapRenderData(u32(rom,lo+12),W,H,u32(rom,lo+16),u32(rom,lo+20),borderRaw.map(v=>v&0x3ff));
+  const TW=W*PX,TH=H*PX, base=new Uint8Array(TW*TH*4), over=new Uint8Array(TW*TH*4);
+  for(let y=0;y<H;y++)for(let xx=0;xx<W;xx++){const b=rd.blocks[y*W+xx];const gr=b&&rd.graphics.get(b.metatileId);if(!gr)continue;
+    for(let sy=0;sy<PX;sy++){const dy=(H-1-y)*PX+PX-1-sy;for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,d=(dy*TW+xx*PX+sx)*4;for(let c=0;c<4;c++){base[d+c]=gr.basePixels[so+c];over[d+c]=gr.foregroundPixels[so+c];}}}}
+  // textura do bloco de borda (como buildPaddingPlane)
+  const bw=border.borderWidth,bh=border.borderHeight,BW=bw*PX,BH=bh*PX,btex=new Uint8Array(BW*BH*4);
+  for(let ty=0;ty<bh;ty++)for(let tx=0;tx<bw;tx++){const gr=rd.graphics.get(borderRaw[ty*bw+tx]&0x3ff);if(!gr)continue;
+    for(let sy=0;sy<PX;sy++)for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,dy=(bh-1-ty)*PX+PX-1-sy,d=(dy*BW+tx*PX+sx)*4;for(let c=0;c<4;c++)btex[d+c]=gr.basePixels[so+c];}}
+  const mask=computeFoldMask(W,H,(xx,y)=>rd.blocks[y*W+xx]);
+  const ids=new Uint16Array(W*H); for(let i=0;i<ids.length;i++)ids[i]=rd.blocks[i]?.metatileId??0;
+  const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,mask);
+  const fold=buildFoldGeometry(W,H,(xx,y)=>mask[y*W+xx]===1,2);
+  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,fold,type:rom[hdr-BASE+0x17],hdr};
+}
+const main=loadMap(+G,+M,0,0); const maps=[main];
+if(neighborsFlag!=='0'){
+  for(const c of cat.readConnections(rom,main.hdr)){
+    const t=u32(rom,header(c.mapGroup,c.mapNumber)-BASE)-BASE; const tw=u32(rom,t),th=u32(rom,t+4);
+    const pos={NORTH:[c.offset,-th],SOUTH:[c.offset,main.H],WEST:[-tw,c.offset],EAST:[main.W,c.offset]}[c.direction];
+    maps.push(loadMap(c.mapGroup,c.mapNumber,pos[0],pos[1]));
+  }
+}
+console.log=log;
+const OUT=new Set([1,2,3,5,6]);
+const padding=buildPadding(maps.map(m=>({key:m.key,x:m.x,z:m.z,width:m.W,height:m.H,borderWidth:m.bw,borderHeight:m.bh,spreads:OUT.has(m.type),raised:m.raised})),12,2);
+// triangulos
+const tris=[]; const add=(P,U,I,tex,tw,th,wrap,bias)=>{for(let i=0;i<I.length;i+=3)tris.push({p:[P[I[i]],P[I[i+1]],P[I[i+2]]],u:[U[I[i]],U[I[i+1]],U[I[i+2]]],tex,tw,th,wrap,bias});};
+const arr=(f,n)=>{const o=[];for(let i=0;i<f.length/n;i++)o.push(Array.from(f.slice(i*n,i*n+n)));return o;};
+for(const m of maps){
+  const gP=[[m.x,0,m.z+m.H],[m.x+m.W,0,m.z+m.H],[m.x+m.W,0,m.z],[m.x,0,m.z]], gU=[[0,0],[1,0],[1,1],[0,1]];
+  for(const [t,b] of [[m.base,0],[m.over,1]]) add(gP,gU,[0,1,2,0,2,3],t,m.TW,m.TH,false,b);
+  const FP=arr(m.fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(m.fold.uvs,2);
+  for(const [t,b] of [[m.base,0],[m.over,1]]) add(FP,FU,Array.from(m.fold.indices),t,m.TW,m.TH,false,b);
+}
+for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1);}
+log(maps.map(m=>`${m.key} @(${m.x},${m.z}) ${m.W}x${m.H} borda ${m.bw}x${m.bh} ${m.raised?'ELEVADA':'plana'}`).join('\n'));
+log('padding:', padding.map(p=>`${p.key}=${p.cellCount} celulas`).join(', '));
+// camera
+const W=800,H=450, cx=main.W/2+(+camDX), cz=main.H/2+(+camDZ);
+const eye=[cx,10,cz+11], tgt=[cx,0,cz];
+const d0=[tgt[0]-eye[0],tgt[1]-eye[1],tgt[2]-eye[2]], dl=Math.hypot(...d0), f=d0.map(v=>v/dl);
+const rx=[f[1]*0-f[2]*1, f[2]*0-f[0]*0, f[0]*1-f[1]*0], rl=Math.hypot(...rx), R=rx.map(v=>v/rl);
+const Uv=[R[1]*f[2]-R[2]*f[1], R[2]*f[0]-R[0]*f[2], R[0]*f[1]-R[1]*f[0]];
+const tanH=Math.tan(48*Math.PI/360), aspect=W/H;
+const proj=p=>{const d=[p[0]-eye[0],p[1]-eye[1],p[2]-eye[2]];const z=d[0]*f[0]+d[1]*f[1]+d[2]*f[2];const x=d[0]*R[0]+d[1]*R[1]+d[2]*R[2];const y=d[0]*Uv[0]+d[1]*Uv[1]+d[2]*Uv[2];return [W/2+(x/(z*tanH*aspect))*W/2, H/2-(y/(z*tanH))*H/2, z];};
+const img=new Uint8Array(W*H*4), zb=new Float32Array(W*H).fill(Infinity);
+for(let i=0;i<img.length;i+=4){img[i]=11;img[i+1]=18;img[i+2]=32;img[i+3]=255;}
+for(const t of tris){
+  const s=t.p.map(proj); if(s.some(v=>v[2]<=0.1))continue;
+  const [a,b,c]=s; const area=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]); if(Math.abs(area)<1e-9)continue;
+  const x0=Math.max(0,Math.floor(Math.min(a[0],b[0],c[0]))),x1=Math.min(W-1,Math.ceil(Math.max(a[0],b[0],c[0])));
+  const y0=Math.max(0,Math.floor(Math.min(a[1],b[1],c[1]))),y1=Math.min(H-1,Math.ceil(Math.max(a[1],b[1],c[1])));
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const px=x+.5,py=y+.5;
+    const w0=((b[0]-px)*(c[1]-py)-(b[1]-py)*(c[0]-px))/area,w1=((c[0]-px)*(a[1]-py)-(c[1]-py)*(a[0]-px))/area,w2=1-w0-w1; if(w0<0||w1<0||w2<0)continue;
+    const z=1/(w0/a[2]+w1/b[2]+w2/c[2]);
+    let uu=(w0*t.u[0][0]/a[2]+w1*t.u[1][0]/b[2]+w2*t.u[2][0]/c[2])*z, vv=(w0*t.u[0][1]/a[2]+w1*t.u[1][1]/b[2]+w2*t.u[2][1]/c[2])*z;
+    if(t.wrap){uu-=Math.floor(uu);vv-=Math.floor(vv);}
+    const tx=Math.min(t.tw-1,Math.max(0,Math.floor(uu*t.tw))),ty=Math.min(t.th-1,Math.max(0,Math.floor(vv*t.th)));
+    const o=(ty*t.tw+tx)*4; if(t.tex[o+3]<128)continue;
+    const zi=y*W+x, zz=z-t.bias*0.01; if(zz>zb[zi])continue; zb[zi]=zz;
+    img[zi*4]=t.tex[o];img[zi*4+1]=t.tex[o+1];img[zi*4+2]=t.tex[o+2];}
+}
+writeFileSync(out,png(W,H,img));

@@ -292,14 +292,16 @@ export function buildFoldGeometry(
 
     // Laterais: fecham o volume para a perspectiva nao mostrar o chao por
     // dentro. So existem quando ha teto - placas, cercas e ledges sao
-    // cartoes finos, sem interior para esconder (lateral neles virava uma
-    // "aba" escura esticando o contorno do sprite).
+    // cartoes finos, sem interior para esconder.
     //
-    // Amostram a coluna CENTRAL do bloco da borda, esticada em z: no
-    // contorno a arvore e quase toda transparente e virava uma "caixa de
-    // vidro"; no centro ha folhagem, parede ou madeira opacas.
+    // Mapeamento: a cor varia AO LONGO da lateral seguindo as linhas do
+    // teto (a copa vista de lado), na coluna central do bloco da borda.
+    // Esticar a fachada ao longo do comprimento (versao anterior) virava
+    // listras em fileiras longas de arvores, de dezenas de blocos.
     if (roofRows > 0) {
       const northZ = southZ - roofRows;
+      const roofSouthV = vSouth(run.y1 - wall);
+      const roofNorthV = vNorth(run.y0);
       const westU = u(left + 0.5);
       const eastU = u(right - 0.5);
 
@@ -311,10 +313,10 @@ export function buildFoldGeometry(
           [left, wall, northZ],
         ],
         [
-          [westU, wallBottomV],
-          [westU, wallBottomV],
-          [westU, wallTopV],
-          [westU, wallTopV],
+          [westU, roofNorthV],
+          [westU, roofSouthV],
+          [westU, roofSouthV],
+          [westU, roofNorthV],
         ],
       );
 
@@ -326,10 +328,10 @@ export function buildFoldGeometry(
           [right, wall, southZ],
         ],
         [
-          [eastU, wallBottomV],
-          [eastU, wallBottomV],
-          [eastU, wallTopV],
-          [eastU, wallTopV],
+          [eastU, roofSouthV],
+          [eastU, roofNorthV],
+          [eastU, roofNorthV],
+          [eastU, roofSouthV],
         ],
       );
     }

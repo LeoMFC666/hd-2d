@@ -103,6 +103,12 @@ import {
 } from './VoxelFolding';
 
 import {
+  buildPadding,
+  isBorderRaised,
+  type PaddingMapInput,
+} from './PaddingBuilder';
+
+import {
   OverworldSprites,
   type SpriteFrame,
 } from '../gen3/OverworldSprites';
@@ -223,6 +229,19 @@ export class PlayerRenderer {
 
   private readonly worldBorderMeshes:
     THREE.Mesh[] = [];
+
+  // Bloco de borda de cada mapa, em textura com repeticao.
+  private readonly borderTextures =
+    new Map<string, THREE.DataTexture>();
+
+  // O padding de cada mapa sobe com a dobra? (ver isBorderRaised)
+  private readonly paddingRaised =
+    new Map<string, boolean>();
+
+  // Textura de borda ou elevacao de algum mapa chegou depois da ultima
+  // montagem do padding (os mapas sao construidos ao longo de varios
+  // quadros): refazer no proximo quadro.
+  private paddingDirty = false;
 
   private readonly tileAnimator:
     TileAnimator;
@@ -1330,20 +1349,10 @@ export class PlayerRenderer {
   }
 
   /**
-   * Monta o padding do mundo: um plano por mapa posicionado, cada um
-   * usando o PROPRIO bloco de borda daquele mapa.
-   *
-   * Por que nao um plano unico para o mundo inteiro (versao anterior):
-   * cada mapa define a sua borda. Mauville usa grama, uma rota de mar usa
-   * agua, uma area rochosa usa pedra. Pintar o mundo todo com a borda do
-   * mapa ativo acerta ao redor do jogador e erra em todo o resto - era o
-   * que deixava faixas de agua em volta de areas de terra.
-   *
-   * Por que os planos nao brigam por profundidade: cada um recebe um y
-   * ligeiramente diferente, ordenado pela distancia ate o mapa ativo. O
-   * mais proximo fica por cima, entao a regiao em volta do jogador sempre
-   * mostra a borda correta, e nunca ha dois planos coplanares - que foi a
-   * causa do z-fighting em 597e1b2.
+   * Padding do mundo (ver PaddingBuilder): o espaco vazio em volta dos
+   * mapas e dividido entre eles - cada celula fica com o mapa mais proximo
+   * e recebe a borda DELE, alinhada como no GBA. Sem sobreposicao entre
+   * mapas, sem buraco entre eles. Borda de arvores sobe na altura da dobra.
    */
   private rebuildWorldBorder(
     maps: MapDefinition[],
@@ -1360,40 +1369,12 @@ export class PlayerRenderer {
       return;
     }
 
-    const activePosition =
-      this.mapWorld.getWorldPosition(
-        activeMap.mapGroup,
-        activeMap.mapNumber,
-      );
-
-    if (!activePosition) {
-      return;
-    }
-
-    const activeCenterX =
-      activePosition.x + activeMap.width / 2;
-
-    const activeCenterZ =
-      activePosition.y + activeMap.height / 2;
-
-    interface PaddingCandidate {
-      map: MapDefinition;
-      centerX: number;
-      centerZ: number;
-      distance: number;
-    }
-
-    const candidates: PaddingCandidate[] = [];
+    const inputs: PaddingMapInput[] = [];
+    const definitions = new Map<string, MapDefinition>();
 
     for (
       const map of maps
     ) {
-      if (
-        !this.mapAcceptsPadding(map)
-      ) {
-        continue;
-      }
-
       const position =
         this.mapWorld.getWorldPosition(
           map.mapGroup,
@@ -1404,51 +1385,85 @@ export class PlayerRenderer {
         continue;
       }
 
-      const centerX =
-        position.x + map.width / 2;
+      const key =
+        this.createMapKey(
+          map.mapGroup,
+          map.mapNumber,
+        );
 
-      const centerZ =
-        position.y + map.height / 2;
+      definitions.set(key, map);
 
-      candidates.push({
-        map,
-        centerX,
-        centerZ,
-        distance:
-          Math.hypot(
-            centerX - activeCenterX,
-            centerZ - activeCenterZ,
-          ),
+      inputs.push({
+        key,
+        x: position.x,
+        z: position.y,
+        width: map.width,
+        height: map.height,
+        borderWidth: Math.max(1, map.borderWidth),
+        borderHeight: Math.max(1, map.borderHeight),
+        spreads: this.mapAcceptsPadding(map),
+        raised: this.paddingRaised.get(key) ?? false,
       });
     }
 
-    // Mais distante primeiro: o mais proximo do jogador e desenhado por
-    // cima e manda na aparencia da area visivel.
-    candidates.sort(
-      (left, right) =>
-        right.distance - left.distance,
-    );
+    const meshes =
+      buildPadding(
+        inputs,
+        MAP_PADDING_METATILES,
+        VOXEL_MAX_WALL_ROWS,
+      );
 
-    candidates.forEach(
-      (candidate, index) => {
-        // Mais proximo do jogador = mais alto (fica por cima).
-        const rank =
-          candidates.length - 1 - index;
+    for (
+      const data of meshes
+    ) {
+      const map =
+        definitions.get(data.key);
 
-        const mesh =
-          this.buildPaddingPlane(
-            candidate.map,
-            candidate.centerX,
-            candidate.centerZ,
-            PADDING_TOP_Y - rank * PADDING_STEP_Y,
-          );
+      // Textura existe quando o visual do mapa ja foi construido; se
+      // ainda nao, o padding e refeito quando ele ficar pronto.
+      const texture =
+        map
+          ? this.borderTextures.get(data.key) ?? null
+          : null;
 
-        if (mesh) {
-          this.worldBorderMeshes.push(mesh);
-          this.root.add(mesh);
-        }
-      },
-    );
+      if (!texture) {
+        continue;
+      }
+
+      const geometry =
+        new THREE.BufferGeometry();
+
+      geometry.setAttribute(
+        'position',
+        new THREE.BufferAttribute(data.positions, 3),
+      );
+
+      geometry.setAttribute(
+        'uv',
+        new THREE.BufferAttribute(data.uvs, 2),
+      );
+
+      geometry.setIndex(
+        new THREE.BufferAttribute(data.indices, 1),
+      );
+
+      const mesh =
+        new THREE.Mesh(
+          geometry,
+          new THREE.MeshBasicMaterial({
+            map: texture,
+            side: THREE.DoubleSide,
+          }),
+        );
+
+      // Um pouco abaixo do chao dos mapas: as celulas de padding nunca
+      // coincidem com um mapa, mas a margem evita costura na emenda.
+      mesh.position.y = -0.02;
+      mesh.renderOrder = -10;
+
+      this.worldBorderMeshes.push(mesh);
+      this.root.add(mesh);
+    }
   }
 
   private mapAcceptsPadding(
@@ -1465,189 +1480,100 @@ export class PlayerRenderer {
   }
 
   /**
-   * Plano de padding de um mapa: area do mapa expandida por
-   * MAP_PADDING_METATILES, preenchida com o bloco de borda repetido.
+   * Textura do bloco de borda de um mapa (tipicamente 2x2 metatiles), com
+   * RepeatWrapping: a repeticao fica na GPU, pelas UVs do PaddingBuilder.
    *
-   * A textura gerada e apenas o bloco de borda (tipicamente 2x2
-   * metatiles); a repeticao fica por conta da GPU via RepeatWrapping.
-   * Gerar um bitmap do tamanho da area preenchida seria inviavel para os
-   * mapas grandes.
+   * Montada em buildMapVisual a partir dos graficos DAQUELE mapa (o
+   * renderData ja resolve os metatiles da borda com os tilesets dele).
+   * Antes usava getMetatileGraphics, que le dos tilesets do mapa ATIVO:
+   * vizinho com outro tileset secundario saia com a borda errada.
    */
-  private buildPaddingPlane(
+  private buildBorderTexture(
+    key: string,
     map: MapDefinition,
-    centerX: number,
-    centerZ: number,
-    y: number,
-  ): THREE.Mesh | null {
+    graphicsById: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+  ): void {
+    if (this.borderTextures.has(key)) {
+      return;
+    }
+
     const borderMetatileIds =
       this.readBorderMetatileIds(
         map,
       );
 
-    if (
-      borderMetatileIds.length === 0
-    ) {
-      return null;
-    }
+    let texture: THREE.DataTexture | null = null;
 
-    const blockWidth =
-      map.borderWidth * GBA_METATILE_PIXELS;
+    if (borderMetatileIds.length > 0) {
+      const blockWidth =
+        map.borderWidth * GBA_METATILE_PIXELS;
 
-    const blockHeight =
-      map.borderHeight * GBA_METATILE_PIXELS;
+      const blockHeight =
+        map.borderHeight * GBA_METATILE_PIXELS;
 
-    const pixels =
-      new Uint8ClampedArray(
-        blockWidth * blockHeight * 4,
-      );
+      const pixels =
+        new Uint8ClampedArray(
+          blockWidth * blockHeight * 4,
+        );
 
-    let painted = false;
+      let painted = false;
 
-    for (
-      let tileY = 0;
-      tileY < map.borderHeight;
-      tileY++
-    ) {
-      for (
-        let tileX = 0;
-        tileX < map.borderWidth;
-        tileX++
-      ) {
-        const metatileId =
-          borderMetatileIds[
-            tileY * map.borderWidth + tileX
-          ];
+      for (let tileY = 0; tileY < map.borderHeight; tileY++) {
+        for (let tileX = 0; tileX < map.borderWidth; tileX++) {
+          const graphics =
+            graphicsById.get(
+              borderMetatileIds[tileY * map.borderWidth + tileX],
+            );
 
-        if (metatileId === undefined) {
-          continue;
-        }
+          if (!graphics) {
+            continue;
+          }
 
-        const graphics =
-          this.stateAdapter.getMetatileGraphics(
-            metatileId,
-          );
+          painted = true;
 
-        if (!graphics) {
-          continue;
-        }
+          for (let sourceY = 0; sourceY < GBA_METATILE_PIXELS; sourceY++) {
+            for (let sourceX = 0; sourceX < GBA_METATILE_PIXELS; sourceX++) {
+              const sourceOffset =
+                (sourceY * GBA_METATILE_PIXELS + sourceX) * 4;
 
-        painted = true;
+              // Mesma inversao vertical das texturas de mapa.
+              const destinationY =
+                (map.borderHeight - 1 - tileY) * GBA_METATILE_PIXELS +
+                GBA_METATILE_PIXELS - 1 - sourceY;
 
-        for (
-          let sourceY = 0;
-          sourceY < GBA_METATILE_PIXELS;
-          sourceY++
-        ) {
-          for (
-            let sourceX = 0;
-            sourceX < GBA_METATILE_PIXELS;
-            sourceX++
-          ) {
-            const sourceOffset =
-              (sourceY * GBA_METATILE_PIXELS + sourceX) * 4;
+              const destinationOffset =
+                (destinationY * blockWidth +
+                  tileX * GBA_METATILE_PIXELS + sourceX) * 4;
 
-            const destinationY =
-              (map.borderHeight - 1 - tileY) *
-                GBA_METATILE_PIXELS +
-              GBA_METATILE_PIXELS - 1 - sourceY;
-
-            const destinationX =
-              tileX * GBA_METATILE_PIXELS + sourceX;
-
-            const destinationOffset =
-              (destinationY * blockWidth + destinationX) * 4;
-
-            pixels[destinationOffset] =
-              graphics.basePixels[sourceOffset];
-
-            pixels[destinationOffset + 1] =
-              graphics.basePixels[sourceOffset + 1];
-
-            pixels[destinationOffset + 2] =
-              graphics.basePixels[sourceOffset + 2];
-
-            pixels[destinationOffset + 3] =
-              graphics.basePixels[sourceOffset + 3];
+              for (let channel = 0; channel < 4; channel++) {
+                pixels[destinationOffset + channel] =
+                  graphics.basePixels[sourceOffset + channel];
+              }
+            }
           }
         }
       }
+
+      if (painted) {
+        texture =
+          this.createMapTexture(
+            pixels,
+            blockWidth,
+            blockHeight,
+          );
+
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.needsUpdate = true;
+      }
     }
 
-    if (!painted) {
-      return null;
+    if (texture) {
+      this.borderTextures.set(key, texture);
+
+      // O padding foi montado antes deste mapa existir: refaz.
+      this.paddingDirty = true;
     }
-
-    const planeWidth =
-      map.width + MAP_PADDING_METATILES * 2;
-
-    const planeHeight =
-      map.height + MAP_PADDING_METATILES * 2;
-
-    const texture =
-      this.createMapTexture(
-        pixels,
-        blockWidth,
-        blockHeight,
-      );
-
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-
-    texture.repeat.set(
-      planeWidth / map.borderWidth,
-      planeHeight / map.borderHeight,
-    );
-
-    // Alinhamento com a grade do jogo: fora do mapa, o bloco em (x, y) e
-    // borda[x mod largura][y mod altura], contado da origem do mapa.
-    //  - u = 0 e a borda oeste do plano, coluna x = -P do mapa;
-    //  - v = 0 e a borda sul do plano, linha y = H + P - 1; a textura do
-    //    bloco de borda e assada de baixo para cima, entao a linha r da
-    //    borda ocupa v em [(bh-1-r)/bh, (bh-r)/bh).
-    const mod = (value: number, size: number): number =>
-      ((value % size) + size) % size;
-
-    const westColumn =
-      mod(-MAP_PADDING_METATILES, map.borderWidth);
-
-    const southRow =
-      mod(map.height + MAP_PADDING_METATILES - 1, map.borderHeight);
-
-    texture.offset.set(
-      westColumn / map.borderWidth,
-      (map.borderHeight - 1 - southRow) / map.borderHeight,
-    );
-
-    texture.needsUpdate = true;
-
-    const geometry =
-      new THREE.PlaneGeometry(
-        planeWidth,
-        planeHeight,
-      );
-
-    const mesh =
-      new THREE.Mesh(
-        geometry,
-        new THREE.MeshBasicMaterial({
-          map: texture,
-          transparent: false,
-          depthWrite: true,
-          side: THREE.DoubleSide,
-        }),
-      );
-
-    mesh.rotation.x = -Math.PI / 2;
-
-    mesh.position.set(
-      centerX,
-      y,
-      centerZ,
-    );
-
-    mesh.renderOrder = -10;
-
-    return mesh;
   }
 
   private disposeWorldBorder(): void {
@@ -1656,21 +1582,8 @@ export class PlayerRenderer {
     ) {
       this.root.remove(mesh);
 
-      const material =
-        mesh.material;
-
-      if (Array.isArray(material)) {
-        material.forEach(
-          entry => {
-            (entry as THREE.MeshBasicMaterial).map?.dispose();
-            entry.dispose();
-          },
-        );
-      } else {
-        (material as THREE.MeshBasicMaterial).map?.dispose();
-        material.dispose();
-      }
-
+      // A textura fica: e compartilhada pelo cache de bordas.
+      (mesh.material as THREE.Material).dispose();
       mesh.geometry.dispose();
     }
 
@@ -2264,7 +2177,7 @@ export class PlayerRenderer {
 
   private buildVoxelGroup(
     map: MapDefinition,
-    blocks: readonly { collision: number; elevation: number }[],
+    blocks: readonly { metatileId: number; collision: number; elevation: number }[],
     baseTexture: THREE.DataTexture,
     overlayTexture: THREE.DataTexture,
   ): THREE.Group | undefined {
@@ -2285,6 +2198,31 @@ export class PlayerRenderer {
         map.height,
         (x, y) => blocks[y * map.width + x],
       );
+
+    // A borda deste mapa sobe junto? Decide aqui, onde a mascara existe:
+    // os metatiles da borda aparecem dentro do mapa e a dobra ja disse se
+    // eles ganharam volume.
+    const metatileIds =
+      new Uint16Array(map.width * map.height);
+
+    for (let index = 0; index < metatileIds.length; index++) {
+      metatileIds[index] = blocks[index]?.metatileId ?? 0;
+    }
+
+    const raised =
+      isBorderRaised(
+        this.readBorderMetatileIds(map),
+        metatileIds,
+        mask,
+      );
+
+    const raisedKey =
+      this.createMapKey(map.mapGroup, map.mapNumber);
+
+    if (this.paddingRaised.get(raisedKey) !== raised) {
+      this.paddingRaised.set(raisedKey, raised);
+      this.paddingDirty = true;
+    }
 
     const data =
       buildFoldGeometry(
@@ -2410,6 +2348,12 @@ export class PlayerRenderer {
     ) {
       return;
     }
+
+    this.buildBorderTexture(
+      this.createMapKey(map.mapGroup, map.mapNumber),
+      map,
+      renderData.graphics,
+    );
 
     const textureWidth =
       map.width *
@@ -3104,6 +3048,18 @@ export class PlayerRenderer {
 
       this.processMapBuildQueue();
 
+      if (this.paddingDirty) {
+        this.paddingDirty = false;
+
+        this.rebuildWorldBorder(
+          this.mapWorld.getPositionedMaps(),
+          this.mapCatalog.get(
+            state.map.mapGroup,
+            state.map.mapNumber,
+          ),
+        );
+      }
+
       const playerPosition =
         this.updatePlayer(
           state,
@@ -3163,6 +3119,13 @@ export class PlayerRenderer {
     );
 
     this.disposeWorldBorder();
+
+    for (const texture of this.borderTextures.values()) {
+      texture.dispose();
+    }
+
+    this.borderTextures.clear();
+    this.paddingRaised.clear();
 
     this.tileAnimator.clear();
 
