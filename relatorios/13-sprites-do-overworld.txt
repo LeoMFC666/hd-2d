@@ -1,0 +1,78 @@
+================================================================================
+RELATORIO 13 - SPRITES DO OVERWORLD (NPCs, ENTIDADES E PROTAGONISTA)
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. FONTE DOS SPRITES: O ROM
+--------------------------------------------------------------------------------
+Os sprites vem direto do ROM, nao da OAM/VRAM do emulador. A palette RAM ja
+se mostrou nao confiavel neste build (volta zerada durante transicoes), e o
+ROM tem graficos, paletas e animacoes de forma estavel.
+
+src/gen3/OverworldSprites.ts localiza, pela ESTRUTURA do ROM:
+  - gObjectEventGraphicsInfoPointers (tabela de graficos)
+  - sObjectEventSpritePalettes        (tabela de paletas)
+
+  ROM               graficos    ids   paletas
+  FireRed rev1      0x839FE20   152   0x83A51C8 (18)
+  Emerald           0x8505620   246   0x850BBC8 (35)
+  Perfect Fire Red  0x873EC40   156   0x8134940 (22)  <- realocada pelo hack
+
+A Perfect moveu as duas tabelas: endereco fixo teria quebrado.
+
+2. ERROS DE PREMISSA PEGOS PELA SONDA ANTES DO CODIGO
+--------------------------------------------------------------------------------
+  - Eu assumia que o campo 'size' da struct = largura x altura / 2. Nao e:
+    o jogador reserva o maior quadro de todas as suas formas (Brendan
+    16x32 tem size=512). Meu filtro reprovava justamente a entrada 0, o
+    protagonista, e a tabela do Emerald saia deslocada - TODOS os ids
+    errados. O criterio certo e o tamanho do QUADRO (images[0].size).
+  - Arvores de berry tem o quadro 0 menor que as dimensoes (montinho de
+    terra). A tabela e delimitada por validacao estrutural, com a completa
+    exigida em 90% das entradas.
+  - A tabela de paletas tem tags que nenhum grafico usa direto (reflexos);
+    a busca agora aceita a faixa 0x11xx e escolhe a que cobre mais tags.
+
+3. VERIFICACAO
+--------------------------------------------------------------------------------
+  tools/sprites-contact-sheet.mjs: folha com o quadro 0 de todo id. Olhei
+    as tres: entrada 0 e o protagonista (Red / Brendan), variantes de bike
+    e surf, NPCs, itens, caminhao de mudanca, Rayquaza, lendarios, navios.
+    Paletas corretas, nenhuma tag sem paleta.
+  tools/verify-sprites.mjs: usa a CLASSE REAL. Sequencia de quadros:
+      baixo  3-0-4-0 | cima 5-1-6-1 | esquerda 7-2-8-2 | direita = esquerda
+      espelhada
+    identica a animacao padrao da Gen 3 nos dois jogos. Caminhao (inanimado)
+    fica sempre no quadro 0. Localizacao das tabelas: ~200 ms, uma vez.
+
+4. RENDERIZACAO
+--------------------------------------------------------------------------------
+  - Plano com origem nos pes, voltado para a camera; renderOrder 3 para
+    nao ser coberto pela camada de cima do mapa; alphaTest para borda
+    nitida e profundidade correta entre sprites.
+  - Movimento suave: a RAM pula para o tile de destino no INICIO do passo;
+    o sprite percorre 1 tile em 16 quadros, como no jogo. Se ficar para
+    tras (corrida, bike) acelera; acima de 3 tiles (warp) teleporta.
+  - Animacao de caminhada enquanto desliza, quadro parado ao chegar.
+  - PROTAGONISTA: usa o graphicsId do proprio ObjectEvent (bit isPlayer),
+    entao bike, surf e pesca trocam o sprite sozinhos. A camera segue a
+    posicao exibida, presa a ele: o mundo rola com o passo, sem atraso.
+    Para voltar ao pulo seco de tile em tile: SMOOTH_ENTITY_MOVEMENT=false.
+  - Objetos com o bit invisible sao ignorados; o jogador nao e duplicado
+    como NPC.
+  - Reserva: sem sprite resolvido (Ruby/Sapphire, que ainda nao leem
+    ObjectEvent), a caixa antiga continua aparecendo.
+
+5. LIMITACOES CONHECIDAS
+--------------------------------------------------------------------------------
+  - So entidades do mapa atual: e o que o jogo mantem na RAM.
+  - Corrida usa a animacao de caminhada (mais rapida pelo deslize).
+  - Arvores de berry usam o estagio pela direcao, nao pelo crescimento.
+  - O "blob" de surf e a sombra sao efeitos de campo, nao ObjectEvents;
+    ainda nao aparecem.
+  - Sem teste visual no navegador (mesma limitacao de sempre).
+
+================================================================================
+FIM DO RELATORIO 13
+================================================================================

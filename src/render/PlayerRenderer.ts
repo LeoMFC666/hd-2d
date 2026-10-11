@@ -2638,41 +2638,61 @@ export class PlayerRenderer {
     x: number;
     z: number;
   } {
-    const position =
+    const target =
       this.getPlayerWorldPosition(
         state,
       );
 
-    this.player.position.x =
-      position.x;
+    // O proprio ObjectEvent do jogador traz o graphicsId atual: andando,
+    // de bike, surfando, pescando - o sprite acompanha sozinho.
+    const playerObject =
+      state.objects.find(
+        object => object.isPlayer,
+      );
 
-    this.player.position.z =
-      position.z;
+    if (playerObject) {
+      this.playerVisual =
+        this.updateSpriteVisual(
+          this.playerVisual,
+          playerObject.graphicsId ?? 0,
+          state.player.direction,
+          target.x,
+          target.z,
+          performance.now(),
+        );
+    }
+
+    if (this.playerVisual) {
+      this.player.visible = false;
+      this.playerVisual.mesh.visible = true;
+
+      // A camera segue a posicao EXIBIDA, presa ao sprite: o mundo rola
+      // junto com o passo, como no GBA, sem atraso nem balanco.
+      return {
+        x: this.playerVisual.displayX,
+        z: this.playerVisual.displayZ,
+      };
+    }
+
+    // Sem sprite (ex.: Ruby/Sapphire ainda sem leitura de ObjectEvent):
+    // mantem a caixa antiga como reserva.
+    this.player.visible = true;
+    this.player.position.x = target.x;
+    this.player.position.z = target.z;
 
     const directionMap = {
-      UP:
-        -Math.PI / 2,
-
-      DOWN:
-        Math.PI / 2,
-
-      LEFT:
-        Math.PI,
-
-      RIGHT:
-        0,
-    } satisfies Record<
-      string,
-      number
-    >;
+      UP: -Math.PI / 2,
+      DOWN: Math.PI / 2,
+      LEFT: Math.PI,
+      RIGHT: 0,
+    } satisfies Record<string, number>;
 
     this.player.rotation.y =
-      directionMap[
-        state.player.direction
-      ] ?? 0;
+      directionMap[state.player.direction] ?? 0;
 
-    return position;
+    return target;
   }
+
 
   private updateCamera(
     position: {
@@ -2915,6 +2935,31 @@ export class PlayerRenderer {
     this.disposeWorldBorder();
 
     this.tileAnimator.clear();
+
+    // Sprites: materiais por entidade, texturas e geometrias em cache.
+    for (
+      const visual of [
+        ...this.entityVisuals.values(),
+        ...(this.playerVisual ? [this.playerVisual] : []),
+      ]
+    ) {
+      this.root.remove(visual.mesh);
+      (visual.mesh.material as THREE.Material).dispose();
+    }
+
+    this.entityVisuals.clear();
+    this.playerVisual = null;
+
+    for (const texture of this.spriteTextures.values()) {
+      texture.dispose();
+    }
+
+    for (const geometry of this.spriteGeometries.values()) {
+      geometry.dispose();
+    }
+
+    this.spriteTextures.clear();
+    this.spriteGeometries.clear();
 
     for (
       const visual of
