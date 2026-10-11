@@ -122,6 +122,10 @@ export class TileAnimator {
   // derrubar o loop de render. Nenhuma falha aqui pode parar o jogo.
   private disabled = false;
 
+  // Diagnostico: relatado uma vez por mapa, para distinguir "nao ha tile
+  // animado neste mapa" de "a leitura da VRAM nao esta trazendo dado".
+  private vramReported = false;
+
   constructor(
     romBytes: Uint8Array,
     memoryReader: MemoryReader,
@@ -156,6 +160,15 @@ export class TileAnimator {
         map,
         metatileIds,
       );
+
+    this.vramReported = false;
+
+    console.log(
+      '[anim] mapa',
+      key,
+      '- posicoes animadas:',
+      this.positions.length,
+    );
   }
 
   clear(): void {
@@ -224,6 +237,33 @@ export class TileAnimator {
 
     // Assinatura barata: so repinta quando os tiles realmente mudaram.
     // Evita trabalho em mapas sem animacao ativa no momento.
+    if (!this.vramReported) {
+      this.vramReported = true;
+
+      let nonZero = 0;
+
+      for (
+        let index = 0;
+        index < tileBytes.length;
+        index++
+      ) {
+        if (tileBytes[index] !== 0) {
+          nonZero++;
+        }
+      }
+
+      console.log(
+        '[anim] VRAM lida:',
+        tileBytes.length,
+        'bytes,',
+        nonZero,
+        'nao-zero',
+        nonZero === 0
+          ? '-- faixa de VRAM provavelmente errada ou leitura indisponivel'
+          : '',
+      );
+    }
+
     const signature =
       this.buildSignature(
         tileBytes,

@@ -1190,11 +1190,6 @@ export class PlayerRenderer {
       activeMap,
     );
 
-    this.syncTileAnimation(
-      mapKey,
-      activeMap,
-    );
-
     console.log(
       'Active World:',
       {
@@ -2476,6 +2471,24 @@ export class PlayerRenderer {
 
       this.updateDebug(
         state,
+      );
+
+      // Registro da animacao roda TODO FRAME, nao so na troca de mapa.
+      // Preso no fim de updateActiveWorld ele nunca pegava: naquele
+      // instante o visual do mapa ainda esta na fila de construcao, entao
+      // a tentativa falhava, e updateActiveWorld sai cedo nos frames
+      // seguintes - a animacao nunca chegava a ser registrada.
+      // Aqui a tentativa se repete ate o visual existir; depois disso
+      // setActiveMap sai de imediato, entao o custo e desprezivel.
+      this.syncTileAnimation(
+        this.createMapKey(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        ),
+        this.mapCatalog.get(
+          state.map.mapGroup,
+          state.map.mapNumber,
+        ),
       );
 
       this.tileAnimator.update();
