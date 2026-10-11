@@ -427,19 +427,17 @@ export class PlayerRenderer {
 
     // VALIDACAO DA ANCORA
     //
-    // Ter montado algum catalogo nao significa ter montado o catalogo
-    // CERTO. A ancora vem da RAM do emulador, e nos primeiros frames apos
-    // carregar um ROM essa RAM pode ainda nao estar inicializada. Com uma
-    // ancora invalida a resolucao casa com um cabecalho qualquer e o
-    // catalogo inteiro sai deslocado - e o que fazia Cinnabar Island
-    // aparecer como um mapa beta e o mundo nao conectar no primeiro
-    // carregamento do Fire Red. Carregar outro ROM antes "consertava"
-    // porque a RAM ja estava quente na segunda vez.
+    // Este teste so passou a valer alguma coisa agora que gMapGroups e
+    // localizada pela estrutura do ROM. Enquanto a tabela era derivada da
+    // propria ancora, conferir que o mapa da ancora apontava para o layout
+    // da ancora era TAUTOLOGICO: o catalogo era construido exatamente para
+    // que isso fosse verdade, e o teste nunca podia falhar.
     //
-    // O teste e de consistencia: o mapa que o catalogo registrou na
-    // posicao da ancora tem de apontar para o MESMO layout que a ancora
-    // leu da memoria. Se divergir, o catalogo esta errado - descarta e
-    // tenta de novo mais tarde, em vez de fixar o erro para sempre.
+    // Com a tabela vindo de uma fonte independente, a comparacao passa a
+    // ter conteudo: se o mapa registrado na posicao da ancora nao apontar
+    // para o layout que a ancora leu da RAM, ou a RAM ainda nao estava
+    // valida, ou a tabela nao corresponde a este ROM. Nos dois casos o
+    // certo e descartar e tentar de novo, nunca fixar o erro.
     const anchored =
       this.mapCatalog.get(
         state.map.mapGroup,

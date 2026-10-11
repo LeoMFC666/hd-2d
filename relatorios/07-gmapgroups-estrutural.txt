@@ -1,0 +1,84 @@
+================================================================================
+RELATORIO 07 - gMapGroups LOCALIZADA PELA ESTRUTURA DO ROM
+Projeto: pkmn-2.5d  (repo: LeoMFC666/hd-2d)   Branch: 4
+Data: 2026-10-11
+================================================================================
+
+1. ERRO NO RELATORIO 06: A VALIDACAO ERA TAUTOLOGICA
+--------------------------------------------------------------------------------
+No commit ef8261d eu adicionei este teste e o apresentei como validacao:
+
+    catalogo.get(ancora.grupo, ancora.numero).mapLayoutAddress
+        === ancora.mapLayoutAddress
+
+Ele nao valida nada. A tabela gMapGroups era DERIVADA da propria ancora:
+resolveMapGroupsAddress procurava um cabecalho com o layout da ancora e
+montava a tabela de modo que a ancora caisse exatamente nele. Por
+construcao a igualdade sempre vale. O teste jamais poderia falhar, e por
+isso o erro continuou identico na Perfect Fire Red.
+
+2. CAUSA REAL
+--------------------------------------------------------------------------------
+gMapGroups e propriedade do ROM, nao do mapa onde o jogador esta. Derivar a
+tabela a partir da ancora era o erro de fundo, porque varios mapas
+compartilham layout - inclusive mapas de beta que sobraram no ROM. Quando o
+candidato errado validava primeiro, a tabela saia deslocada e o catalogo
+inteiro vinha errado: Cinnabar apontando para 0x00338378 e mundo sem
+conexoes.
+
+Na Perfect Fire Red o risco e maior porque a tabela mudou de endereco em
+relacao ao vanilla.
+
+3. SOLUCAO: BUSCA ESTRUTURAL
+--------------------------------------------------------------------------------
+Um endereco so e aceito como gMapGroups se 16 ponteiros consecutivos a
+partir dele apontarem, cada um, para um array cujo primeiro elemento e um
+cabecalho de mapa valido (cadeia header -> layout -> dimensoes, map data,
+tilesets).
+
+Medicao que justifica o criterio - quantas regioes candidatas existem no
+ROM inteiro:
+
+  FireRed vanilla rev1 : 1 regiao -> 0x8352718
+  Perfect Fire Red v5.5: 1 regiao -> 0x83526a8
+
+Exatamente UMA em cada ROM, com 8, 12, 16 e 20 grupos de exigencia. O
+criterio nao e ambiguo, e nao toca na RAM.
+
+4. VERIFICACAO
+--------------------------------------------------------------------------------
+Localizacao (metodo real da classe, contra os ROMs reais):
+
+  FireRed rev1  -> 0x8352718  (esperado 0x8352718)  OK   31ms
+  Perfect FR    -> 0x83526a8  (esperado 0x83526a8)  OK   17ms
+  Emerald       -> 0x8486578  (esperado 0x8486578)  OK   27ms
+
+Catalogo de ponta a ponta com o endereco estrutural:
+
+  Perfect Fire Red : 425 mapas | 116 conexoes | mapa 3:8 header 0x83506F8
+  FireRed vanilla  : 425 mapas | 116 conexoes | mapa 3:8 header 0x8350768
+
+A Perfect agora resolve 3:8 para 0x83506F8, um cabecalho dentro da faixa
+normal de mapas - nao mais o 0x00338378 da beta. E as 116 conexoes aparecem
+nos dois, que e o numero correto do FireRed.
+
+Ganho adicional: a localizacao leva ~25ms, contra duas varreduras completas
+do ROM no metodo anterior.
+
+5. EFEITO SOBRE A VALIDACAO DA ANCORA
+--------------------------------------------------------------------------------
+O teste do relatorio 06 foi mantido, mas agora tem conteudo: com a tabela
+vinda de fonte independente, divergencia entre o layout registrado e o
+layout lido da RAM passa a indicar RAM ainda invalida ou tabela incompativel
+com o ROM. Nos dois casos descarta e tenta de novo.
+
+6. NAO VERIFICADO
+--------------------------------------------------------------------------------
+Sem teste visual (mesma limitacao de sempre). O remendo de Cinnabar
+(ensureFireRedCinnabarDefinition / repairCinnabarVisual, fixo no mapa 3:8)
+segue no codigo e continua sendo o primeiro suspeito caso Cinnabar ainda
+apareca errada.
+
+================================================================================
+FIM DO RELATORIO 07
+================================================================================

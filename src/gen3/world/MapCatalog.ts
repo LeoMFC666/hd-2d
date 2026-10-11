@@ -102,6 +102,13 @@ const MAX_GROUP_SCAN =
 const MAX_HEADER_CANDIDATES =
   64;
 
+// Quantos grupos consecutivos validos exigir para aceitar um endereco como
+// gMapGroups. Medido nos ROMs: com 16, existe exatamente UMA regiao
+// candidata em cada ROM (vanilla e hackrom), entao o criterio nao e
+// ambiguo.
+const MAP_GROUPS_MIN_VALID_GROUPS =
+  16;
+
 const MAP_DIRECTION_BY_VALUE:
   Record<
     number,
@@ -1553,6 +1560,109 @@ export class MapCatalog {
   }
 
   /**
+   * Localiza gMapGroups pela ESTRUTURA do ROM, sem depender da ancora.
+   *
+   * Por que isto substitui a resolucao por ancora: gMapGroups e uma
+   * propriedade do ROM, nao do mapa onde o jogador esta. A resolucao por
+   * ancora partia de um cabecalho com layout compativel, mas varios mapas
+   * compartilham layout - inclusive mapas da beta que sobraram no ROM.
+   * Quando o candidato errado validava primeiro, a tabela saia deslocada e
+   * o catalogo inteiro vinha errado: Cinnabar virando mapa de beta, mundo
+   * sem conexoes. Em hackroms o risco e maior ainda, porque a tabela muda
+   * de endereco (0x83526A8 no Perfect Fire Red contra 0x8352718 no
+   * FireRed vanilla).
+   *
+   * O criterio aqui e direto: um endereco so e aceito se N ponteiros
+   * consecutivos a partir dele apontarem, cada um, para um array cujo
+   * primeiro elemento e um cabecalho de mapa valido. Medido nos ROMs
+   * reais, isso produz exatamente uma regiao candidata por ROM, e o menor
+   * offset dessa regiao e o inicio da tabela.
+   */
+  private findMapGroupsByStructure(
+    romBytes: Uint8Array,
+  ): number {
+    for (
+      let offset = 0;
+      offset + 4 <= romBytes.length;
+      offset += 4
+    ) {
+      const firstGroup =
+        this.readU32(
+          romBytes,
+          offset,
+        );
+
+      // Filtro barato antes da checagem cara.
+      if (
+        !this.isValidRomPointer(
+          romBytes,
+          firstGroup,
+          0x04,
+        )
+      ) {
+        continue;
+      }
+
+      let validGroups = 0;
+
+      while (
+        validGroups < MAP_GROUPS_MIN_VALID_GROUPS
+      ) {
+        const entryOffset =
+          offset + validGroups * 4;
+
+        if (
+          entryOffset + 4 > romBytes.length
+        ) {
+          break;
+        }
+
+        const groupAddress =
+          this.readU32(
+            romBytes,
+            entryOffset,
+          );
+
+        if (
+          !this.isValidRomPointer(
+            romBytes,
+            groupAddress,
+            0x04,
+          )
+        ) {
+          break;
+        }
+
+        const firstHeader =
+          this.readU32(
+            romBytes,
+            groupAddress - GBA_ROM_BASE,
+          );
+
+        if (
+          !this.isPlausibleMapHeader(
+            romBytes,
+            firstHeader,
+          )
+        ) {
+          break;
+        }
+
+        validGroups++;
+      }
+
+      if (
+        validGroups >=
+        MAP_GROUPS_MIN_VALID_GROUPS
+      ) {
+        return GBA_ROM_BASE + offset;
+      }
+    }
+
+    return 0;
+  }
+
+  /**
    * Resolve gMapGroups testando cada cabecalho candidato da ancora.
    */
   private resolveMapGroupsAddress(
@@ -1560,6 +1670,18 @@ export class MapCatalog {
     anchor: Gen3MapCatalogAnchor,
     groupLengths: readonly number[],
   ): number {
+    // Caminho principal: achar a tabela pela estrutura do ROM.
+    const structural =
+      this.findMapGroupsByStructure(
+        romBytes,
+      );
+
+    if (structural !== 0) {
+      return structural;
+    }
+
+    // Fallback: resolucao por ancora, para ROMs cuja tabela nao satisfaca
+    // o criterio estrutural.
     const candidates =
       this.findStaticMapHeaderCandidates(
         romBytes,
