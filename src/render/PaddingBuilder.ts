@@ -48,6 +48,12 @@ export interface PaddingMapInput {
 
   // Borda sobe na altura da dobra.
   raised: boolean;
+
+  // Borda de agua: fica na altura da agua do mapa (abaixo do chao).
+  lowered?: boolean;
+
+  // Altura da agua (negativa) usada quando lowered.
+  waterLevel?: number;
 }
 
 export interface PaddingMeshData {
@@ -236,13 +242,16 @@ export function buildPadding(
       target.cells += end - gx + 1;
 
       if (!map.raised) {
+        const level =
+          map.lowered ? map.waterLevel ?? 0 : 0;
+
         quad(
           target,
           [
-            [left, 0, south],
-            [right, 0, south],
-            [right, 0, north],
-            [left, 0, north],
+            [left, level, south],
+            [right, level, south],
+            [right, level, north],
+            [left, level, north],
           ],
           [
             [uOf(left), vOf(south)],

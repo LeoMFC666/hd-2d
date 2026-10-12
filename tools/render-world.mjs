@@ -16,7 +16,7 @@
 // NOEXT=1 sem topos de objeto; PROBE=x,y lista triangulos do pixel.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { Gen3StateAdapter, MapCatalog, buildPadding, isBorderRaised, buildMapVolume } from './b8.mjs';
+import { Gen3StateAdapter, MapCatalog, buildPadding, isBorderRaised, buildMapVolume, buildGroundGeometry, WATER_DEPTH, markRocksInWater } from './b8.mjs';
 const BASE=0x08000000, PX=16;
 const u16=(r,o)=>r[o]|(r[o+1]<<8), u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
 function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
@@ -46,8 +46,10 @@ function loadMap(g,m,x,z){
   const vol=buildMapVolume(W,H,blockAt,cat.readWarps(rom,hdr),style,2);
   const ids=new Uint16Array(W*H); for(let i=0;i<ids.length;i++)ids[i]=rd.blocks[i]?.metatileId??0;
   const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,vol.mask);
+  const water=new Uint8Array(W*H); for(let i=0;i<W*H;i++)water[i]=rd.blocks[i]?.elevation===1?1:0; markRocksInWater(W,H,water,(xx,y)=>rd.blocks[y*W+xx].collision!==0);
+  const wb=new Set(); for(let i=0;i<W*H;i++)if(rd.blocks[i]?.elevation===1){const bh=rd.graphics.get(rd.blocks[i].metatileId)?.behavior; if(bh!==undefined)wb.add(bh);} let wet=0; for(const v of borderRaw){const bh=rd.graphics.get(v&0x3ff)?.behavior; if(bh!==undefined&&wb.has(bh))wet++;} const lowered=borderRaw.length>0&&wet*2>=borderRaw.length; if(process.env.WDBG)console.error(g,m,[...wb],borderRaw.map(v=>(v&0x3ff).toString(16)+":"+rd.graphics.get(v&0x3ff)?.behavior+":"+(v>>10)));
   const folds=[vol.natural,vol.details,...vol.buildings.map(b=>b.geometry)]; const patch=vol.patch;
-  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,folds,patch,type:rom[hdr-BASE+0x17],hdr};
+  return {water,lowered,rd,key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,folds,patch,type:rom[hdr-BASE+0x17],hdr};
 }
 const main=loadMap(+G,+M,0,0); const maps=[main];
 if(neighborsFlag!=='0'){
@@ -59,13 +61,13 @@ if(neighborsFlag!=='0'){
 }
 console.log=log;
 const OUT=new Set([1,2,3,5,6]);
-const padding=buildPadding(maps.map(m=>({key:m.key,x:m.x,z:m.z,width:m.W,height:m.H,borderWidth:m.bw,borderHeight:m.bh,spreads:OUT.has(m.type),raised:m.raised})),12,2);
+const padding=buildPadding(maps.map(m=>({key:m.key,x:m.x,z:m.z,width:m.W,height:m.H,borderWidth:m.bw,borderHeight:m.bh,spreads:OUT.has(m.type),raised:m.raised,lowered:m.lowered,waterLevel:-WATER_DEPTH})),12,2);
 // triangulos
 const tris=[]; const add=(P,U,I,tex,tw,th,wrap,bias,C)=>{for(let i=0;i<I.length;i+=3)tris.push({p:[P[I[i]],P[I[i+1]],P[I[i+2]]],u:[U[I[i]],U[I[i+1]],U[I[i+2]]],c:C?[C[I[i]],C[I[i+1]],C[I[i+2]]]:null,tex,tw,th,wrap,bias});};
 const arr=(f,n)=>{const o=[];for(let i=0;i<f.length/n;i++)o.push(Array.from(f.slice(i*n,i*n+n)));return o;};
 for(const m of maps){
-  for(let r=0;r<m.H;r++){const gP=[[m.x,0,m.z+r+1],[m.x+m.W,0,m.z+r+1],[m.x+m.W,0,m.z+r],[m.x,0,m.z+r]], v0=(m.H-1-r)/m.H, v1=(m.H-r)/m.H, gU=[[0,v0],[1,v0],[1,v1],[0,v1]];
-  for(const [t,b] of [[m.base,0],[m.over,1]]) add(gP,gU,[0,1,2,0,2,3],t,m.TW,m.TH,false,b);}
+  {const gd=buildGroundGeometry(m.W,m.H,(xx,y)=>m.water[y*m.W+xx]===1,0); const GP=arr(gd.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), GU=arr(gd.uvs,2), GC=arr(gd.colors,3).map(c=>c[0]), GI=Array.from(gd.indices);
+  add(GP,GU,GI,m.base,m.TW,m.TH,false,0,GC); add(GP,GU,GI,m.over,m.TW,m.TH,false,1,GC);}
   for(const fold of m.folds){const FP=arr(fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(fold.uvs,2);
   const FC=arr(fold.colors,3).map(c=>c[0]); const FI=Array.from(fold.indices);
   add(FP,FU,FI.slice(0,fold.fullIndexCount),m.base,m.TW,m.TH,false,0,FC);

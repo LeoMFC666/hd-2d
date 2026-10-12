@@ -128,9 +128,16 @@ import {
 } from './TileAnimator';
 
 import {
+  buildGroundGeometry,
   buildMapVolume,
+  markRocksInWater,
   type FoldGeometryData,
+  WATER_DEPTH,
 } from './VoxelFolding';
+
+// Elevacao da agua na grade de colisao da Gen 3.
+const WATER_ELEVATION =
+  1;
 
 import {
   buildPadding,
@@ -252,7 +259,17 @@ interface MapVisual {
     THREE.DataTexture;
 
   geometry:
-    THREE.PlaneGeometry;
+    THREE.BufferGeometry;
+
+  // Agua do mapa (1 por bloco), para os sprites afundarem junto.
+  water:
+    Uint8Array;
+
+  width:
+    number;
+
+  height:
+    number;
 
   // Volume reconstruido (paredes e tetos), mesmas texturas do mapa.
   voxelGroup?:
@@ -334,6 +351,10 @@ export class PlayerRenderer {
     new Map<string, THREE.DataTexture>();
 
   // O padding de cada mapa sobe com a dobra? (ver isBorderRaised)
+  // Mapas cuja borda e agua: o padding fica na altura da agua.
+  private readonly paddingLowered =
+    new Map<string, boolean>();
+
   private readonly paddingRaised =
     new Map<string, boolean>();
 
@@ -1131,6 +1152,8 @@ export class PlayerRenderer {
         borderHeight: Math.max(1, map.borderHeight),
         spreads: this.mapAcceptsPadding(map),
         raised: this.paddingRaised.get(key) ?? false,
+        lowered: this.paddingLowered.get(key) ?? false,
+        waterLevel: -WATER_DEPTH,
       });
     }
 
@@ -1747,10 +1770,12 @@ export class PlayerRenderer {
       visual.calibrated = false;
     }
 
-    // Pes no chao, no centro do tile; acima dele so durante um pulo.
+    // Pes no chao, no centro do tile; acima dele so durante um pulo. Na
+    // agua (surf) o chao e a superficie, abaixo da terra.
     visual.mesh.position.set(
       visual.displayX,
-      (motion?.live.lift ?? 0) / PIXELS_PER_TILE,
+      this.groundHeightAt(visual.displayX, visual.displayZ) +
+        (motion?.live.lift ?? 0) / PIXELS_PER_TILE,
       visual.displayZ,
     );
 
@@ -2593,38 +2618,110 @@ export class PlayerRenderer {
         textureHeight,
       );
 
-    const geometry =
-      new THREE.PlaneGeometry(
-        map.width + MAP_SEAM_MARGIN * 2,
-        map.height + MAP_SEAM_MARGIN * 2,
-      );
+    // Chao: terra em 0, agua abaixo com barranco (ver buildGroundGeometry).
+    // A margem contra a fresta de 1 pixel entre mapas vizinhos continua:
+    // as bordas externas passam um pouco do mapa e repetem o pixel da
+    // borda (ClampToEdge).
+    const water =
+      new Uint8Array(map.width * map.height);
 
-    // Margem contra a fresta de 1 pixel entre mapas vizinhos: as arestas
-    // em comum passam por transformacoes diferentes e nao fecham exatamente
-    // (vista no navegador entre Cinnabar e a Route 21). As UVs sao
-    // reescaladas para a textura continuar alinhada ao tile; a margem so
-    // repete o pixel da borda (ClampToEdge).
+    for (let index = 0; index < water.length; index++) {
+      water[index] =
+        renderData.blocks[index]?.elevation === WATER_ELEVATION ? 1 : 0;
+    }
+
+    // Pedras no mar (impassaveis, no meio da agua) ficam na altura da
+    // agua: de pe na terra elas viravam blocos de mar levantados.
+    markRocksInWater(map.width, map.height, water, (x, y) =>
+      (renderData.blocks[y * map.width + x]?.collision ?? 0) !== 0,
+    );
+
+    // A borda e agua? Compara o comportamento (MB_*) dos metatiles da
+    // borda com o da agua do proprio mapa: se a maioria da borda tem um
+    // comportamento de agua, o padding afunda junto. (Contar ocorrencias
+    // da borda no mapa falhava em Cinnabar: o tile de mar da borda quase
+    // nao aparece dentro do mapa.)
     {
-      const uv =
-        geometry.getAttribute('uv');
+      const waterBehaviors =
+        new Set<number>();
 
-      for (let index = 0; index < uv.count; index++) {
-        uv.setXY(
-          index,
-          (uv.getX(index) * (map.width + MAP_SEAM_MARGIN * 2) - MAP_SEAM_MARGIN) /
-            map.width,
-          (uv.getY(index) * (map.height + MAP_SEAM_MARGIN * 2) - MAP_SEAM_MARGIN) /
-            map.height,
-        );
+      for (let index = 0; index < water.length; index++) {
+        // So agua de verdade (elevacao 1), nao as pedras rebaixadas.
+        if (renderData.blocks[index]?.elevation === WATER_ELEVATION) {
+          const id = renderData.blocks[index]?.metatileId ?? -1;
+          const behavior = renderData.graphics.get(id)?.behavior;
+
+          if (behavior !== undefined) {
+            waterBehaviors.add(behavior);
+          }
+        }
       }
 
-      uv.needsUpdate = true;
+      const border =
+        this.readBorderMetatileIds(map);
+
+      let wet = 0;
+
+      for (const id of border) {
+        const behavior = renderData.graphics.get(id)?.behavior;
+
+        if (behavior !== undefined && waterBehaviors.has(behavior)) {
+          wet++;
+        }
+      }
+
+      const lowered =
+        border.length > 0 && wet * 2 >= border.length;
+
+      const key =
+        this.createMapKey(map.mapGroup, map.mapNumber);
+
+      if ((this.paddingLowered.get(key) ?? false) !== lowered) {
+        this.paddingLowered.set(key, lowered);
+        this.paddingDirty = true;
+      }
     }
+
+    const groundData =
+      buildGroundGeometry(
+        map.width,
+        map.height,
+        (x, y) => water[y * map.width + x] === 1,
+        MAP_SEAM_MARGIN,
+      );
+
+    const geometry =
+      new THREE.BufferGeometry();
+
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(groundData.positions, 3),
+    );
+
+    geometry.setAttribute(
+      'uv',
+      new THREE.BufferAttribute(groundData.uvs, 2),
+    );
+
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(shadeToLinear(groundData.colors), 3),
+    );
+
+    geometry.setIndex(
+      new THREE.BufferAttribute(groundData.indices, 1),
+    );
+
+    // Centrado no mapa: o resto do codigo posiciona o chao pelo centro.
+    geometry.translate(-map.width / 2, 0, -map.height / 2);
 
     const baseMaterial =
       new THREE.MeshBasicMaterial({
         map:
           baseTexture,
+
+        vertexColors:
+          true,
 
         transparent:
           true,
@@ -2643,6 +2740,9 @@ export class PlayerRenderer {
       new THREE.MeshBasicMaterial({
         map:
           overlayTexture,
+
+        vertexColors:
+          true,
 
         transparent:
           true,
@@ -2677,12 +2777,6 @@ export class PlayerRenderer {
         geometry.clone(),
         overlayMaterial,
       );
-
-    baseMesh.rotation.x =
-      -Math.PI / 2;
-
-    overlayMesh.rotation.x =
-      -Math.PI / 2;
 
     const position =
       this.mapWorld
@@ -2781,6 +2875,11 @@ export class PlayerRenderer {
         baseTexture,
         overlayTexture,
         geometry,
+        water,
+        width:
+          map.width,
+        height:
+          map.height,
         voxelGroup,
         buildings:
           volume?.buildings ?? [],
@@ -3052,6 +3151,36 @@ export class PlayerRenderer {
     return 1 / Math.max(0.3, cosine);
   }
 
+  /**
+   * Altura do chao num ponto do mundo: 0 na terra, -WATER_DEPTH na agua.
+   */
+  private groundHeightAt(
+    worldX: number,
+    worldZ: number,
+  ): number {
+    for (const visual of this.mapVisuals.values()) {
+      if (!visual.baseMesh.visible) {
+        continue;
+      }
+
+      const x =
+        Math.floor(worldX - (visual.baseMesh.position.x - visual.width / 2));
+
+      const y =
+        Math.floor(worldZ - (visual.baseMesh.position.z - visual.height / 2));
+
+      if (x < 0 || y < 0 || x >= visual.width || y >= visual.height) {
+        continue;
+      }
+
+      return visual.water[y * visual.width + x] === 1
+        ? -WATER_DEPTH
+        : 0;
+    }
+
+    return 0;
+  }
+
   private updateCamera(
     position: {
       x: number;
@@ -3311,6 +3440,7 @@ export class PlayerRenderer {
 
     this.borderTextures.clear();
     this.paddingRaised.clear();
+    this.paddingLowered.clear();
 
     this.tileAnimator.clear();
 

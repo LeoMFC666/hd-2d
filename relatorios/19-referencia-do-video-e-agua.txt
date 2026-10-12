@@ -1,0 +1,41 @@
+RELATORIO 19 - VIDEOS DE REFERENCIA E AGUA EM NIVEL
+Branch 4 - 12/10/2026
+
+VIDEOS
+  O plugin nao funciona nesta sessao (youtube.com, pypi e a API do
+  Gemini sao bloqueados pela rede da nuvem). O usuario mandou os dois
+  videos em mp4; os quadros foram extraidos com ffmpeg (folhas de contato,
+  1 quadro a cada 2-4 s) e olhados um a um.
+    - videoplayback.mp4 (Faithful, FireRed): imagem 19-referencia-faithful.
+    - videoplayback2.mp4 (Emerald 3DS Dual Screen): so os primeiros
+      segundos mostram o jogo (Route 101/Littleroot na tela de cima); o
+      resto e o instalador no PC.
+
+O QUE O VIDEO MOSTRA E O QUE JA BATIA
+  - Arvores uma a uma em pe, ledges baixos, grama alta em pe, predios em
+    caixa com teto plano, interiores em diorama: ja feitos (relatorio 18).
+  - Agua ABAIXO do chao, com barranco de terra na margem (lago de Pallet,
+    mar de Cinnabar com as pedras na altura da agua). Era o que faltava.
+
+AGUA (automatico, qualquer mapa)
+  - O chao deixou de ser um plano: buildGroundGeometry monta faixas por
+    linha; agua (elevacao 1 da grade de colisao) fica 0.3 abaixo, e cada
+    borda terra/agua ganha barranco em pe com a fileira de pixels da beira
+    do tile de terra, um pouco mais escura. Borda do mapa conta como agua
+    (o barranco fica escondido sob o chao vizinho quando ele e terra).
+  - Pedras no mar (impassavel com 2+ vizinhos de agua, propagando por
+    fileiras) ficam na altura da agua - antes subiam como blocos de mar.
+  - Padding de mar afunda junto: a borda do mapa e agua quando o
+    comportamento (MB_*) dos seus metatiles e o mesmo da agua do mapa.
+  - Sprites na agua (surf) descem com a superficie.
+
+CONFERENCIA
+  Offline: Pallet (lago), Cinnabar, Littleroot, Oldale. Navegador:
+  Cinnabar no FireRed com o save - ilha acima do mar, sem erros.
+
+PENDENCIAS
+  - Pedras de um mapa vizinho ao sul de Cinnabar ainda aparecem como faixa
+    clara elevada (caso que a regra de vizinhos nao pega).
+  - Ceu e reflexo na agua (o Faithful tem) nao foram feitos.
+  - Penhascos (Oldale, Mt. Moon) como cartoes; o Faithful usa degraus de
+    altura - possivel proximo passo usando a elevacao do mapa.

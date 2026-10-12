@@ -1348,3 +1348,240 @@ function keepBackedRuns(
     }
   }
 }
+
+// Agua fica abaixo do chao, com barranco nas margens (como no Faithful).
+export const WATER_DEPTH = 0.3;
+
+const SHADE_BANK = 0.72;
+
+/**
+ * Chao do mapa: terra em 0, agua (elevacao 1 da grade da Gen 3) em
+ * -WATER_DEPTH, com barrancos em pe onde terra encosta em agua. Os
+ * barrancos usam a fileira de pixels da beira do tile de terra, esticada.
+ *
+ * Coordenadas locais do mapa (0..width, 0..height); `margin` estende as
+ * bordas externas (contra a fresta de 1 pixel entre mapas vizinhos - a
+ * textura repete o pixel da borda, ClampToEdge).
+ */
+export function buildGroundGeometry(
+  width: number,
+  height: number,
+  isWater: (x: number, y: number) => boolean,
+  margin: number,
+): FoldGeometryData {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  const uOf = (x: number): number => x / width;
+  const vOf = (z: number): number => (height - z) / height;
+
+  const quad = (
+    corners: Array<[number, number, number]>,
+    cornerUvs: Array<[number, number]>,
+    shade: number,
+  ): void => {
+    const base = positions.length / 3;
+
+    for (let corner = 0; corner < 4; corner++) {
+      positions.push(...corners[corner]);
+      uvs.push(...cornerUvs[corner]);
+      colors.push(shade, shade, shade);
+    }
+
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+
+  const water = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < width && y < height && isWater(x, y);
+
+  // Fora do mapa conta como agua para os barrancos: se o vizinho (outro
+  // mapa ou padding) for agua, o barranco fecha o vao; se for terra, ele
+  // fica escondido abaixo do chao.
+  const lowAt = (x: number, y: number): boolean =>
+    x < 0 || y < 0 || x >= width || y >= height || isWater(x, y);
+
+  // Piso: faixas horizontais da mesma altura.
+  for (let y = 0; y < height; y++) {
+    let x = 0;
+
+    while (x < width) {
+      const lowered = water(x, y);
+      const start = x;
+
+      while (x < width && water(x, y) === lowered) {
+        x++;
+      }
+
+      const h = lowered ? -WATER_DEPTH : 0;
+      const left = start === 0 ? -margin : start;
+      const right = x === width ? width + margin : x;
+      const north = y === 0 ? -margin : y;
+      const south = y === height - 1 ? height + margin : y + 1;
+
+      quad(
+        [
+          [left, h, south],
+          [right, h, south],
+          [right, h, north],
+          [left, h, north],
+        ],
+        [
+          [uOf(left), vOf(south)],
+          [uOf(right), vOf(south)],
+          [uOf(right), vOf(north)],
+          [uOf(left), vOf(north)],
+        ],
+        1,
+      );
+    }
+  }
+
+  // Barrancos: em cada borda entre terra e agua.
+  const halfTexelU = 0.5 / (width * 16);
+  const halfTexelV = 0.5 / (height * 16);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (water(x, y)) {
+        continue;
+      }
+
+      // Sul (voltado para a camera): fileira de baixo do tile de terra.
+      if (lowAt(x, y + 1)) {
+        const v = vOf(y + 1) + halfTexelV;
+
+        quad(
+          [
+            [x, -WATER_DEPTH, y + 1],
+            [x + 1, -WATER_DEPTH, y + 1],
+            [x + 1, 0, y + 1],
+            [x, 0, y + 1],
+          ],
+          [
+            [uOf(x), v],
+            [uOf(x + 1), v],
+            [uOf(x + 1), v],
+            [uOf(x), v],
+          ],
+          SHADE_BANK,
+        );
+      }
+
+      // Norte, oeste e leste.
+      if (lowAt(x, y - 1)) {
+        const v = vOf(y) - halfTexelV;
+
+        quad(
+          [
+            [x + 1, -WATER_DEPTH, y],
+            [x, -WATER_DEPTH, y],
+            [x, 0, y],
+            [x + 1, 0, y],
+          ],
+          [
+            [uOf(x + 1), v],
+            [uOf(x), v],
+            [uOf(x), v],
+            [uOf(x + 1), v],
+          ],
+          SHADE_BANK,
+        );
+      }
+
+      for (const [dx, edgeX, u] of [
+        [-1, x, uOf(x) + halfTexelU],
+        [1, x + 1, uOf(x + 1) - halfTexelU],
+      ] as const) {
+        if (!lowAt(x + dx, y)) {
+          continue;
+        }
+
+        quad(
+          [
+            [edgeX, -WATER_DEPTH, y + 1],
+            [edgeX, -WATER_DEPTH, y],
+            [edgeX, 0, y],
+            [edgeX, 0, y + 1],
+          ],
+          [
+            [u, vOf(y + 1)],
+            [u, vOf(y)],
+            [u, vOf(y)],
+            [u, vOf(y + 1)],
+          ],
+          SHADE_BANK,
+        );
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    uvs: new Float32Array(uvs),
+    colors: new Float32Array(colors),
+    indices: new Uint32Array(indices),
+    fullIndexCount: indices.length,
+    quadCount: indices.length / 6,
+  };
+}
+
+/**
+ * Bloco impassavel com agua em pelo menos 2 dos 4 vizinhos (pedras no
+ * mar, boias) passa a contar como agua: fica na altura da agua.
+ */
+export function markRocksInWater(
+  width: number,
+  height: number,
+  water: Uint8Array,
+  isBlocked: (x: number, y: number) => boolean,
+): void {
+  // Fora do mapa conta como agua (pedras na beira do mapa de mar), e
+  // repete para fileiras de pedras se apoiarem umas nas outras.
+  const wetAt = (x: number, y: number): boolean =>
+    x < 0 || y < 0 || x >= width || y >= height || water[y * width + x] === 1;
+
+  for (let pass = 0; pass < 3; pass++) {
+    const add: number[] = [];
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = y * width + x;
+
+        if (water[index] || !isBlocked(x, y)) {
+          continue;
+        }
+
+        let wet = 0;
+        let inside = 0;
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (wetAt(x + dx, y + dy)) {
+            wet++;
+
+            const nx = x + dx;
+            const ny = y + dy;
+
+            if (nx >= 0 && ny >= 0 && nx < width && ny < height) {
+              inside++;
+            }
+          }
+        }
+
+        // Pelo menos 2 vizinhos de agua, um deles dentro do mapa.
+        if (wet >= 2 && inside >= 1) {
+          add.push(index);
+        }
+      }
+    }
+
+    if (add.length === 0) {
+      break;
+    }
+
+    for (const index of add) {
+      water[index] = 1;
+    }
+  }
+}
