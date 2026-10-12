@@ -1,0 +1,66 @@
+RELATORIO 18 - VOXEL COMO O FAITHFUL, INTERIORES EM 3D, SPRITES EM PE
+Branch 4 - 12/10/2026
+
+PEDIDOS
+  - "o jogo atualmente ta com algumas coisas mal feitas no voxel" - com
+    capturas do jogo atual x Faithful (Viridian e Route 1) e referencias de
+    interiores em diorama (Centro Pokemon, ginasio, quarto).
+  - "a cabeca do personagem as vezes e atravessada pelo tile".
+
+VIDEO
+  O plugin de video precisa baixar do YouTube, e a rede desta sessao na
+  nuvem recusa youtube.com (e o pypi, para instalar o yt-dlp). Referencia
+  usada: os quadros do video enviados pelo usuario.
+
+O QUE O FAITHFUL FAZ DIFERENTE (comparando as capturas)
+  1. Arvores sao arvores em pe, uma fileira atras da outra - nao um bloco
+     com as copas pintadas em cima.
+  2. Ledges sao uma faixa marrom baixa, nao um muro de grama.
+  3. Grama alta tem as folhas em pe.
+  4. Predio que tapa o jogador fica transparente.
+  5. (referencias) Interiores em diorama: parede do fundo em pe, moveis
+     em caixa.
+
+O QUE MUDOU (src/render/VoxelFolding.ts -> buildMapVolume)
+  - Arvores, pedras, cercas, placas: CARTOES EM PE. Cada linha vira um
+    cartao na sua borda sul, com 2 tiles de altura (a propria linha e a de
+    cima). As fileiras se sobrepoem como no Faithful. Topos de objeto (so
+    camada de cima) nao ganham cartao proprio para nao duplicar a copa.
+  - Padding elevado (arvores da borda) no mesmo formato de cartoes.
+  - Ledges (MB_JUMP_SOUTH 0x3B): faixa em pe com os 7 pixels de baixo do
+    tile (a borda marrom), sem esticar. Ledges de outras direcoes no chao.
+  - Grama alta (MB_TALL_GRASS 0x02): tufo em pe com a metade de baixo do
+    tile, na borda sul - cobre os pes de quem esta nela, como no GBA.
+    O comportamento do metatile agora vem junto dos graficos
+    (Gen3MetatileGraphics.behavior).
+  - Predios continuam caixa (fachada, telhado, laterais), agora cada um em
+    malha propria. Quando o jogador esta atras de um (ao norte da linha da
+    porta, ate 2 tiles alem do topo), ele esmaece para 40% e e desenhado
+    depois dos sprites: o jogador aparece por tras, como no Faithful.
+  - Remendo de chao so debaixo de predios (debaixo de ledges ele deixava
+    manchas claras na Route 1).
+  - INTERIORES em 3D: so sobe o que tem chao andavel logo ao sul (parede
+    do fundo e moveis); laterais e parede de baixo ficam no chao, senao
+    taparia o comodo. Parede do fundo com ate 3 linhas em pe; movel solto
+    (ate 2 linhas, com chao acima) vira caixa de 1 tile com o tampo em
+    cima - cama, mesa, estantes do laboratorio.
+
+CABECA ATRAVESSADA
+  Os sprites encaravam a camera: inclinados para tras, a cabeca entrava no
+  tile de tras (cartoes, paredes). Agora ficam em pe (plano vertical) e
+  esticados na vertical por 1/cos(inclinacao da camera), para manter a
+  proporcao do GBA na tela.
+
+CONFERENCIA
+  - Offline (tools/render-world.mjs): Route 1, Viridian, Littleroot,
+    Mauville, quarto do Red, laboratorio do Oak, quarto do Brendan.
+    Imagens 18-*.png.
+  - Navegador (tools/browser-shots.cjs): FireRed em Cinnabar (predios
+    esmaecem com o jogador atras; Mart por dentro em 3D) e Emerald no
+    Centro Pokemon em 3D. Sem erros no console.
+
+PENDENCIAS
+  - Laterais escuras dos interiores ficam deitadas no chao (faixa preta).
+  - A miniatura da tela do GBA apareceu corrompida numa captura enviada
+    (Route 1); nao reproduzi aqui.
+  - Map padding: o usuario vai refinar depois.

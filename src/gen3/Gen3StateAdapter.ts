@@ -230,6 +230,9 @@ export interface TileAnimationSource {
 export interface Gen3MetatileGraphics {
   metatileId: number;
   layerType: number;
+
+  // Comportamento do metatile (MB_*): grama alta, ledge, agua...
+  behavior: number;
   width: number;
   height: number;
   pixels: Uint8ClampedArray;
@@ -1358,6 +1361,8 @@ export class Gen3StateAdapter {
       metatileId,
       layerType:
         metatile.layerType,
+      behavior:
+        metatile.behavior,
       width:
         METATILE_SIZE,
       height:

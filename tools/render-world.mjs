@@ -1,5 +1,5 @@
-// Renderiza um mapa + vizinhos conectados, com dobra (predios, topos de
-// objeto, remendo de chao, sombreamento por face) e o padding, usando a
+// Renderiza um mapa + vizinhos conectados, com o volume completo
+// (buildMapVolume: arvores em cartoes, predios, ledges, grama, interiores) e o padding, usando a
 // camera do app. Rasterizador por software: confere o voxel sem navegador.
 //
 // Monte antes o pacote com o codigo atual do app, num arquivo entry8.ts
@@ -16,7 +16,7 @@
 // NOEXT=1 sem topos de objeto; PROBE=x,y lista triangulos do pixel.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { Gen3StateAdapter, MapCatalog, buildFoldGeometry, computeFoldMask, computeBuildingIds, buildPadding, isBorderRaised, extendFoldMaskUpward, buildGroundPatch, findGroundCell, dropThinColumns } from './b8.mjs';
+import { Gen3StateAdapter, MapCatalog, buildPadding, isBorderRaised, buildMapVolume } from './b8.mjs';
 const BASE=0x08000000, PX=16;
 const u16=(r,o)=>r[o]|(r[o+1]<<8), u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
 function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
@@ -40,15 +40,14 @@ function loadMap(g,m,x,z){
   const bw=border.borderWidth,bh=border.borderHeight,BW=bw*PX,BH=bh*PX,btex=new Uint8Array(BW*BH*4);
   for(let ty=0;ty<bh;ty++)for(let tx=0;tx<bw;tx++){const gr=rd.graphics.get(borderRaw[ty*bw+tx]&0x3ff);if(!gr)continue;
     for(let sy=0;sy<PX;sy++)for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,dy=(bh-1-ty)*PX+PX-1-sy,d=(dy*BW+tx*PX+sx)*4;for(let c=0;c<4;c++)btex[d+c]=gr.basePixels[so+c];}}
-  const mask=computeFoldMask(W,H,(xx,y)=>rd.blocks[y*W+xx]);
+  const op=px=>{for(let i=3;i<px.length;i+=4)if(px[i]>127)return true;return false;};
+  const blockAt=(xx,y)=>{const b=rd.blocks[y*W+xx];if(!b)return undefined;const g=rd.graphics.get(b.metatileId);return {...b,behavior:g?.behavior??0,hasForeground:!!g&&op(g.foregroundPixels)};};
+  const type=rom[hdr-BASE+0x17]; const style=(type===8||type===9)?'interior':'outdoor';
+  const vol=buildMapVolume(W,H,blockAt,cat.readWarps(rom,hdr),style,2);
   const ids=new Uint16Array(W*H); for(let i=0;i<ids.length;i++)ids[i]=rd.blocks[i]?.metatileId??0;
-  const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,mask);
-  const hasFg=id=>{const g=rd.graphics.get(id);if(!g)return false;for(let i=3;i<g.foregroundPixels.length;i+=4)if(g.foregroundPixels[i]>127)return true;return false;};
-  dropThinColumns(W,H,mask); if(!process.env.NOEXT) extendFoldMaskUpward(W,H,mask,(xx,y)=>{const b=rd.blocks[y*W+xx];return b&&b.collision===0&&b.elevation!==1&&hasFg(b.metatileId);});
-  const warps=cat.readWarps(rom,hdr); const bmask=computeBuildingIds(W,H,mask,warps);
-  const fold=buildFoldGeometry(W,H,(xx,y)=>mask[y*W+xx]!==0,2,{buildingAt:(xx,y)=>bmask[y*W+xx],overlayOnly:(xx,y)=>mask[y*W+xx]===2});
-  const gc=findGroundCell(W,H,mask,(xx,y)=>rd.blocks[y*W+xx]); const patch=gc&&!process.env.NOPATCH?buildGroundPatch(W,H,mask,gc):null;
-  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,fold,patch,type:rom[hdr-BASE+0x17],hdr};
+  const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,vol.mask);
+  const folds=[vol.natural,vol.details,...vol.buildings.map(b=>b.geometry)]; const patch=vol.patch;
+  return {key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,folds,patch,type:rom[hdr-BASE+0x17],hdr};
 }
 const main=loadMap(+G,+M,0,0); const maps=[main];
 if(neighborsFlag!=='0'){
@@ -67,10 +66,10 @@ const arr=(f,n)=>{const o=[];for(let i=0;i<f.length/n;i++)o.push(Array.from(f.sl
 for(const m of maps){
   for(let r=0;r<m.H;r++){const gP=[[m.x,0,m.z+r+1],[m.x+m.W,0,m.z+r+1],[m.x+m.W,0,m.z+r],[m.x,0,m.z+r]], v0=(m.H-1-r)/m.H, v1=(m.H-r)/m.H, gU=[[0,v0],[1,v0],[1,v1],[0,v1]];
   for(const [t,b] of [[m.base,0],[m.over,1]]) add(gP,gU,[0,1,2,0,2,3],t,m.TW,m.TH,false,b);}
-  const FP=arr(m.fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(m.fold.uvs,2);
-  const FC=arr(m.fold.colors,3).map(c=>c[0]); const FI=Array.from(m.fold.indices);
-  add(FP,FU,FI.slice(0,m.fold.fullIndexCount),m.base,m.TW,m.TH,false,0,FC);
-  add(FP,FU,FI,m.over,m.TW,m.TH,false,1,FC);
+  for(const fold of m.folds){const FP=arr(fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(fold.uvs,2);
+  const FC=arr(fold.colors,3).map(c=>c[0]); const FI=Array.from(fold.indices);
+  add(FP,FU,FI.slice(0,fold.fullIndexCount),m.base,m.TW,m.TH,false,0,FC);
+  add(FP,FU,FI,m.over,m.TW,m.TH,false,1,FC);}
   if(m.patch){const PP=arr(m.patch.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]); add(PP,arr(m.patch.uvs,2),Array.from(m.patch.indices),m.base,m.TW,m.TH,false,1.5);}
 }
 for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1,arr(p.colors,3).map(c=>c[0]));}

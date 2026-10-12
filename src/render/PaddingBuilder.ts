@@ -22,9 +22,8 @@
  *   diferenca. O padrao continua o da propria borda do mapa.
  *
  * ALTURA
- *   Borda solida (arvores, rochas) sobe na altura da dobra, com fachada
- *   voltada para a camera onde termina - continuando as arvores do proprio
- *   mapa, que ja ficam em pe. Borda passavel ou agua fica no chao.
+ *   Borda solida (arvores, rochas) vira fileiras de cartoes em pe, como as
+ *   arvores do proprio mapa. Borda passavel ou agua fica no chao.
  *
  * Modulo puro: devolve arrays prontos para BufferGeometry, em coordenadas
  * de MUNDO. UVs sao em unidades de bloco de borda, para textura com
@@ -63,12 +62,8 @@ export interface PaddingMeshData {
   cellCount: number;
 }
 
-// Mesmos valores de VoxelFolding: o padding elevado continua as arvores do
-// mapa e precisa da mesma luz para nao parecer outro material.
+// Cartoes de arvore tem luz plena, como os de VoxelFolding.
 const SHADE_TOP = 1.0;
-const SHADE_SOUTH = 0.88;
-const SHADE_EAST = 0.8;
-const SHADE_WEST = 0.7;
 
 const NO_OWNER = -1;
 const BLOCKED = -2;
@@ -188,18 +183,6 @@ export function buildPadding(
     return owner[cell] === index && mapCells[cell] === 0;
   };
 
-  // Celula de padding ELEVADO, de qualquer mapa.
-  const isRaisedPadding = (gx: number, gz: number): boolean => {
-    if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) {
-      return false;
-    }
-
-    const cell = gz * gridWidth + gx;
-    const index = owner[cell];
-
-    return index >= 0 && mapCells[cell] === 0 && maps[index].raised;
-  };
-
   const quad = (
     target: (typeof builders)[number],
     corners: number[][],
@@ -237,8 +220,6 @@ export function buildPadding(
 
       const map = maps[index];
       const target = builders[index];
-      const height = map.raised ? raisedHeight : 0;
-
       const left = originX + gx;
       const right = originX + end + 1;
       const north = originZ + gz;
@@ -252,112 +233,64 @@ export function buildPadding(
       const vOf = (worldZ: number): number =>
         -(worldZ - map.z + 8) / map.borderHeight;
 
-      quad(
-        target,
-        [
-          [left, height, south],
-          [right, height, south],
-          [right, height, north],
-          [left, height, north],
-        ],
-        [
-          [uOf(left), vOf(south)],
-          [uOf(right), vOf(south)],
-          [uOf(right), vOf(north)],
-          [uOf(left), vOf(north)],
-        ],
-      );
-
       target.cells += end - gx + 1;
 
-      // Fachada voltada para a camera (sul) onde o padding elevado termina
-      // e abaixo dele nao ha mais padding elevado do mesmo mapa. Usa as
-      // ultimas linhas do padrao, como a parede da dobra usa as linhas de
-      // baixo do bloco solido.
-      if (map.raised) {
-        let wallStart = gx;
+      if (!map.raised) {
+        quad(
+          target,
+          [
+            [left, 0, south],
+            [right, 0, south],
+            [right, 0, north],
+            [left, 0, north],
+          ],
+          [
+            [uOf(left), vOf(south)],
+            [uOf(right), vOf(south)],
+            [uOf(right), vOf(north)],
+            [uOf(left), vOf(north)],
+          ],
+        );
+      } else {
+        // Borda solida (arvores): cartoes em pe, uma fileira por linha,
+        // cada uma mostrando a propria linha e as de cima - o mesmo jeito
+        // das arvores do mapa (VoxelFolding), como no Faithful. O chao
+        // debaixo fica com a propria borda (fica coberto pelos cartoes).
+        quad(
+          target,
+          [
+            [left, 0, south],
+            [right, 0, south],
+            [right, 0, north],
+            [left, 0, north],
+          ],
+          [
+            [uOf(left), vOf(south)],
+            [uOf(right), vOf(south)],
+            [uOf(right), vOf(north)],
+            [uOf(left), vOf(north)],
+          ],
+        );
 
-        for (let wx = gx; wx <= end + 1; wx++) {
-          // A coluna precisa de fachada se logo ao sul dela nao ha mais
-          // padding elevado deste mapa. Fachadas vizinhas viram um quad so.
-          const needsWall =
-            wx <= end && !isPadding(wx, gz + 1, index);
+        for (let level = 0; level < raisedHeight; level++) {
+          // Linha do padrao mostrada neste andar do cartao.
+          const rowSouth = south - level;
 
-          if (needsWall) {
-            continue;
-          }
-
-          if (wx > wallStart) {
-            const wallLeft = originX + wallStart;
-            const wallRight = originX + wx;
-
-            quad(
-              target,
-              [
-                [wallLeft, 0, south],
-                [wallRight, 0, south],
-                [wallRight, height, south],
-                [wallLeft, height, south],
-              ],
-              [
-                [uOf(wallLeft), vOf(south)],
-                [uOf(wallRight), vOf(south)],
-                [uOf(wallRight), vOf(south - height)],
-                [uOf(wallLeft), vOf(south - height)],
-              ],
-              SHADE_SOUTH,
-            );
-          }
-
-          wallStart = wx + 1;
-        }
-
-        // Laterais: onde o padding elevado encosta de lado num mapa (ou em
-        // padding no chao). Sem elas ficava um vao escuro entre o chao do
-        // mapa e o topo das arvores - Littleroot, cujas colunas da beira
-        // sao grama e as arvores sao a borda. Cada face mostra o tile do
-        // topo naquela celula, de pe, como as laterais da dobra.
-        for (let wx = gx; wx <= end; wx++) {
-          const cellLeft = originX + wx;
-          const cellRight = cellLeft + 1;
-
-          if (!isRaisedPadding(wx - 1, gz)) {
-            quad(
-              target,
-              [
-                [cellLeft, 0, north],
-                [cellLeft, 0, south],
-                [cellLeft, height, south],
-                [cellLeft, height, north],
-              ],
-              [
-                [uOf(cellLeft), vOf(south)],
-                [uOf(cellRight), vOf(south)],
-                [uOf(cellRight), vOf(north)],
-                [uOf(cellLeft), vOf(north)],
-              ],
-              SHADE_WEST,
-            );
-          }
-
-          if (!isRaisedPadding(wx + 1, gz)) {
-            quad(
-              target,
-              [
-                [cellRight, 0, south],
-                [cellRight, 0, north],
-                [cellRight, height, north],
-                [cellRight, height, south],
-              ],
-              [
-                [uOf(cellLeft), vOf(south)],
-                [uOf(cellRight), vOf(south)],
-                [uOf(cellRight), vOf(north)],
-                [uOf(cellLeft), vOf(north)],
-              ],
-              SHADE_EAST,
-            );
-          }
+          quad(
+            target,
+            [
+              [left, level, south],
+              [right, level, south],
+              [right, level + 1, south],
+              [left, level + 1, south],
+            ],
+            [
+              [uOf(left), vOf(rowSouth)],
+              [uOf(right), vOf(rowSouth)],
+              [uOf(right), vOf(rowSouth - 1)],
+              [uOf(left), vOf(rowSouth - 1)],
+            ],
+          );
         }
       }
 

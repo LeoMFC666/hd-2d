@@ -154,7 +154,10 @@ export function dropThinColumns(
   const MIN_ROWS = 3;
   const ISOLATED_TENTHS = 7;
   const solid = (x: number, y: number): boolean =>
-    x >= 0 && x < width && mask[y * width + x] !== 0;
+    x >= 0 &&
+    x < width &&
+    mask[y * width + x] !== 0 &&
+    mask[y * width + x] !== FOLD_LEDGE;
 
   const drop: number[] = [];
 
@@ -215,6 +218,55 @@ export function dropThinColumns(
 export const FOLD_SOLID = 1;
 export const FOLD_OVERHANG = 2;
 
+// Ledge (pulo para o sul): vira uma faixa baixa, nao um muro.
+export const FOLD_LEDGE = 3;
+
+/** Bloco com volume de verdade (solido ou topo de objeto). */
+export function isVolumeCell(value: number): boolean {
+  return value === FOLD_SOLID || value === FOLD_OVERHANG;
+}
+
+// Comportamentos de metatile (MB_*), iguais em RSE e FRLG.
+export const MB_TALL_GRASS = 0x02;
+const MB_JUMP_EAST = 0x38;
+const MB_JUMP_WEST = 0x39;
+const MB_JUMP_NORTH = 0x3a;
+const MB_JUMP_SOUTH = 0x3b;
+
+/**
+ * Ledges. No Faithful sao uma faixa marrom baixa; dobrados como o resto
+ * viravam um muro de grama de 1 tile. Ledge para o sul vira FOLD_LEDGE;
+ * os de outras direcoes (linhas verticais) ficam no chao.
+ */
+export function classifyLedges(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  behaviorAt: (x: number, y: number) => number,
+): void {
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+
+      if (mask[index] === 0) {
+        continue;
+      }
+
+      const behavior = behaviorAt(x, y);
+
+      if (behavior === MB_JUMP_SOUTH) {
+        mask[index] = FOLD_LEDGE;
+      } else if (
+        behavior === MB_JUMP_EAST ||
+        behavior === MB_JUMP_WEST ||
+        behavior === MB_JUMP_NORTH
+      ) {
+        mask[index] = 0;
+      }
+    }
+  }
+}
+
 export function extendFoldMaskUpward(
   width: number,
   height: number,
@@ -230,7 +282,7 @@ export function extendFoldMaskUpward(
 
       for (
         let ny = y - 1, added = 0;
-        ny >= 0 && added < maxRows && !mask[ny * width + x] && isOverhang(x, ny);
+        ny >= 0 && added < maxRows && mask[ny * width + x] === 0 && isOverhang(x, ny);
         ny--, added++
       ) {
         mask[ny * width + x] = FOLD_OVERHANG;
@@ -243,10 +295,8 @@ export interface FoldGeometryData {
   positions: Float32Array;
   uvs: Float32Array;
 
-  // Cor por vertice (RGB): sombreamento por direcao da face. Sem ele todas
-  // as faces tem a mesma luz e o volume nao le como 3D. Mesma ideia do
-  // renderizador voxel do pokeemerald-dualscreen (topo claro, laterais
-  // mais escuras).
+  // Cor por vertice (RGB): sombreamento por direcao da face (topo claro,
+  // laterais mais escuras), como no pokeemerald-dualscreen.
   colors: Float32Array;
 
   // Indices: primeiro os quads com as DUAS camadas, depois os que so tem
@@ -258,14 +308,27 @@ export interface FoldGeometryData {
   quadCount: number;
 }
 
+export type FoldStyle =
+  // Ao ar livre: predios viram caixas com telhado; arvores, pedras e
+  // penhascos viram fileiras de cartoes em pe (como no Faithful).
+  | 'outdoor'
+  // Interior: tudo vira caixa de topo plano. Parede do fundo com 2 tiles
+  // de altura; moveis soltos (ate 2 linhas) com 1, mostrando o tampo.
+  | 'interior';
+
 export interface FoldOptions {
+  style?: FoldStyle;
+
   // Predio a que o bloco pertence (ver computeBuildingIds), 0 = nenhum.
-  // Predio ganha telhado com caimento e uma fachada so; arvores e
-  // penhascos ficam com o topo plano.
+  // Predio ganha fachada unica e telhado com caimento leve.
   buildingAt?: (x: number, y: number) => number;
 
   // Bloco que so desenha a camada de cima (FOLD_OVERHANG).
   overlayOnly?: (x: number, y: number) => boolean;
+
+  // Interior: chao andavel. Movel solto tem chao logo acima; a parede do
+  // fundo encosta no topo do mapa ou no vazio.
+  isFloor?: (x: number, y: number) => boolean;
 }
 
 // Brilho de cada face. Topo pleno; fachada (voltada para a camera) um
@@ -276,11 +339,17 @@ const SHADE_EAST = 0.8;
 const SHADE_WEST = 0.7;
 
 // Quanto o telhado de um predio sobe por linha de telhado, em tiles, e o
-// maximo que ele sobe no total. Sem o teto, um predio grande (o laboratorio
-// de Littleroot) esticava a textura do telhado.
+// maximo que ele sobe no total.
 const ROOF_PITCH = 0.35;
 const MAX_ROOF_RISE = 1.0;
 
+// Altura dos cartoes de arvore/pedra: cada linha mostra a si mesma e a de
+// cima, em pe (2 tiles), como as arvores do Faithful.
+const NATURAL_CARD_ROWS = 2;
+
+// Interior: sequencias com ate tantas linhas sao moveis (caixa de 1 tile).
+const INTERIOR_FURNITURE_ROWS = 2;
+const INTERIOR_WALL_ROWS = 3;
 
 interface ColumnRun {
   y0: number;
@@ -300,8 +369,10 @@ interface Run extends ColumnRun {
 }
 
 /**
- * @param isSolid  bloco que deve ganhar volume (mascara != 0)
- * @param maxWallRows  altura maxima da fachada, em blocos
+ * Geometria do volume de um mapa (ou de um predio so).
+ *
+ * @param isSolid  bloco que deve ganhar volume
+ * @param maxWallRows  altura maxima da fachada dos predios, em blocos
  */
 export function buildFoldGeometry(
   width: number,
@@ -310,6 +381,7 @@ export function buildFoldGeometry(
   maxWallRows: number,
   options: FoldOptions = {},
 ): FoldGeometryData {
+  const style = options.style ?? 'outdoor';
   const buildingAt = options.buildingAt;
   const overlayOnly = options.overlayOnly;
 
@@ -335,11 +407,9 @@ export function buildFoldGeometry(
     columns.push(runs);
   }
 
-  // 1b) Fachada unica por predio. Cada coluna dobrava na propria borda
-  //     sul: uma coluna com um tile a mais na frente (a entrada do
-  //     laboratorio de Littleroot) dobrava uma linha deslocada e virava uma
-  //     faixa torta no meio do telhado. Agora a borda sul do predio e a
-  //     mais comum entre as suas colunas; o que passa dela vira cartao.
+  // 1b) Fachada unica por predio: a borda sul mais comum entre as colunas;
+  //     o que passa dela (entrada do laboratorio de Littleroot) vira
+  //     cartao. Sem isso a coluna mais comprida dobrava deslocada.
   if (buildingAt) {
     const southVotes = new Map<number, Map<number, number>>();
 
@@ -416,8 +486,12 @@ export function buildFoldGeometry(
     const next = new Map<string, Run>();
 
     for (const run of columns[x]) {
+      const isBuilding =
+        (buildingAt?.(x, run.y1) ?? 0) > 0;
+
       const key =
-        run.y0 + ':' + run.y1 + ':' + (run.card ? 1 : 0) + ':' + run.overhangRows;
+        run.y0 + ':' + run.y1 + ':' + (run.card ? 1 : 0) + ':' +
+        run.overhangRows + ':' + (isBuilding ? 1 : 0);
 
       const previous = open.get(key);
 
@@ -470,85 +544,139 @@ export function buildFoldGeometry(
     );
   };
 
-  for (const run of merged) {
-    const rows = run.y1 - run.y0 + 1;
-    const wall = Math.min(rows, maxWallRows);
-    const roofRows = run.card ? 0 : rows - wall;
+  // Quad em pe, voltado para o sul, mostrando a linha `row` entre as
+  // alturas hBottom e hTop no plano z.
+  const standing = (
+    left: number,
+    right: number,
+    z: number,
+    hBottom: number,
+    hTop: number,
+    row: number,
+    shade: number,
+    onlyOverlay: boolean,
+  ): void => {
+    quad(
+      [
+        [left, hBottom, z],
+        [right, hBottom, z],
+        [right, hTop, z],
+        [left, hTop, z],
+      ],
+      [
+        [u(left), vSouth(row)],
+        [u(right), vSouth(row)],
+        [u(right), vNorth(row)],
+        [u(left), vNorth(row)],
+      ],
+      shade,
+      onlyOverlay,
+    );
+  };
 
+  for (const run of merged) {
     const left = run.x0;
     const right = run.x1 + 1;
-    const southZ = run.y1 + 1;
-    const northZ = southZ - roofRows;
-
-    const uLeft = u(left);
-    const uRight = u(right);
 
     // Ultima linha (de cima para baixo) que so tem camada de cima.
     const overhangEnd = run.y0 + run.overhangRows - 1;
+    const isOverhangRow = (row: number): boolean => row <= overhangEnd;
 
     const building =
-      roofRows > 0 &&
       (buildingAt?.(run.x0, run.y1) ?? 0) > 0;
 
-    // Altura do topo ao longo de z: plana, ou subindo para o norte nos
-    // predios (telhado com caimento voltado para a camera).
+    // ---- arvores, pedras, penhascos, placas, cercas: cartoes em pe ----
+    if (style === 'outdoor' && !building && !run.card) {
+      for (let row = run.y0; row <= run.y1; row++) {
+        const z = row + 1;
+
+        // A linha em si, do chao ate 1. Topo de objeto (so camada de cima)
+        // nao ganha cartao proprio: ele ja aparece no cartao da linha de
+        // baixo, e repetido apareceria pelos furos da copa.
+        if (!isOverhangRow(row)) {
+          standing(left, right, z, 0, 1, row, 1, false);
+        }
+
+        // As linhas de cima, empilhadas no mesmo cartao.
+        for (let above = 1; above < NATURAL_CARD_ROWS; above++) {
+          const upper = row - above;
+
+          if (upper < run.y0) {
+            break;
+          }
+
+          standing(left, right, z, above, above + 1, upper, 1, isOverhangRow(upper));
+        }
+      }
+
+      continue;
+    }
+
+    // ---- caixas: predios (fora) e tudo no interior ----
+    const rows = run.y1 - run.y0 + 1;
+
+    const furniture =
+      style === 'interior' &&
+      rows <= INTERIOR_FURNITURE_ROWS &&
+      run.y0 > 0 &&
+      !!options.isFloor?.(run.x0, run.y0 - 1);
+
+    // Parede do fundo do interior em pe inteira (ate 3 linhas): os moveis
+    // encostados nela entram na mesma sequencia e ficariam deitados no
+    // topo de uma parede baixa.
+    const wallLimit =
+      furniture
+        ? 1
+        : style === 'interior'
+          ? INTERIOR_WALL_ROWS
+          : maxWallRows;
+
+    const wall = Math.min(rows, wallLimit);
+    const roofRows = run.card ? 0 : rows - wall;
+
+    const southZ = run.y1 + 1;
+    const northZ = southZ - roofRows;
+
+    const pitched =
+      building && style === 'outdoor' && roofRows > 0;
+
     const pitch =
       Math.min(ROOF_PITCH, MAX_ROOF_RISE / Math.max(1, roofRows));
 
     const topAt = (z: number): number =>
-      building
+      pitched
         ? wall + (southZ - z) * pitch
         : wall;
 
     // Parede: linhas (y1-wall+1 .. y1), em pe na borda sul; a linha r fica
-    // entre as alturas (y1-r) e (y1-r+1). Linhas so de camada de cima (o
-    // topo de uma caixa de correio) vao num quad separado.
+    // entre as alturas (y1-r) e (y1-r+1).
     const wallTopRow = run.y1 - wall + 1;
-    const wallSplit = Math.min(Math.max(overhangEnd + 1, wallTopRow), run.y1 + 1);
 
-    const wallPiece = (rowTop: number, rowBottom: number, onlyOverlay: boolean): void => {
-      if (rowTop > rowBottom) {
-        return;
-      }
-
-      const hBottom = run.y1 - rowBottom;
-      const hTop = run.y1 - rowTop + 1;
-
-      quad(
-        [
-          [left, hBottom, southZ],
-          [right, hBottom, southZ],
-          [right, hTop, southZ],
-          [left, hTop, southZ],
-        ],
-        [
-          [uLeft, vSouth(rowBottom)],
-          [uRight, vSouth(rowBottom)],
-          [uRight, vNorth(rowTop)],
-          [uLeft, vNorth(rowTop)],
-        ],
+    for (let row = wallTopRow; row <= run.y1; row++) {
+      standing(
+        left,
+        right,
+        southZ,
+        run.y1 - row,
+        run.y1 - row + 1,
+        row,
         SHADE_SOUTH,
-        onlyOverlay,
+        isOverhangRow(row),
       );
-    };
-
-    wallPiece(wallTopRow, wallSplit - 1, true);
-    wallPiece(wallSplit, run.y1, false);
+    }
 
     if (roofRows === 0) {
-      // Placas, cercas, ledges: cartao fino, sem teto nem laterais.
       continue;
     }
 
     // Teto: linhas (y0 .. y1-wall), encostado no topo da parede; a linha r
-    // fica em z = northZ + (r - y0).
-    const roofPiece = (rowTop: number, rowBottom: number, onlyOverlay: boolean): void => {
-      if (rowTop > rowBottom) {
-        return;
-      }
+    // fica em z = northZ + (r - y0). Uma faixa por linha (o topo de
+    // objeto, so com camada de cima, fica numa faixa propria).
+    const roofBottomRow = run.y1 - wall;
 
-      const zNorth = northZ + (rowTop - run.y0);
-      const zSouth = northZ + (rowBottom - run.y0) + 1;
+    for (let row = run.y0; row <= roofBottomRow; row++) {
+      const zNorth = northZ + (row - run.y0);
+      const zSouth = zNorth + 1;
 
       quad(
         [
@@ -558,45 +686,33 @@ export function buildFoldGeometry(
           [left, topAt(zNorth), zNorth],
         ],
         [
-          [uLeft, vSouth(rowBottom)],
-          [uRight, vSouth(rowBottom)],
-          [uRight, vNorth(rowTop)],
-          [uLeft, vNorth(rowTop)],
+          [u(left), vSouth(row)],
+          [u(right), vSouth(row)],
+          [u(right), vNorth(row)],
+          [u(left), vNorth(row)],
         ],
         SHADE_TOP,
-        onlyOverlay,
+        isOverhangRow(row),
       );
-    };
+    }
 
-    const roofBottomRow = run.y1 - wall;
-    const roofSplit = Math.min(overhangEnd + 1, roofBottomRow + 1);
-
-    roofPiece(run.y0, roofSplit - 1, true);
-    roofPiece(Math.max(run.y0, roofSplit), roofBottomRow, false);
-
-    // Laterais, um segmento por tile ao longo de z.
-    //
-    // Ate a altura da parede a lateral repete a FACHADA da coluna da quina
-    // (a parede da casa continua do lado; numa mata, as arvores de pe
-    // continuam do lado), espelhada para casar na quina. Antes a lateral
-    // usava o tile do telhado em pe e virava listras/escadinha.
+    // Laterais: repetem a FACHADA da coluna da quina, espelhada para casar
+    // na quina. Comecam na primeira linha "de verdade" do teto.
     const facadeBottomV = vSouth(run.y1);
-    const facadeTopV = vNorth(run.y1 - wall + 1);
+    const facadeTopV = vNorth(wallTopRow);
 
-    // Empena dos predios (da parede ate o telhado inclinado): cor lisa,
-    // o texel do meio do topo da fachada da quina. Repetir textura por
-    // segmento num topo inclinado desenhava degraus.
+    // Empena (da parede ate o telhado inclinado): cor lisa, o texel do
+    // meio do topo da fachada da quina.
     const gableWestU = u(left) + 0.5 / width;
     const gableEastU = u(right) - 0.5 / width;
     const gableV = facadeTopV - 0.5 / (height * 16);
 
-    // A lateral fica atras do tile so de camada de cima do topo (se houver)
-    // e nao precisa ir ate ele: comeca na primeira linha "de verdade".
-    const sideNorthZ = northZ + Math.max(0, roofSplit - run.y0);
+    const firstSolidRoofRow =
+      Math.min(Math.max(run.y0, overhangEnd + 1), roofBottomRow + 1);
+
+    const sideNorthZ = northZ + (firstSolidRoofRow - run.y0);
 
     for (let z = sideNorthZ; z < southZ; z++) {
-      // Oeste (olhando de fora, o norte fica a esquerda). A borda u(left)
-      // da fachada encosta na quina, no lado sul do segmento.
       quad(
         [
           [left, 0, z],
@@ -606,14 +722,13 @@ export function buildFoldGeometry(
         ],
         [
           [u(left + 1), facadeBottomV],
-          [uLeft, facadeBottomV],
-          [uLeft, facadeTopV],
+          [u(left), facadeBottomV],
+          [u(left), facadeTopV],
           [u(left + 1), facadeTopV],
         ],
         SHADE_WEST,
       );
 
-      // Leste (olhando de fora, o sul fica a esquerda).
       quad(
         [
           [right, 0, z + 1],
@@ -622,15 +737,15 @@ export function buildFoldGeometry(
           [right, wall, z + 1],
         ],
         [
-          [uRight, facadeBottomV],
+          [u(right), facadeBottomV],
           [u(right - 1), facadeBottomV],
           [u(right - 1), facadeTopV],
-          [uRight, facadeTopV],
+          [u(right), facadeTopV],
         ],
         SHADE_EAST,
       );
 
-      if (!building) {
+      if (!pitched) {
         continue;
       }
 
@@ -667,9 +782,8 @@ export function buildFoldGeometry(
       );
     }
 
-    // Fundo do predio inclinado: fecha o vao entre o chao e a cumeeira,
-    // na mesma cor lisa da empena.
-    if (building) {
+    // Fundo do predio inclinado, na cor lisa da empena.
+    if (pitched) {
       quad(
         [
           [right, 0, sideNorthZ],
@@ -695,6 +809,101 @@ export function buildFoldGeometry(
     indices: new Uint32Array([...fullIndices, ...overlayIndices]),
     fullIndexCount: fullIndices.length,
     quadCount: (fullIndices.length + overlayIndices.length) / 6,
+  };
+}
+
+// Ledge: faixa em pe com a parte de baixo do tile (a borda marrom).
+const LEDGE_TEXTURE_ROWS = 7 / 16;
+const LEDGE_HEIGHT = LEDGE_TEXTURE_ROWS;
+
+// Grama alta: tufo em pe na borda sul do tile, cobrindo os pes de quem
+// esta nele (como no GBA, onde a grama cobre a metade de baixo).
+// Metade de baixo do tile, sem esticar.
+const GRASS_TEXTURE_ROWS = 8 / 16;
+const GRASS_HEIGHT = GRASS_TEXTURE_ROWS;
+
+/**
+ * Detalhes de chao em pe: ledges (faixa baixa) e grama alta (tufos).
+ * Quads de duas camadas, na mesma convencao de buildFoldGeometry.
+ */
+export function buildGroundDetails(
+  width: number,
+  height: number,
+  isLedge: (x: number, y: number) => boolean,
+  isTallGrass: (x: number, y: number) => boolean,
+): FoldGeometryData {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  const vSouth = (row: number): number => (height - 1 - row) / height;
+  const u = (column: number): number => column / width;
+
+  const strip = (
+    left: number,
+    right: number,
+    row: number,
+    hTop: number,
+    textureRows: number,
+  ): void => {
+    const base = positions.length / 3;
+    const z = row + 1;
+    const vBottom = vSouth(row);
+    const vTop = vBottom + textureRows / height;
+
+    positions.push(
+      left, 0, z,
+      right, 0, z,
+      right, hTop, z,
+      left, hTop, z,
+    );
+
+    uvs.push(
+      u(left), vBottom,
+      u(right), vBottom,
+      u(right), vTop,
+      u(left), vTop,
+    );
+
+    for (let corner = 0; corner < 4; corner++) {
+      colors.push(SHADE_SOUTH, SHADE_SOUTH, SHADE_SOUTH);
+    }
+
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (const [test, hTop, textureRows] of [
+      [isLedge, LEDGE_HEIGHT, LEDGE_TEXTURE_ROWS],
+      [isTallGrass, GRASS_HEIGHT, GRASS_TEXTURE_ROWS],
+    ] as const) {
+      let x = 0;
+
+      while (x < width) {
+        if (!test(x, y)) {
+          x++;
+          continue;
+        }
+
+        const left = x;
+
+        while (x < width && test(x, y)) {
+          x++;
+        }
+
+        strip(left, x, y, hTop, textureRows);
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    uvs: new Float32Array(uvs),
+    colors: new Float32Array(colors),
+    indices: new Uint32Array(indices),
+    fullIndexCount: indices.length,
+    quadCount: indices.length / 6,
   };
 }
 
@@ -848,7 +1057,7 @@ export function computeBuildingIds(
   let nextId = 1;
 
   for (let start = 0; start < foldMask.length; start++) {
-    if (!foldMask[start] || visited[start]) {
+    if (!isVolumeCell(foldMask[start]) || visited[start]) {
       continue;
     }
 
@@ -885,7 +1094,7 @@ export function computeBuildingIds(
       ];
 
       for (const next of neighbors) {
-        if (next >= 0 && foldMask[next] && !visited[next]) {
+        if (next >= 0 && isVolumeCell(foldMask[next]) && !visited[next]) {
           visited[next] = 1;
           stack.push(next);
         }
@@ -906,4 +1115,236 @@ export function computeBuildingIds(
   }
 
   return building;
+}
+
+export interface VolumeBlock {
+  metatileId: number;
+  collision: number;
+  elevation: number;
+  behavior: number;
+
+  // O metatile tem pixels na camada de cima.
+  hasForeground: boolean;
+}
+
+export interface BuildingVolume {
+  id: number;
+
+  // Celulas ocupadas (inclusive), em tiles do mapa.
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+
+  geometry: FoldGeometryData;
+}
+
+export interface MapVolume {
+  // Mascara final (FOLD_*), para quem precisa saber o que subiu.
+  mask: Uint8Array;
+
+  // Arvores, pedras, cercas (ou, no interior, paredes e moveis).
+  natural: FoldGeometryData;
+
+  // Cada predio separado: o renderizador deixa transparente o que tapa o
+  // jogador, como no Faithful.
+  buildings: BuildingVolume[];
+
+  // Ledges e grama alta em pe.
+  details: FoldGeometryData;
+
+  // Remendo de chao debaixo dos predios.
+  patch: GroundPatchData | null;
+}
+
+/**
+ * Monta todo o volume de um mapa a partir dos blocos. Usado pelo
+ * renderizador e pelas ferramentas de conferencia (mesmo codigo).
+ */
+export function buildMapVolume(
+  width: number,
+  height: number,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+  warps: ReadonlyArray<{ x: number; y: number }>,
+  style: FoldStyle,
+  maxWallRows: number,
+): MapVolume {
+  const mask =
+    computeFoldMask(width, height, blockAt);
+
+  classifyLedges(
+    width,
+    height,
+    mask,
+    (x, y) => blockAt(x, y)?.behavior ?? 0,
+  );
+
+  if (style === 'interior') {
+    keepBackedRuns(width, height, mask, (x, y) => {
+      const block = blockAt(x, y);
+
+      return !!block && block.collision === 0;
+    });
+  } else {
+    dropThinColumns(width, height, mask);
+  }
+
+  extendFoldMaskUpward(
+    width,
+    height,
+    mask,
+    (x, y) => {
+      const block = blockAt(x, y);
+
+      return (
+        !!block &&
+        block.collision === 0 &&
+        block.elevation !== 1 &&
+        block.hasForeground
+      );
+    },
+  );
+
+  const buildingIds =
+    style === 'outdoor'
+      ? computeBuildingIds(width, height, mask, warps)
+      : new Int32Array(width * height);
+
+  const overlayOnly = (x: number, y: number): boolean =>
+    mask[y * width + x] === FOLD_OVERHANG;
+
+  const natural =
+    buildFoldGeometry(
+      width,
+      height,
+      (x, y) =>
+        isVolumeCell(mask[y * width + x]) &&
+        buildingIds[y * width + x] === 0,
+      maxWallRows,
+      {
+        style,
+        overlayOnly,
+        isFloor: (x, y) => {
+          const block = blockAt(x, y);
+
+          return !!block && block.collision === 0;
+        },
+      },
+    );
+
+  // Predios, um por um.
+  const bounds = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const id = buildingIds[y * width + x];
+
+      if (id === 0) {
+        continue;
+      }
+
+      const box = bounds.get(id);
+
+      if (box) {
+        box.x0 = Math.min(box.x0, x);
+        box.y0 = Math.min(box.y0, y);
+        box.x1 = Math.max(box.x1, x);
+        box.y1 = Math.max(box.y1, y);
+      } else {
+        bounds.set(id, { x0: x, y0: y, x1: x, y1: y });
+      }
+    }
+  }
+
+  const buildings: BuildingVolume[] = [];
+
+  for (const [id, box] of bounds) {
+    buildings.push({
+      id,
+      ...box,
+      geometry:
+        buildFoldGeometry(
+          width,
+          height,
+          (x, y) => buildingIds[y * width + x] === id,
+          maxWallRows,
+          {
+            style,
+            overlayOnly,
+            buildingAt: (x, y) => buildingIds[y * width + x],
+          },
+        ),
+    });
+  }
+
+  const details =
+    buildGroundDetails(
+      width,
+      height,
+      (x, y) => mask[y * width + x] === FOLD_LEDGE,
+      (x, y) =>
+        style === 'outdoor' &&
+        mask[y * width + x] === 0 &&
+        blockAt(x, y)?.behavior === MB_TALL_GRASS,
+    );
+
+  // Remendo so debaixo dos predios: e onde a copia achatada aparecia. Em
+  // arvores ele trocava a grama em volta por outro tile (manchas claras
+  // em volta das ledges da Route 1).
+  let patch: GroundPatchData | null = null;
+
+  if (buildings.length > 0) {
+    const ground =
+      findGroundCell(width, height, mask, blockAt);
+
+    if (ground) {
+      const buildingMask = new Uint8Array(width * height);
+
+      for (let index = 0; index < buildingMask.length; index++) {
+        buildingMask[index] = buildingIds[index] > 0 ? 1 : 0;
+      }
+
+      patch = buildGroundPatch(width, height, buildingMask, ground);
+    }
+  }
+
+  return { mask, natural, buildings, details, patch };
+}
+
+/**
+ * Interior: so fica com volume a sequencia vertical que tem chao andavel
+ * logo ao sul (parede do fundo, moveis). As laterais e a parede de baixo
+ * do comodo encostam no vazio ou na borda do mapa e ficam planas - de pe
+ * elas cobririam o comodo diante da camera.
+ */
+function keepBackedRuns(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  isFloor: (x: number, y: number) => boolean,
+): void {
+  for (let x = 0; x < width; x++) {
+    let y = 0;
+
+    while (y < height) {
+      if (!isVolumeCell(mask[y * width + x])) {
+        y++;
+        continue;
+      }
+
+      const y0 = y;
+
+      while (y < height && isVolumeCell(mask[y * width + x])) {
+        y++;
+      }
+
+      if (y < height && isFloor(x, y)) {
+        continue;
+      }
+
+      for (let row = y0; row < y; row++) {
+        mask[row * width + x] = 0;
+      }
+    }
+  }
 }
