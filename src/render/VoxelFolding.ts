@@ -321,6 +321,9 @@ export type FoldStyle =
 export interface FoldOptions {
   style?: FoldStyle;
 
+  // Ao ar livre, tudo vira caixa (montanhas, rochedos): sem cartoes.
+  boxes?: boolean;
+
   // Predio a que o bloco pertence (ver computeBuildingIds), 0 = nenhum.
   // Predio ganha fachada unica e telhado com caimento leve.
   buildingAt?: (x: number, y: number) => number;
@@ -640,7 +643,7 @@ export function buildFoldGeometry(
     // periodo a partir de baixo (a linha de baixo e sempre tronco). Objeto
     // solto (sem repeticao) e um cartao so com a altura inteira. O fundo
     // do desenho e recortado na textura dos modelos (GroundSubstitution).
-    if (style === 'outdoor' && !building && !run.card) {
+    if (style === 'outdoor' && !building && !run.card && !options.boxes) {
       const unit =
         objectHeight(run);
 
@@ -1184,9 +1187,22 @@ export interface VolumeBlock {
   // O metatile tem pixels na camada de cima.
   hasForeground: boolean;
 
+  // A camada de cima (qualquer layerType) tem pixels na linha de baixo do
+  // tile: o desenho continua no bloco de baixo (topo de arvore, de telhado,
+  // de vaso). Quando presente, decide os topos de objeto no lugar de
+  // hasForeground - topos em metatiles COVERED (copas da Viridian Forest)
+  // ficavam no chao.
+  topReachesBottom?: boolean;
+
+  // A camada de cima usa os tiles de flor animados do tileset geral.
+  flower?: boolean;
+
   // Pixels da camada de baixo do metatile (16x16 RGBA), para medir quantas
   // linhas de um predio sao fachada.
   basePixels?: Uint8ClampedArray;
+
+  // Desenho completo (as duas camadas), para medir cores e repeticao.
+  pixels?: Uint8ClampedArray;
 
   // Metatile do tileset SECUNDARIO (o da cidade). Na Gen 3 os predios de
   // cada cidade ficam nele; arvores, cercas e placas, no primario.
@@ -1343,9 +1359,51 @@ export interface BuildingVolume {
   geometry: FoldGeometryData;
 }
 
+// O que cada bloco do mapa vira (MapVolume.kinds).
+//
+// So ESTRUTURAS sao 3D de verdade (caixas): predios, montanhas e rochedos,
+// paredes e moveis de interior. Arvores, cercas, placas, grama alta e
+// flores sao OBJETOS 2D em pe, como os sprites: o desenho do GBA num
+// cartao vertical, esticado na vertical como o personagem (ver
+// PlayerRenderer.getUprightSpriteScale), que tapa e e tapado pelo que
+// estiver na frente ou atras dele.
+export const CELL_GROUND = 0;
+export const CELL_STRUCTURE = 1;
+// Topo de estrutura que so tem camada de cima (cumeeira do telhado).
+export const CELL_STRUCTURE_TOP = 2;
+export const CELL_PROP = 3;
+// Topo de objeto que so tem camada de cima (copa sobre a grama).
+export const CELL_PROP_TOP = 4;
+export const CELL_LEDGE = 5;
+export const CELL_GRASS = 6;
+// Flor: so a camada de cima fica em pe; a de baixo (grama) e chao.
+export const CELL_FLOWER = 7;
+
+/** Bloco inteiro coberto por modelo: o chao debaixo dele e trocado. */
+export function isCoveredKind(kind: number): boolean {
+  return (
+    kind === CELL_STRUCTURE ||
+    kind === CELL_PROP ||
+    kind === CELL_LEDGE ||
+    kind === CELL_GRASS
+  );
+}
+
+/** Bloco cujo chao fica so com a camada de baixo (a de cima subiu). */
+export function isTopOnlyKind(kind: number): boolean {
+  return (
+    kind === CELL_STRUCTURE_TOP ||
+    kind === CELL_PROP_TOP ||
+    kind === CELL_FLOWER
+  );
+}
+
 export interface MapVolume {
-  // Mascara final (FOLD_*), para quem precisa saber o que subiu.
+  // Mascara da dobra (FOLD_*).
   mask: Uint8Array;
+
+  // O que cada bloco virou (CELL_*).
+  kinds: Uint8Array;
 
   // Predio de cada bloco (0 = nenhum).
   buildingIds: Int32Array;
@@ -1353,18 +1411,1016 @@ export interface MapVolume {
   // Bloco de chao que vai debaixo de cada bloco coberto (-1 = nenhum).
   groundSources: Int32Array;
 
-  // Arvores, pedras, cercas (ou, no interior, paredes e moveis).
-  natural: FoldGeometryData;
+  // Caixas 3D: predios, montanhas, interiores.
+  structures: FoldGeometryData;
 
-  // Cada predio separado: o renderizador deixa transparente o que tapa o
-  // jogador, como no Faithful.
-  buildings: BuildingVolume[];
-
-  // Ledges e grama alta em pe.
+  // Ledges (faixa baixa, sem esticar).
   details: FoldGeometryData;
 
-  // Remendo de chao debaixo dos predios.
-  patch: GroundPatchData | null;
+  buildings: BuildingVolume[];
+}
+
+function emptyFoldGeometry(): FoldGeometryData {
+  return {
+    positions: new Float32Array(0),
+    uvs: new Float32Array(0),
+    colors: new Float32Array(0),
+    indices: new Uint32Array(0),
+    fullIndexCount: 0,
+    quadCount: 0,
+  };
+}
+
+/**
+ * Junta varias geometrias numa so. Com a textura unica dos modelos (os
+ * topos ja vem so com a camada de cima) todos os quads usam a mesma
+ * textura: os indices de camada de cima viram indices comuns.
+ */
+export function mergeFoldGeometries(
+  parts: FoldGeometryData[],
+): FoldGeometryData {
+  const used = parts.filter((part) => part.quadCount > 0);
+
+  if (used.length === 0) {
+    return emptyFoldGeometry();
+  }
+
+  let vertexCount = 0;
+  let indexCount = 0;
+
+  for (const part of used) {
+    vertexCount += part.positions.length / 3;
+    indexCount += part.indices.length;
+  }
+
+  const positions = new Float32Array(vertexCount * 3);
+  const uvs = new Float32Array(vertexCount * 2);
+  const colors = new Float32Array(vertexCount * 3);
+  const indices = new Uint32Array(indexCount);
+  let vertexOffset = 0;
+  let indexOffset = 0;
+
+  for (const part of used) {
+    positions.set(part.positions, vertexOffset * 3);
+    uvs.set(part.uvs, vertexOffset * 2);
+    colors.set(part.colors, vertexOffset * 3);
+
+    for (let index = 0; index < part.indices.length; index++) {
+      indices[indexOffset + index] = part.indices[index] + vertexOffset;
+    }
+
+    vertexOffset += part.positions.length / 3;
+    indexOffset += part.indices.length;
+  }
+
+  return {
+    positions,
+    uvs,
+    colors,
+    indices,
+    fullIndexCount: indices.length,
+    quadCount: indices.length / 6,
+  };
+}
+
+// Montanha/rochedo: desenho com menos que esta fracao de pixels verdes.
+const ROCK_GREEN_FRACTION = 0.3;
+
+// Montanha e grande e grossa: pelo menos tantos blocos, com um quadrado
+// MASS_CORE x MASS_CORE inteiro. Grupos menores que nao sao verdes (pedra
+// solta, bicicletas da loja de Mauville, estatua pequena) ficam objetos em
+// pe.
+const MASS_MIN_CELLS = 16;
+const MASS_CORE = 3;
+
+const rgbKey = (pixels: Uint8ClampedArray, offset: number): number =>
+  (pixels[offset] << 16) | (pixels[offset + 1] << 8) | pixels[offset + 2];
+
+/**
+ * Blocos que sao MONTANHA ou ROCHEDO (estrutura 3D, nao objeto em pe):
+ * grupo de blocos solidos sem predio, com desenho que nao e verde (pedra,
+ * terra, penhasco), grande e grosso (ver MASS_MIN_CELLS). Cercas e
+ * placas tambem nao sao verdes, mas sao finas: continuam objetos em pe.
+ * Os topos (so camada de cima) logo acima entram junto.
+ */
+function findRockMasses(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  buildingIds: Int32Array,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+  sources: Int32Array,
+): Uint8Array {
+  const rocky = new Uint8Array(width * height);
+  const colorCache = new Map<number, Set<number>>();
+  const verdicts = new Map<number, boolean>();
+
+  const groundColors = (source: number): Set<number> => {
+    const cached = colorCache.get(source);
+
+    if (cached) {
+      return cached;
+    }
+
+    const colors = new Set<number>();
+    const block = blockAt(source % width, Math.floor(source / width));
+    const pixels = block?.pixels ?? block?.basePixels;
+
+    if (pixels) {
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (pixels[offset + 3] >= 128) {
+          colors.add(rgbKey(pixels, offset));
+        }
+      }
+    }
+
+    colorCache.set(source, colors);
+
+    return colors;
+  };
+
+  for (let index = 0; index < mask.length; index++) {
+    if (mask[index] !== FOLD_SOLID || buildingIds[index] !== 0) {
+      continue;
+    }
+
+    const block = blockAt(index % width, Math.floor(index / width));
+    const pixels = block?.pixels ?? block?.basePixels;
+
+    if (!pixels) {
+      continue;
+    }
+
+    // Mesmo metatile sobre o mesmo chao: mesma resposta.
+    const sourceId =
+      sources[index] >= 0
+        ? (blockAt(sources[index] % width, Math.floor(sources[index] / width))?.metatileId ?? -1) + 1
+        : 0;
+
+    const key = (block?.metatileId ?? 0) * 4096 + sourceId;
+    const known = verdicts.get(key);
+
+    if (known !== undefined) {
+      rocky[index] = known ? 1 : 0;
+      continue;
+    }
+
+    const colors =
+      sources[index] >= 0 ? groundColors(sources[index]) : new Set<number>();
+
+    let object = 0;
+    let green = 0;
+
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      if (pixels[offset + 3] < 128 || colors.has(rgbKey(pixels, offset))) {
+        continue;
+      }
+
+      object++;
+
+      if (
+        pixels[offset + 1] > pixels[offset] + 16 &&
+        pixels[offset + 1] >= pixels[offset + 2]
+      ) {
+        green++;
+      }
+    }
+
+    const isRock = object > 0 && green < object * ROCK_GREEN_FRACTION;
+
+    verdicts.set(key, isRock);
+
+    if (isRock) {
+      rocky[index] = 1;
+    }
+  }
+
+  const mass = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const isRocky = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < width && y < height && rocky[y * width + x] === 1;
+
+  for (let start = 0; start < rocky.length; start++) {
+    if (!rocky[start] || visited[start]) {
+      continue;
+    }
+
+    const component: number[] = [];
+    const stack = [start];
+    let thick = false;
+    visited[start] = 1;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      component.push(cell);
+
+      // Grosso: um quadrado 3x3 inteiro de pedra a partir daqui.
+      let block = true;
+
+      for (let dy = 0; dy < MASS_CORE && block; dy++) {
+        for (let dx = 0; dx < MASS_CORE; dx++) {
+          if (!isRocky(x + dx, y + dy)) {
+            block = false;
+            break;
+          }
+        }
+      }
+
+      if (block) {
+        thick = true;
+      }
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (!isRocky(x + dx, y + dy)) {
+          continue;
+        }
+
+        const next = (y + dy) * width + x + dx;
+
+        if (!visited[next]) {
+          visited[next] = 1;
+          stack.push(next);
+        }
+      }
+    }
+
+    if (thick && component.length >= MASS_MIN_CELLS) {
+      for (const cell of component) {
+        mass[cell] = 1;
+      }
+    }
+  }
+
+  // Linhas finas (muro de 1 bloco, cerca de pedra) grudadas numa massa:
+  // bloco fora de qualquer quadrado 2x2 da massa. Linha de 3 ou mais vira
+  // objeto em pe - como caixa ela ficava uma laje alta e fina.
+  {
+    const inMass = (x: number, y: number): boolean =>
+      x >= 0 && y >= 0 && x < width && y < height && mass[y * width + x] === 1;
+
+    const thin = new Uint8Array(width * height);
+
+    for (let cell = 0; cell < mass.length; cell++) {
+      if (!mass[cell]) {
+        continue;
+      }
+
+      const x = cell % width;
+      const y = (cell - x) / width;
+      let thick = false;
+
+      for (const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+        if (
+          inMass(x + ox, y + oy) &&
+          inMass(x + ox + 1, y + oy) &&
+          inMass(x + ox, y + oy + 1) &&
+          inMass(x + ox + 1, y + oy + 1)
+        ) {
+          thick = true;
+          break;
+        }
+      }
+
+      if (!thick) {
+        thin[cell] = 1;
+      }
+    }
+
+    const seen = new Uint8Array(width * height);
+
+    for (let start = 0; start < thin.length; start++) {
+      if (!thin[start] || seen[start]) {
+        continue;
+      }
+
+      const component: number[] = [];
+      const stack = [start];
+      seen[start] = 1;
+
+      while (stack.length > 0) {
+        const cell = stack.pop() as number;
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        component.push(cell);
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+            continue;
+          }
+
+          const next = ny * width + nx;
+
+          if (thin[next] && !seen[next]) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+
+      if (component.length >= 3) {
+        for (const cell of component) {
+          mass[cell] = 0;
+        }
+      }
+    }
+  }
+
+  // Topos (so camada de cima) logo acima das colunas de montanha.
+  for (let x = 0; x < width; x++) {
+    for (let y = 1; y < height; y++) {
+      if (!mass[y * width + x]) {
+        continue;
+      }
+
+      for (
+        let up = y - 1;
+        up >= 0 && mask[up * width + x] === FOLD_OVERHANG && !mass[up * width + x];
+        up--
+      ) {
+        mass[up * width + x] = 1;
+      }
+    }
+  }
+
+  return mass;
+}
+
+/**
+ * Chao unico por grupo: cada grupo conectado de blocos de um tipo (uma
+ * mata, um campo de grama alta) recebe o chao andavel mais comum em volta
+ * dele. Sem isto a busca do mais proximo misturava areia e grama debaixo
+ * da mesma mata, em faixas.
+ */
+function unifyGroupGround(
+  width: number,
+  height: number,
+  kinds: Uint8Array,
+  groupKind: number,
+  sources: Int32Array,
+  isGround: (x: number, y: number) => boolean,
+  metatileAt: (x: number, y: number) => number,
+): void {
+  const visited = new Uint8Array(width * height);
+
+  for (let start = 0; start < kinds.length; start++) {
+    if (kinds[start] !== groupKind || visited[start]) {
+      continue;
+    }
+
+    const component: number[] = [];
+    const stack = [start];
+    const counts = new Map<number, { count: number; cell: number }>();
+    visited[start] = 1;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      component.push(cell);
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+
+        const next = ny * width + nx;
+
+        if (kinds[next] === groupKind) {
+          if (!visited[next]) {
+            visited[next] = 1;
+            stack.push(next);
+          }
+
+          continue;
+        }
+
+        if (!isGround(nx, ny)) {
+          continue;
+        }
+
+        const id = metatileAt(nx, ny);
+        const entry = counts.get(id);
+
+        if (entry) {
+          entry.count++;
+        } else {
+          counts.set(id, { count: 1, cell: next });
+        }
+      }
+    }
+
+    let best: { count: number; cell: number } | null = null;
+
+    for (const entry of counts.values()) {
+      if (!best || entry.count > best.count) {
+        best = entry;
+      }
+    }
+
+    if (!best) {
+      continue;
+    }
+
+    for (const cell of component) {
+      sources[cell] = best.cell;
+    }
+  }
+}
+
+// Objetos em pe: posicao do cartao dentro do bloco de baixo (0 = borda
+// norte, 1 = borda sul). Objeto no centro, como os sprites; grama alta na
+// frente de quem esta nela (cobre os pes, como no GBA); flor atras.
+const PROP_OBJECT_Z = 0.5;
+const PROP_GRASS_Z = 0.8;
+const PROP_FLOWER_Z = 0.35;
+
+// Dois metatiles diferentes contam como o "mesmo desenho" na busca da
+// repeticao de uma mata se tantos pixels forem iguais (variantes de
+// tronco com grama ou grama alta do lado).
+const SIMILAR_ART = 0.75;
+
+// Abaixo disto e outro objeto (cerca colada na base da mata).
+const DIFFERENT_ART = 0.35;
+
+interface PropUnit {
+  x0: number;
+  x1: number;
+
+  // Pixels do mapa (linha 0 = topo do mapa), topo inclusive, base exclusive.
+  topPx: number;
+  bottomPx: number;
+
+  z: number;
+}
+
+interface ObjectRun {
+  x: number;
+  y0: number;
+  y1: number;
+
+  // Grupo conectado de blocos de objeto (uma mata, uma arvore solta).
+  group: number;
+
+  // Periodo da repeticao (linhas), 0 = objeto unico.
+  period: number;
+
+  // Linha de pixel onde o desenho comeca no topo, quando o topo encosta em
+  // chao dentro do mapa (-1 = desconhecido: borda do mapa).
+  topPx: number;
+
+  // Linhas de baixo que sao outro objeto (cerca colada na base da mata).
+  trimmedFrom: number;
+}
+
+// Menor pedaco (pixels) que vira cartao proprio num corte de mata.
+const MIN_UNIT_PX = 6;
+
+/**
+ * Cartoes dos objetos em pe (arvores, cercas, placas, pedras, grama alta,
+ * flores), alturas em linhas de tile com base em y = 0 - o renderizador
+ * estica a malha na vertical como os sprites.
+ *
+ * Cada coluna de blocos de objeto vira OBJETOS. O que nao se repete (arvore
+ * solta, placa, cerca) e um cartao so com a altura inteira. Numa mata o
+ * desenho se repete a cada N linhas e as arvores se sobrepoem: a copa de
+ * baixo cobre o pe da de cima, e cada copa COMECA NO MEIO de uma linha de
+ * tile (na Viridian Forest, 10 pixels abaixo do topo do tile). Cortar nas
+ * bordas dos tiles partia as copas - o "bug das arvores". O corte e feito
+ * no pixel em que as copas comecam: o topo do desenho da primeira arvore da
+ * pilha, medido na textura dos modelos (`rowOpaque`), repetido a cada
+ * periodo. A ultima arvore (a da frente, com tronco e sombra) fica inteira.
+ * Colunas vizinhas da mesma pilha usam o mesmo corte (o mais alto entre
+ * elas: o topo da copa), e quem nao tem topo visivel (mata que continua no
+ * mapa vizinho) usa o corte do grupo.
+ */
+export function buildPropGeometry(
+  width: number,
+  height: number,
+  kinds: Uint8Array,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+  // Ha pixel opaco na coluna x, linha de pixel `row` do mapa, na textura
+  // dos modelos?
+  rowOpaque: (x: number, row: number) => boolean,
+): FoldGeometryData {
+  const isObject = (x: number, y: number): boolean => {
+    const kind = kinds[y * width + x];
+
+    return kind === CELL_PROP || kind === CELL_PROP_TOP;
+  };
+
+  const artCache = new Map<number, number>();
+
+  // Fracao de pixels iguais entre dois blocos da mesma coluna (1 quando o
+  // metatile e o mesmo).
+  const similarity = (x: number, y: number, otherY: number): number => {
+    const a = blockAt(x, y);
+    const b = blockAt(x, otherY);
+
+    if (!a || !b) {
+      return 0;
+    }
+
+    if (a.metatileId === b.metatileId) {
+      return 1;
+    }
+
+    const key =
+      Math.min(a.metatileId, b.metatileId) * 4096 +
+      Math.max(a.metatileId, b.metatileId);
+
+    const cached = artCache.get(key);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let same = 0;
+    const pa = a.pixels;
+    const pb = b.pixels;
+
+    if (pa && pb) {
+      for (let offset = 0; offset < pa.length; offset += 4) {
+        if (
+          pa[offset] === pb[offset] &&
+          pa[offset + 1] === pb[offset + 1] &&
+          pa[offset + 2] === pb[offset + 2] &&
+          pa[offset + 3] === pb[offset + 3]
+        ) {
+          same++;
+        }
+      }
+    }
+
+    const result = pa ? same / (pa.length / 4) : 0;
+    artCache.set(key, result);
+
+    return result;
+  };
+
+  // ---- grupos conectados ----
+  const groupOf = new Int32Array(width * height).fill(-1);
+  let groupCount = 0;
+
+  for (let start = 0; start < kinds.length; start++) {
+    const sx = start % width;
+    const sy = (start - sx) / width;
+
+    if (groupOf[start] >= 0 || !isObject(sx, sy)) {
+      continue;
+    }
+
+    const stack = [start];
+    groupOf[start] = groupCount;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+
+        const next = ny * width + nx;
+
+        if (groupOf[next] < 0 && isObject(nx, ny)) {
+          groupOf[next] = groupCount;
+          stack.push(next);
+        }
+      }
+    }
+
+    groupCount++;
+  }
+
+  // ---- sequencias por coluna: periodo e topo ----
+  const runs: ObjectRun[] = [];
+  const runsByColumn: ObjectRun[][] = [];
+
+  for (let x = 0; x < width; x++) {
+    const column: ObjectRun[] = [];
+    let y = 0;
+
+    while (y < height) {
+      if (!isObject(x, y)) {
+        y++;
+        continue;
+      }
+
+      const y0 = y;
+
+      while (y < height && isObject(x, y)) {
+        y++;
+      }
+
+      const y1 = y - 1;
+
+      let first = y0;
+
+      while (first <= y1 && kinds[first * width + x] === CELL_PROP_TOP) {
+        first++;
+      }
+
+      const solidRows = y1 - first + 1;
+      let period = 0;
+
+      // Precisa de pelo menos duas repeticoes inteiras do padrao. Periodo 1:
+      // fileira norte-sul de objetos iguais (cerca, arbustos), um cartao
+      // por linha - inteira ela virava uma torre em pe.
+      for (let candidate = 1; candidate <= MAX_OBJECT_PERIOD; candidate++) {
+        if (solidRows < candidate * 2 || (candidate === 1 && solidRows < 3)) {
+          continue;
+        }
+
+        let same = 0;
+        let total = 0;
+
+        for (let row = first + candidate; row <= y1; row++) {
+          total++;
+
+          if (similarity(x, row, row - candidate) >= SIMILAR_ART) {
+            same++;
+          }
+        }
+
+        if (total > 0 && same * 10 >= total * 7) {
+          period = candidate;
+          break;
+        }
+      }
+
+      // Linhas da base que nao seguem o padrao: objeto proprio.
+      let trimmedFrom = y1 + 1;
+
+      if (period > 0) {
+        while (
+          trimmedFrom - 1 - period >= first &&
+          similarity(x, trimmedFrom - 1, trimmedFrom - 1 - period) < DIFFERENT_ART
+        ) {
+          trimmedFrom--;
+        }
+      }
+
+      // Topo do desenho, quando o topo da sequencia esta dentro do mapa.
+      let topPx = -1;
+
+      if (y0 > 0) {
+        for (let row = y0 * 16; row < (y1 + 1) * 16; row++) {
+          if (rowOpaque(x, row)) {
+            topPx = row;
+            break;
+          }
+        }
+      }
+
+      const run: ObjectRun = {
+        x,
+        y0,
+        y1,
+        group: groupOf[y0 * width + x],
+        period,
+        topPx,
+        trimmedFrom,
+      };
+
+      runs.push(run);
+      column.push(run);
+    }
+
+    runsByColumn.push(column);
+  }
+
+  // ---- periodo aprendido: pilha curta demais para mostrar a repeticao
+  // (duas copas so) usa o periodo que os mesmos metatiles tem nas pilhas
+  // longas do mapa. A ultima arvore continua inteira (pelo menos um
+  // periodo), entao arvore solta nao e cortada. ----
+  const learned = new Map<number, Map<number, number>>();
+
+  for (const run of runs) {
+    if (run.period === 0) {
+      continue;
+    }
+
+    for (let row = run.y0; row <= run.y1; row++) {
+      const id = blockAt(run.x, row)?.metatileId;
+
+      if (id === undefined) {
+        continue;
+      }
+
+      const votes = learned.get(id) ?? new Map<number, number>();
+      votes.set(run.period, (votes.get(run.period) ?? 0) + 1);
+      learned.set(id, votes);
+    }
+  }
+
+  for (const run of runs) {
+    if (run.period !== 0) {
+      continue;
+    }
+
+    let first = run.y0;
+
+    while (first <= run.y1 && kinds[first * width + run.x] === CELL_PROP_TOP) {
+      first++;
+    }
+
+    const solidRows = run.y1 - first + 1;
+    const votes = new Map<number, number>();
+
+    for (let row = first; row <= run.y1; row++) {
+      const id = blockAt(run.x, row)?.metatileId;
+      const known = id === undefined ? undefined : learned.get(id);
+
+      if (!known) {
+        continue;
+      }
+
+      let best = 0;
+      let bestCount = 0;
+
+      for (const [candidate, count] of known) {
+        if (count > bestCount) {
+          best = candidate;
+          bestCount = count;
+        }
+      }
+
+      votes.set(best, (votes.get(best) ?? 0) + 1);
+    }
+
+    for (const [candidate, count] of votes) {
+      if (solidRows > candidate && count * 10 >= solidRows * 6) {
+        run.period = candidate;
+      }
+    }
+  }
+
+  // ---- fase do corte (pixel em que as copas comecam), por grupo ----
+  // Votos do grupo: fase (topo mod periodo) de cada coluna com topo.
+  const groupVotes = new Map<string, Map<number, number>>();
+
+  for (const run of runs) {
+    if (run.period === 0 || run.topPx < 0) {
+      continue;
+    }
+
+    const key = run.group + ':' + run.period;
+    const votes = groupVotes.get(key) ?? new Map<number, number>();
+    const phase = run.topPx % (run.period * 16);
+
+    votes.set(phase, (votes.get(phase) ?? 0) + 1);
+    groupVotes.set(key, votes);
+  }
+
+  const overlapping = (a: ObjectRun, b: ObjectRun): boolean =>
+    a.y0 <= b.y1 && b.y0 <= a.y1;
+
+  const phaseOf = (run: ObjectRun): number | null => {
+    const span = run.period * 16;
+
+    // Vizinhos da mesma pilha: o topo mais alto entre eles e o topo da
+    // copa (as colunas do lado da copa comecam mais abaixo).
+    let best = run.topPx >= 0 ? run.topPx : Number.POSITIVE_INFINITY;
+
+    for (const dx of [-1, 1]) {
+      for (const other of runsByColumn[run.x + dx] ?? []) {
+        if (
+          other.group !== run.group ||
+          other.period !== run.period ||
+          other.topPx < 0 ||
+          !overlapping(run, other)
+        ) {
+          continue;
+        }
+
+        if (run.topPx >= 0 && Math.abs(other.topPx - run.topPx) >= span / 2) {
+          continue;
+        }
+
+        best = Math.min(best, other.topPx);
+      }
+    }
+
+    if (Number.isFinite(best)) {
+      return best % span;
+    }
+
+    const votes = groupVotes.get(run.group + ':' + run.period);
+
+    if (!votes) {
+      return null;
+    }
+
+    let phase: number | null = null;
+    let count = 0;
+
+    for (const [value, total] of votes) {
+      if (total > count) {
+        phase = value;
+        count = total;
+      }
+    }
+
+    return phase;
+  };
+
+  const units: PropUnit[] = [];
+
+  // Cortes por coluna, depois juntados com os vizinhos de mesmo recorte.
+  const columnUnits: Array<Array<[number, number]>> = [];
+
+  for (let x = 0; x < width; x++) {
+    columnUnits.push([]);
+  }
+
+  for (const run of runs) {
+    const pieces = columnUnits[run.x];
+    const topPx = run.y0 * 16;
+    const endPx = run.trimmedFrom * 16;
+
+    if (run.trimmedFrom <= run.y1) {
+      pieces.push([endPx, (run.y1 + 1) * 16]);
+    }
+
+    if (run.period === 0) {
+      pieces.push([topPx, endPx]);
+      continue;
+    }
+
+    const span = run.period * 16;
+    let phase = phaseOf(run);
+
+    // Sem topo em lugar nenhum: corta nas bordas dos tiles a partir da
+    // base (a linha de baixo e tronco).
+    if (phase === null) {
+      phase = endPx % span;
+    }
+
+    const cuts: number[] = [];
+    let cut = topPx + ((phase - topPx) % span + span) % span;
+
+    if (cut < topPx + MIN_UNIT_PX) {
+      cut += span;
+    }
+
+    // A ultima arvore (a da frente) fica inteira: pelo menos um periodo.
+    for (; endPx - cut >= span; cut += span) {
+      cuts.push(cut);
+    }
+
+    let from = topPx;
+
+    for (const position of cuts) {
+      pieces.push([from, position]);
+      from = position;
+    }
+
+    pieces.push([from, endPx]);
+  }
+
+  {
+    const open = new Map<string, PropUnit>();
+
+    for (let x = 0; x < width; x++) {
+      const next = new Map<string, PropUnit>();
+
+      for (const [topPx, bottomPx] of columnUnits[x]) {
+        // Pedaco sem nenhum pixel: nao vira cartao.
+        let visible = false;
+
+        for (let row = topPx; row < bottomPx && !visible; row++) {
+          visible = rowOpaque(x, row);
+        }
+
+        if (!visible) {
+          continue;
+        }
+
+        const key = topPx + ':' + bottomPx;
+        const previous = open.get(key);
+
+        if (previous && previous.x1 === x - 1) {
+          previous.x1 = x;
+          next.set(key, previous);
+        } else {
+          const unit: PropUnit = {
+            x0: x,
+            x1: x,
+            topPx,
+            bottomPx,
+            z: bottomPx / 16 - 1 + PROP_OBJECT_Z,
+          };
+
+          units.push(unit);
+          next.set(key, unit);
+        }
+      }
+
+      open.clear();
+
+      for (const [key, unit] of next) {
+        open.set(key, unit);
+      }
+    }
+  }
+
+  // Grama alta e flores: um cartao de uma linha por trecho da fileira.
+  for (const [kind, offset] of [
+    [CELL_GRASS, PROP_GRASS_Z],
+    [CELL_FLOWER, PROP_FLOWER_Z],
+  ] as const) {
+    for (let y = 0; y < height; y++) {
+      let x = 0;
+
+      while (x < width) {
+        if (kinds[y * width + x] !== kind) {
+          x++;
+          continue;
+        }
+
+        const x0 = x;
+
+        while (x < width && kinds[y * width + x] === kind) {
+          x++;
+        }
+
+        units.push({
+          x0,
+          x1: x - 1,
+          topPx: y * 16,
+          bottomPx: (y + 1) * 16,
+          z: y + offset,
+        });
+      }
+    }
+  }
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  // Recuo de uma fracao de texel nas bordas: o filtro NEAREST nao pega a
+  // linha vizinha na textura.
+  const textureRows = height * 16;
+  const insetU = 0.001 / (width * 16);
+  const insetV = 0.001 / textureRows;
+
+  for (const unit of units) {
+    const left = unit.x0;
+    const right = unit.x1 + 1;
+    const rows = (unit.bottomPx - unit.topPx) / 16;
+    const vBottom = (textureRows - unit.bottomPx) / textureRows + insetV;
+    const vTop = (textureRows - unit.topPx) / textureRows - insetV;
+    const uLeft = left / width + insetU;
+    const uRight = right / width - insetU;
+    const base = positions.length / 3;
+
+    positions.push(
+      left, 0, unit.z,
+      right, 0, unit.z,
+      right, rows, unit.z,
+      left, rows, unit.z,
+    );
+
+    uvs.push(
+      uLeft, vBottom,
+      uRight, vBottom,
+      uRight, vTop,
+      uLeft, vTop,
+    );
+
+    for (let corner = 0; corner < 4; corner++) {
+      colors.push(1, 1, 1);
+    }
+
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  return {
+    positions: new Float32Array(positions),
+    uvs: new Float32Array(uvs),
+    colors: new Float32Array(colors),
+    indices: new Uint32Array(indices),
+    fullIndexCount: indices.length,
+    quadCount: indices.length / 6,
+  };
 }
 
 /**
@@ -1382,6 +2438,26 @@ export function buildMapVolume(
   // a mata em volta da cidade).
   natureMetatiles: ReadonlySet<number> = new Set(),
 ): MapVolume {
+  // Cada bloco e consultado muitas vezes: guarda a primeira resposta.
+  const rawBlockAt = blockAt;
+  const blockCache: Array<VolumeBlock | undefined | null> = new Array(width * height).fill(null);
+
+  blockAt = (x: number, y: number): VolumeBlock | undefined => {
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return undefined;
+    }
+
+    const index = y * width + x;
+    let block = blockCache[index];
+
+    if (block === null) {
+      block = rawBlockAt(x, y);
+      blockCache[index] = block;
+    }
+
+    return block;
+  };
+
   const mask =
     computeFoldMask(width, height, blockAt);
 
@@ -1416,14 +2492,28 @@ export function buildMapVolume(
     (x, y) => blockAt(x, y)?.behavior ?? 0,
   );
 
+  // Interior: so parede do fundo e moveis (o resto taparia o comodo). Ao
+  // ar livre as colunas finas (cercas norte-sul) ficam: viram objetos em
+  // pe como o resto.
+  // Interior: vasos de planta e outros objetos verdes pequenos, soltos no
+  // chao, viram objetos em pe como as arvores; o resto vira caixa.
+  const interiorProps =
+    style === 'interior'
+      ? findInteriorProps(width, height, mask, blockAt)
+      : new Uint8Array(width * height);
+
   if (style === 'interior') {
     keepBackedRuns(width, height, mask, (x, y) => {
       const block = blockAt(x, y);
 
       return !!block && block.collision === 0;
     });
-  } else {
-    dropThinColumns(width, height, mask);
+
+    for (let index = 0; index < mask.length; index++) {
+      if (interiorProps[index]) {
+        mask[index] = FOLD_SOLID;
+      }
+    }
   }
 
   extendFoldMaskUpward(
@@ -1437,33 +2527,35 @@ export function buildMapVolume(
         !!block &&
         block.collision === 0 &&
         block.elevation !== 1 &&
-        block.hasForeground
+        (block.topReachesBottom ?? block.hasForeground)
       );
     },
   );
 
-  // Chao de origem de cada bloco coberto (ver GroundSubstitution): vai
-  // para debaixo do modelo e diz quais cores sao "fundo" no desenho.
-  const groundSources =
+  const walkable = (x: number, y: number): boolean => {
+    const block = blockAt(x, y);
+
+    return (
+      !!block &&
+      block.collision === 0 &&
+      block.elevation !== 1 &&
+      block.behavior !== MB_TALL_GRASS
+    );
+  };
+
+  // Chao provisorio (o mais proximo), so para saber as cores de fundo de
+  // cada desenho na classificacao.
+  const provisional =
     chooseGroundSources({
       width,
       height,
       covered: (x, y) => mask[y * width + x] !== 0,
-      isGround: (x, y) => {
-        const block = blockAt(x, y);
-
-        return (
-          !!block &&
-          block.collision === 0 &&
-          block.elevation !== 1 &&
-          block.behavior !== MB_TALL_GRASS
-        );
-      },
+      isGround: walkable,
     });
 
   const natural =
     style === 'outdoor'
-      ? markNaturalCells(width, height, mask, blockAt, groundSources, natureMetatiles)
+      ? markNaturalCells(width, height, mask, blockAt, provisional, natureMetatiles)
       : new Uint8Array(width * height);
 
   const buildingIds =
@@ -1471,74 +2563,150 @@ export function buildMapVolume(
       ? findBuildings(width, height, mask, natural, warps)
       : new Int32Array(width * height);
 
-  const overlayOnly = (x: number, y: number): boolean =>
-    mask[y * width + x] === FOLD_OVERHANG;
+  const masses =
+    style === 'outdoor'
+      ? findRockMasses(width, height, mask, buildingIds, blockAt, provisional)
+      : new Uint8Array(width * height);
 
-  const naturalGeometry =
-    buildFoldGeometry(
-      width,
-      height,
-      (x, y) =>
-        isVolumeCell(mask[y * width + x]) &&
-        buildingIds[y * width + x] === 0,
-      maxWallRows,
-      {
-        style,
-        overlayOnly,
-        metatileAt: (x, y) => blockAt(x, y)?.metatileId ?? -1,
-        isFloor: (x, y) => {
-          const block = blockAt(x, y);
-
-          return !!block && block.collision === 0;
-        },
-      },
-    );
-
-  // Predios, um por um.
-  const bounds = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+  // ---- o que cada bloco vira ----
+  const kinds = new Uint8Array(width * height);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const id = buildingIds[y * width + x];
+      const index = y * width + x;
+      const value = mask[index];
 
-      if (id === 0) {
+      if (value === FOLD_LEDGE) {
+        kinds[index] = CELL_LEDGE;
         continue;
       }
 
-      const box = bounds.get(id);
+      if (isVolumeCell(value)) {
+        // Topo (so camada de cima): segue o bloco solido logo abaixo.
+        let below = y;
 
-      if (box) {
-        box.x0 = Math.min(box.x0, x);
-        box.y0 = Math.min(box.y0, y);
-        box.x1 = Math.max(box.x1, x);
-        box.y1 = Math.max(box.y1, y);
-      } else {
-        bounds.set(id, { x0: x, y0: y, x1: x, y1: y });
+        while (below < height - 1 && mask[below * width + x] === FOLD_OVERHANG) {
+          below++;
+        }
+
+        const structure =
+          style === 'interior'
+            ? interiorProps[below * width + x] === 0
+            : buildingIds[index] > 0 || masses[index] === 1;
+
+        kinds[index] =
+          structure
+            ? value === FOLD_OVERHANG ? CELL_STRUCTURE_TOP : CELL_STRUCTURE
+            : value === FOLD_OVERHANG ? CELL_PROP_TOP : CELL_PROP;
+
+        continue;
+      }
+
+      if (style !== 'outdoor') {
+        continue;
+      }
+
+      const block = blockAt(x, y);
+
+      if (!block || block.collision !== 0 || block.elevation === 1) {
+        continue;
+      }
+
+      if (block.behavior === MB_TALL_GRASS) {
+        kinds[index] = CELL_GRASS;
+      } else if (block.flower) {
+        kinds[index] = CELL_FLOWER;
       }
     }
   }
 
+  // ---- chao debaixo dos modelos ----
+  const isGround = (x: number, y: number): boolean => {
+    const kind = kinds[y * width + x];
+
+    return (kind === CELL_GROUND || kind === CELL_FLOWER) && walkable(x, y);
+  };
+
+  const groundSources =
+    chooseGroundSources({
+      width,
+      height,
+      covered: (x, y) => isCoveredKind(kinds[y * width + x]),
+      isGround,
+    });
+
+  const metatileAt = (x: number, y: number): number =>
+    blockAt(x, y)?.metatileId ?? -1;
+
+  unifyGroupGround(width, height, kinds, CELL_PROP, groundSources, isGround, metatileAt);
+  unifyGroupGround(width, height, kinds, CELL_GRASS, groundSources, isGround, metatileAt);
+
+  // ---- estruturas 3D ----
+  const overlayOnly = (x: number, y: number): boolean =>
+    mask[y * width + x] === FOLD_OVERHANG;
+
+  const parts: FoldGeometryData[] = [];
   const buildings: BuildingVolume[] = [];
 
-  for (const [id, box] of bounds) {
-    const cells: Array<{ x: number; y: number }> = [];
+  if (style === 'interior') {
+    parts.push(
+      buildFoldGeometry(
+        width,
+        height,
+        (x, y) => isVolumeCell(mask[y * width + x]),
+        maxWallRows,
+        {
+          style,
+          overlayOnly,
+          metatileAt,
+          isFloor: (x, y) => {
+            const block = blockAt(x, y);
 
-    for (let y = box.y0; y <= box.y1; y++) {
-      for (let x = box.x0; x <= box.x1; x++) {
-        if (buildingIds[y * width + x] === id) {
-          cells.push({ x, y });
+            return !!block && block.collision === 0;
+          },
+        },
+      ),
+    );
+  } else {
+    // Predios, um por um (cada um mede a propria fachada).
+    const bounds = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const id = buildingIds[y * width + x];
+
+        if (id === 0) {
+          continue;
+        }
+
+        const box = bounds.get(id);
+
+        if (box) {
+          box.x0 = Math.min(box.x0, x);
+          box.y0 = Math.min(box.y0, y);
+          box.x1 = Math.max(box.x1, x);
+          box.y1 = Math.max(box.y1, y);
+        } else {
+          bounds.set(id, { x0: x, y0: y, x1: x, y1: y });
         }
       }
     }
 
-    const facadeRows =
-      measureFacadeRows(cells, blockAt);
+    for (const [id, box] of bounds) {
+      const cells: Array<{ x: number; y: number }> = [];
 
-    buildings.push({
-      id,
-      ...box,
-      facadeRows,
-      geometry:
+      for (let y = box.y0; y <= box.y1; y++) {
+        for (let x = box.x0; x <= box.x1; x++) {
+          if (buildingIds[y * width + x] === id) {
+            cells.push({ x, y });
+          }
+        }
+      }
+
+      const facadeRows =
+        measureFacadeRows(cells, blockAt);
+
+      const geometry =
         buildFoldGeometry(
           width,
           height,
@@ -1562,34 +2730,190 @@ export function buildMapVolume(
               return measureFacadeRows(part, blockAt);
             },
           },
-        ),
-    });
+        );
+
+      buildings.push({ id, ...box, facadeRows, geometry });
+      parts.push(geometry);
+    }
+
+    // Montanhas e rochedos: caixas com a face em pe e o topo deitado.
+    parts.push(
+      buildFoldGeometry(
+        width,
+        height,
+        (x, y) => masses[y * width + x] === 1,
+        maxWallRows,
+        { style, overlayOnly, boxes: true },
+      ),
+    );
   }
+
+  const structures =
+    mergeFoldGeometries(parts);
 
   const details =
     buildGroundDetails(
       width,
       height,
-      (x, y) => mask[y * width + x] === FOLD_LEDGE,
-      (x, y) =>
-        style === 'outdoor' &&
-        mask[y * width + x] === 0 &&
-        blockAt(x, y)?.behavior === MB_TALL_GRASS,
+      (x, y) => kinds[y * width + x] === CELL_LEDGE,
+      () => false,
     );
-
-  // O chao debaixo do volume agora e trocado na textura do mapa inteiro
-  // (GroundSubstitution); o remendo por cima ficou sem uso.
-  const patch: GroundPatchData | null = null;
 
   return {
     mask,
+    kinds,
     buildingIds,
     groundSources,
-    natural: naturalGeometry,
-    buildings,
+    structures,
     details,
-    patch,
+    buildings,
   };
+}
+
+// Objeto de interior que vira cartao em pe: grupo de ate 4 blocos solidos,
+// no maximo 2x2, com chao em volta e desenho verde (planta).
+const INTERIOR_PROP_MAX_CELLS = 4;
+const INTERIOR_PROP_GREEN = 0.3;
+
+function findInteriorProps(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+): Uint8Array {
+  const props = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+
+  const walkable = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return false;
+    }
+
+    const block = blockAt(x, y);
+
+    return !!block && block.collision === 0;
+  };
+
+  for (let start = 0; start < mask.length; start++) {
+    if (mask[start] !== FOLD_SOLID || visited[start]) {
+      continue;
+    }
+
+    const component: number[] = [];
+    const stack = [start];
+    visited[start] = 1;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      component.push(cell);
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+
+        const next = ny * width + nx;
+
+        if (mask[next] === FOLD_SOLID && !visited[next]) {
+          visited[next] = 1;
+          stack.push(next);
+        }
+      }
+    }
+
+    if (component.length > INTERIOR_PROP_MAX_CELLS) {
+      continue;
+    }
+
+    let minX = width;
+    let maxX = -1;
+    let minY = height;
+    let maxY = -1;
+
+    for (const cell of component) {
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+
+    if (maxX - minX > 1 || maxY - minY > 1) {
+      continue;
+    }
+
+    // Solto: chao dos dois lados ou em cima e embaixo.
+    const floorSides =
+      (walkable(minX - 1, maxY) ? 1 : 0) +
+      (walkable(maxX + 1, maxY) ? 1 : 0) +
+      (walkable(minX, minY - 1) ? 1 : 0) +
+      (walkable(minX, maxY + 1) ? 1 : 0);
+
+    if (floorSides < 3) {
+      continue;
+    }
+
+    // Cores do piso em volta (o fundo do desenho).
+    const floor = new Set<number>();
+
+    for (const [fx, fy] of [[minX - 1, maxY], [maxX + 1, maxY], [minX, maxY + 1]]) {
+      if (!walkable(fx, fy)) {
+        continue;
+      }
+
+      const pixels = blockAt(fx, fy)?.pixels;
+
+      if (!pixels) {
+        continue;
+      }
+
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        floor.add(rgbKey(pixels, offset));
+      }
+    }
+
+    let object = 0;
+    let green = 0;
+
+    for (const cell of component) {
+      const pixels = blockAt(cell % width, Math.floor(cell / width))?.pixels;
+
+      if (!pixels) {
+        continue;
+      }
+
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (pixels[offset + 3] < 128 || floor.has(rgbKey(pixels, offset))) {
+          continue;
+        }
+
+        object++;
+
+        if (
+          pixels[offset + 1] > pixels[offset] + 16 &&
+          pixels[offset + 1] >= pixels[offset + 2]
+        ) {
+          green++;
+        }
+      }
+    }
+
+    if (object > 0 && green >= object * INTERIOR_PROP_GREEN) {
+      for (const cell of component) {
+        props[cell] = 1;
+      }
+    }
+  }
+
+  return props;
 }
 
 /**
@@ -1892,6 +3216,7 @@ function markNaturalCells(
 ): Uint8Array {
   const natural = new Uint8Array(width * height);
   const colorsBySource = new Map<number, Set<number>>();
+  const verdicts = new Map<number, boolean>();
 
   const groundColors = (source: number): Set<number> => {
     const cached = colorsBySource.get(source);
@@ -1936,7 +3261,8 @@ function markNaturalCells(
       }
 
       // Tile da cidade: predio (o teste de cor confundia a calcada cinza
-      // de Celadon com as paredes).
+      // de Celadon e os telhados verdes de Viridian com natureza). Cercas
+      // da cidade grudadas no predio saem em findBuildings (linhas finas).
       if (block.secondary) {
         continue;
       }
@@ -1945,6 +3271,20 @@ function markNaturalCells(
       const pixels = block.basePixels;
 
       if (source < 0 || !pixels) {
+        continue;
+      }
+
+      const key =
+        block.metatileId * 4096 +
+        (blockAt(source % width, Math.floor(source / width))?.metatileId ?? -1) + 1;
+
+      const known = verdicts.get(key);
+
+      if (known !== undefined) {
+        if (known) {
+          natural[index] = NATURE_BY_COLOR;
+        }
+
         continue;
       }
 
@@ -1974,6 +3314,8 @@ function markNaturalCells(
         }
       }
 
+      verdicts.set(key, matching >= border * NATURAL_BORDER_FRACTION);
+
       if (matching >= border * NATURAL_BORDER_FRACTION) {
         natural[index] = NATURE_BY_COLOR;
       }
@@ -2001,6 +3343,82 @@ function findBuildings(
   warps: ReadonlyArray<{ x: number; y: number }>,
 ): Int32Array {
   const ids = new Int32Array(width * height);
+
+  // Grupos de natureza pela cor (arvore, arbusto, cerca, caixa de correio)
+  // que estao SOLTOS: a maior parte da borda do grupo da para o chao. O
+  // teste por bloco falhava em arvores e arbustos de 2x2 colados no predio
+  // (o bloco do canto quase nao toca o chao) e em cercas que levam a uma
+  // arvore encostada na casa - o predio engolia a mata e a cerca.
+  const lone = new Uint8Array(width * height);
+
+  {
+    const visited = new Uint8Array(width * height);
+    const isColorNature = (x: number, y: number): boolean =>
+      x >= 0 &&
+      y >= 0 &&
+      x < width &&
+      y < height &&
+      isVolumeCell(mask[y * width + x]) &&
+      natural[y * width + x] === NATURE_BY_COLOR;
+
+    for (let start = 0; start < natural.length; start++) {
+      const sx = start % width;
+      const sy = (start - sx) / width;
+
+      if (visited[start] || !isColorNature(sx, sy)) {
+        continue;
+      }
+
+      const component: number[] = [];
+      const stack = [start];
+      let perimeter = 0;
+      let open = 0;
+      visited[start] = 1;
+
+      while (stack.length > 0) {
+        const cell = stack.pop() as number;
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        component.push(cell);
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+
+          if (isColorNature(nx, ny)) {
+            const next = ny * width + nx;
+
+            if (!visited[next]) {
+              visited[next] = 1;
+              stack.push(next);
+            }
+
+            continue;
+          }
+
+          perimeter++;
+
+          if (
+            nx < 0 ||
+            ny < 0 ||
+            nx >= width ||
+            ny >= height ||
+            mask[ny * width + nx] === 0
+          ) {
+            open++;
+          }
+        }
+      }
+
+      if (open * 2 >= perimeter) {
+        for (const cell of component) {
+          lone[cell] = 1;
+        }
+      }
+    }
+  }
+
   const candidate = (x: number, y: number): boolean =>
     x >= 0 &&
     y >= 0 &&
@@ -2008,27 +3426,10 @@ function findBuildings(
     y < height &&
     isVolumeCell(mask[y * width + x]) &&
     natural[y * width + x] !== NATURE_CERTAIN &&
-    // Natureza pela cor so fica de fora fora do tileset da cidade; o teste
-    // de cor erra em predios verdes (ginasio de Viridian), entao ele so
-    // separa objetos soltos que encostam no predio por um lado.
-    !(natural[y * width + x] === NATURE_BY_COLOR && isLoneObject(x, y));
-
-  // Objeto natural solto encostado no predio: tem chao andavel em pelo
-  // menos dois lados (arvore, caixa de correio ao lado da casa).
-  function isLoneObject(x: number, y: number): boolean {
-    let open = 0;
-
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx;
-      const ny = y + dy;
-
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height || mask[ny * width + nx] === 0) {
-        open++;
-      }
-    }
-
-    return open >= 2;
-  }
+    // Natureza pela cor so fica de fora quando o grupo dela esta solto ao
+    // lado do predio; o teste de cor erra em predios verdes (ginasio de
+    // Viridian), cujas paredes nao dao para o chao.
+    !(natural[y * width + x] === NATURE_BY_COLOR && lone[y * width + x] === 1);
 
   let nextId = 1;
 
@@ -2094,6 +3495,108 @@ function findBuildings(
       continue;
     }
 
+    const removed = new Set<number>();
+
+    // Linhas finas grudadas no predio (cerca, sebe, fileira de postes do
+    // tileset da cidade): bloco solido que nao esta em nenhum quadrado 2x2
+    // do predio. Linha de 3 ou mais sai do predio e vira objeto em pe.
+    {
+      const inside = (x: number, y: number): boolean =>
+        x >= 0 && y >= 0 && x < width && y < height && ids[y * width + x] === id;
+
+      const thick = (x: number, y: number): boolean => {
+        for (const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+          const left = x + ox;
+          const top = y + oy;
+
+          if (
+            inside(left, top) &&
+            inside(left + 1, top) &&
+            inside(left, top + 1) &&
+            inside(left + 1, top + 1)
+          ) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
+      const thin = new Set<number>();
+
+      for (const cell of cells) {
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        if (mask[cell] === FOLD_SOLID && !thick(x, y)) {
+          thin.add(cell);
+        }
+      }
+
+      const seen = new Set<number>();
+
+      for (const start of thin) {
+        if (seen.has(start)) {
+          continue;
+        }
+
+        const component: number[] = [];
+        const stack = [start];
+        seen.add(start);
+
+        while (stack.length > 0) {
+          const cell = stack.pop() as number;
+          const x = cell % width;
+          const y = (cell - x) / width;
+
+          component.push(cell);
+
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + dx;
+            const ny = y + dy;
+
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+              continue;
+            }
+
+            const next = ny * width + nx;
+
+            if (thin.has(next) && !seen.has(next)) {
+              seen.add(next);
+              stack.push(next);
+            }
+          }
+        }
+
+        if (component.length >= 3) {
+          for (const cell of component) {
+            ids[cell] = 0;
+            removed.add(cell);
+          }
+        }
+      }
+
+      // Retangulo do que sobrou do predio.
+      minX = width;
+      maxX = -1;
+      minY = height;
+      maxY = -1;
+
+      for (const cell of cells) {
+        if (ids[cell] !== id) {
+          continue;
+        }
+
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
     // Quinas: bloco com volume dentro do retangulo do predio que so foi
     // marcado como natureza pela cor (telhado arredondado do Centro
     // Pokemon do Emerald, com grama no canto) entra no predio.
@@ -2103,6 +3606,7 @@ function findBuildings(
 
         if (
           ids[cell] === 0 &&
+          !removed.has(cell) &&
           isVolumeCell(mask[cell]) &&
           natural[cell] === NATURE_BY_COLOR
         ) {

@@ -64,18 +64,47 @@ const LIVE_RECALIBRATE_DISTANCE =
 const LIVE_STILL_MS =
   120;
 
-// Predio transparente quando tapa o jogador: opacidade minima, duracao
-// do esmaecimento (ms) e quantos tiles atras da borda de cima do predio
-// o jogador ainda conta como escondido (o telhado sobe e cobre o chao
-// atras dele).
-const BUILDING_FADE_OPACITY =
-  0.4;
+// Raio-x: so a parte do jogador tapada por uma ESTRUTURA (predio,
+// montanha, parede de interior) aparece atraves dela, com esta opacidade.
+// Nada de predio inteiro transparente, longe ou na frente do jogador.
+const XRAY_OPACITY =
+  0.55;
 
-const BUILDING_FADE_MS =
-  160;
-
-const BUILDING_FADE_BEHIND =
+// Ordem de desenho. As estruturas vem DEPOIS dos sprites: onde passam no
+// teste de profundidade elas estao na frente do que ja foi desenhado e
+// marcam o stencil; o "fantasma" do jogador so aparece ali.
+const ORDER_PROPS =
   2;
+
+const ORDER_SPRITES =
+  3;
+
+const ORDER_STRUCTURES =
+  4;
+
+const ORDER_XRAY =
+  5;
+
+// Marca no stencil dos pixels em que uma estrutura e a superficie da
+// frente.
+const STRUCTURE_STENCIL =
+  1;
+
+// Fundo da cena: o vazio dos interiores no GBA e preto (cantos do Centro
+// Pokemon, fora das paredes); ao ar livre, o azul-escuro de antes.
+const OUTDOOR_BACKGROUND =
+  '#0b1220';
+
+const INTERIOR_BACKGROUND =
+  '#000000';
+
+// Tiles de flor animados do tileset geral (iguais no RSE e no FRLG): o
+// metatile que os usa na camada de cima e flor - vira objeto em pe.
+const FLOWER_FIRST_TILE =
+  508;
+
+const FLOWER_LAST_TILE =
+  511;
 
 // Abaixo disto a entidade e considerada parada (animacao de pe).
 const ENTITY_MOVING_EPSILON =
@@ -130,6 +159,9 @@ import {
 import {
   buildGroundGeometry,
   buildMapVolume,
+  buildPropGeometry,
+  mergeFoldGeometries,
+  type VolumeBlock,
   findGroundCell,
   markRocksInWater,
   type FoldGeometryData,
@@ -138,11 +170,20 @@ import {
 } from './VoxelFolding';
 
 import {
-  applyGroundSubstitution,
-  cutoutBackgrounds,
+  animationLayers,
+  composeMapTextures,
   cutoutTile,
+  modelRowOpaque,
+  RECIPE_BASE,
+  RECIPE_OVERLAY,
   tileColors,
+  type AnimationLayer,
+  type CellArt,
 } from './GroundSubstitution';
+
+import type {
+  AnimatedTarget,
+} from './TileAnimator';
 
 // Elevacao da agua na grade de colisao da Gen 3.
 const WATER_ELEVATION =
@@ -239,20 +280,6 @@ interface EntityMotion {
   previousZ: number;
 }
 
-interface BuildingVisual {
-  // Malhas do predio (camada de baixo e de cima).
-  meshes: THREE.Mesh[];
-
-  // Celulas do predio no mapa (inclusive) - em coordenadas locais.
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-
-  // 0 = opaco, 1 = totalmente no modo transparente.
-  fade: number;
-}
-
 interface MapVisual {
   baseMesh: THREE.Mesh;
   overlayMesh: THREE.Mesh;
@@ -280,14 +307,21 @@ interface MapVisual {
   height:
     number;
 
-  // Volume reconstruido (paredes e tetos), mesmas texturas do mapa.
+  // Volume reconstruido: estruturas 3D, objetos em pe e ledges.
   voxelGroup?:
     THREE.Group;
 
-  // Predios do volume, cada um com suas malhas: o que tapar o jogador
-  // fica transparente (ver updateBuildingFade).
-  buildings:
-    BuildingVisual[];
+  // Textura dos modelos (o que fica em pe), animada junto com o chao.
+  modelTexture?:
+    THREE.DataTexture;
+
+  // Malhas dos objetos em pe: esticadas na vertical como os sprites.
+  propMeshes:
+    THREE.Mesh[];
+
+  // Receitas do animador para chao, camada de cima do chao e modelos.
+  animation:
+    AnimationLayer[];
 
   mapDataAddress:
     number;
@@ -391,6 +425,17 @@ export class PlayerRenderer {
   private readonly entityVisuals =
     new Map<number, EntityVisual>();
 
+  // Copia do sprite do jogador desenhada so onde uma estrutura o tapa.
+  private playerXray:
+    THREE.Mesh | null = null;
+
+  // Cartoes de arvore do padding: esticados como os objetos em pe.
+  private readonly paddingCardMeshes:
+    THREE.Mesh[] = [];
+
+  private interiorBackground =
+    false;
+
   private playerVisual:
     EntityVisual | null = null;
 
@@ -479,7 +524,7 @@ export class PlayerRenderer {
 
     this.scene.background =
       new THREE.Color(
-        '#0b1220',
+        OUTDOOR_BACKGROUND,
       );
 
     this.camera =
@@ -565,6 +610,8 @@ export class PlayerRenderer {
       new THREE.WebGLRenderer({
         antialias: false,
         alpha: true,
+        // Raio-x do jogador atras das estruturas (ver ORDER_STRUCTURES).
+        stencil: true,
       });
 
     this.renderer.setPixelRatio(
@@ -1239,6 +1286,14 @@ export class PlayerRenderer {
       this.worldBorderMeshes.push(mesh);
       this.root.add(mesh);
 
+      // Borda elevada (arvores em cartoes): esticada como os sprites.
+      if (data.floor) {
+        mesh.position.y = 0;
+        mesh.renderOrder = ORDER_PROPS;
+        mesh.scale.y = this.getUprightSpriteScale();
+        this.paddingCardMeshes.push(mesh);
+      }
+
       // Chao debaixo das arvores da borda: o tile de chao do mapa (ou, sem
       // ele, a propria borda sem recorte - nunca fica buraco).
       if (data.floor) {
@@ -1362,9 +1417,11 @@ export class PlayerRenderer {
                 (destinationY * blockWidth +
                   tileX * GBA_METATILE_PIXELS + sourceX) * 4;
 
+              // Desenho completo (as duas camadas): nas bordas de mata do
+              // FRLG parte da arvore fica na camada de cima.
               for (let channel = 0; channel < 4; channel++) {
                 pixels[destinationOffset + channel] =
-                  graphics.basePixels[sourceOffset + channel];
+                  graphics.pixels[sourceOffset + channel];
               }
             }
           }
@@ -1450,6 +1507,7 @@ export class PlayerRenderer {
     }
 
     this.worldBorderMeshes.length = 0;
+    this.paddingCardMeshes.length = 0;
   }
 
   /**
@@ -1476,12 +1534,26 @@ export class PlayerRenderer {
       return;
     }
 
+    const textures = [
+      visual.baseTexture,
+      visual.overlayTexture,
+      visual.modelTexture,
+    ];
+
+    const targets: AnimatedTarget[] = [];
+
+    visual.animation.forEach((layer, index) => {
+      const texture = textures[index];
+
+      if (texture) {
+        targets.push({ texture, ...layer });
+      }
+    });
+
     this.tileAnimator.setActiveMap(
       mapKey,
       activeMap,
-      visual.metatileIds,
-      visual.baseTexture,
-      visual.overlayTexture,
+      targets,
     );
   }
 
@@ -1574,6 +1646,8 @@ export class PlayerRenderer {
       visual.mesh.quaternion.identity();
       visual.mesh.scale.set(1, upright, 1);
     }
+
+    this.updatePropScale(upright);
   }
 
   /**
@@ -1828,9 +1902,9 @@ export class PlayerRenderer {
           material,
         );
 
-      // Depois do mapa (0) e da camada de cima (2): a camada de cima e
-      // desenhada sem teste de profundidade e cobriria o sprite.
-      mesh.renderOrder = 3;
+      // Depois do chao e dos objetos em pe, antes das estruturas (ver
+      // ORDER_STRUCTURES e o raio-x).
+      mesh.renderOrder = ORDER_SPRITES;
 
       this.root.add(mesh);
 
@@ -2228,7 +2302,8 @@ export class PlayerRenderer {
     });
 
     visual.voxelGroup = undefined;
-    visual.buildings = [];
+    visual.modelTexture = undefined;
+    visual.propMeshes = [];
   }
 
   /**
@@ -2240,7 +2315,7 @@ export class PlayerRenderer {
     map: MapDefinition,
     blocks: readonly { metatileId: number; collision: number; elevation: number }[],
     graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
-  ): MapVolume {
+  ): { volume: MapVolume; blockAt: (x: number, y: number) => VolumeBlock | undefined } {
     const interior =
       map.mapType === INDOOR_MAP_TYPE ||
       map.mapType === SECRET_BASE_MAP_TYPE;
@@ -2281,6 +2356,48 @@ export class PlayerRenderer {
     const primaryCount =
       gameCode === 'BPR' || gameCode === 'BPG' ? 640 : 512;
 
+    // Camada de cima encostando na borda de baixo do tile: topo de objeto
+    // (copa, cumeeira, ponta do pinheiro) que continua no bloco de baixo.
+    const reachesBottom =
+      new Map<number, boolean>();
+
+    const topReachesBottom = (metatileId: number): boolean => {
+      const cached = reachesBottom.get(metatileId);
+
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      const pixels =
+        graphics.get(metatileId)?.topPixels;
+
+      let found = false;
+
+      if (pixels) {
+        const lastRow =
+          (GBA_METATILE_PIXELS - 1) * GBA_METATILE_PIXELS * 4;
+
+        for (let alpha = lastRow + 3; alpha < pixels.length; alpha += 4) {
+          if (pixels[alpha] > 127) {
+            found = true;
+            break;
+          }
+        }
+      }
+
+      reachesBottom.set(metatileId, found);
+
+      return found;
+    };
+
+    // Flores: camada de cima com os tiles animados de flor do tileset
+    // geral (508-511 no RSE e no FRLG).
+    const isFlower = (metatileId: number): boolean =>
+      metatileId < primaryCount &&
+      (graphics.get(metatileId)?.topTileIds ?? []).some(
+        (tileId) => tileId >= FLOWER_FIRST_TILE && tileId <= FLOWER_LAST_TILE,
+      );
+
     let warps: Array<{ x: number; y: number }> = [];
 
     try {
@@ -2290,27 +2407,32 @@ export class PlayerRenderer {
       console.warn('[voxel] warps ilegiveis; sem predios neste mapa:', error);
     }
 
+    const blockAt = (x: number, y: number): VolumeBlock | undefined => {
+      const block = blocks[y * map.width + x];
+
+      if (!block) {
+        return undefined;
+      }
+
+      const metatile = graphics.get(block.metatileId);
+
+      return {
+        ...block,
+        behavior: metatile?.behavior ?? 0,
+        hasForeground: hasForeground(block.metatileId),
+        topReachesBottom: metatile ? topReachesBottom(block.metatileId) : undefined,
+        flower: isFlower(block.metatileId),
+        basePixels: metatile?.basePixels,
+        pixels: metatile?.pixels,
+        secondary: block.metatileId >= primaryCount,
+      };
+    };
+
     const volume =
       buildMapVolume(
         map.width,
         map.height,
-        (x, y) => {
-          const block = blocks[y * map.width + x];
-
-          if (!block) {
-            return undefined;
-          }
-
-          const metatile = graphics.get(block.metatileId);
-
-          return {
-            ...block,
-            behavior: metatile?.behavior ?? 0,
-            hasForeground: hasForeground(block.metatileId),
-            basePixels: metatile?.basePixels,
-            secondary: block.metatileId >= primaryCount,
-          };
-        },
+        blockAt,
         warps,
         interior ? 'interior' : 'outdoor',
         VOXEL_MAX_WALL_ROWS,
@@ -2343,136 +2465,118 @@ export class PlayerRenderer {
       }
     }
 
-    return volume;
+    return { volume, blockAt };
   }
 
+  /**
+   * Malhas do volume, todas com a textura dos MODELOS:
+   *   - estruturas 3D (predios, montanhas, paredes): desenhadas depois dos
+   *     sprites e marcando o stencil onde ficam na frente - e la que o
+   *     jogador tapado aparece em raio-x;
+   *   - objetos 2D em pe (arvores, cercas, placas, grama alta, flores):
+   *     esticados na vertical como os sprites (propMeshes);
+   *   - ledges: faixa baixa, sem esticar.
+   */
   private buildVoxelGroup(
     volume: MapVolume,
-    baseTexture: THREE.DataTexture,
-    overlayTexture: THREE.DataTexture,
-  ): { group: THREE.Group; buildings: BuildingVisual[] } | undefined {
+    propGeometry: FoldGeometryData,
+    modelTexture: THREE.DataTexture,
+  ): { group: THREE.Group; propMeshes: THREE.Mesh[] } | undefined {
     const group =
       new THREE.Group();
 
-    const natural =
-      this.createFoldMeshes(volume.natural, baseTexture, overlayTexture);
+    const structures =
+      this.createFoldMesh(volume.structures, modelTexture, ORDER_STRUCTURES, true);
+
+    const props =
+      this.createFoldMesh(propGeometry, modelTexture, ORDER_PROPS, false);
 
     const details =
-      this.createFoldMeshes(volume.details, baseTexture, overlayTexture);
+      this.createFoldMesh(volume.details, modelTexture, ORDER_PROPS, false);
 
-    for (const mesh of [...natural, ...details]) {
-      group.add(mesh);
-    }
-
-    const buildings: BuildingVisual[] = [];
-
-    for (const building of volume.buildings) {
-      const meshes =
-        this.createFoldMeshes(building.geometry, baseTexture, overlayTexture);
-
-      if (meshes.length === 0) {
-        continue;
-      }
-
-      for (const mesh of meshes) {
+    for (const mesh of [structures, props, details]) {
+      if (mesh) {
         group.add(mesh);
       }
-
-      buildings.push({
-        meshes,
-        x0: building.x0,
-        y0: building.y0,
-        x1: building.x1,
-        y1: building.y1,
-        fade: 0,
-      });
     }
 
     if (group.children.length === 0) {
       return undefined;
     }
 
-    // Texturas dos modelos: liberadas junto com o grupo.
-    group.userData.textures = [baseTexture, overlayTexture];
+    // Textura dos modelos: liberada junto com o grupo.
+    group.userData.textures = [modelTexture];
 
-    return { group, buildings };
+    return {
+      group,
+      propMeshes: props ? [props] : [],
+    };
   }
 
-  /**
-   * Malhas de um pedaco de volume: camada de baixo (so os quads de duas
-   * camadas) e camada de cima (todos), sobre os MESMOS atributos.
-   */
-  private createFoldMeshes(
+  /** Uma malha de volume sobre a textura dos modelos. */
+  private createFoldMesh(
     data: FoldGeometryData,
-    baseTexture: THREE.DataTexture,
-    overlayTexture: THREE.DataTexture,
-  ): THREE.Mesh[] {
+    texture: THREE.DataTexture,
+    renderOrder: number,
+    structure: boolean,
+  ): THREE.Mesh | null {
     if (data.quadCount === 0) {
-      return [];
+      return null;
     }
 
-    const position =
-      new THREE.BufferAttribute(data.positions, 3);
+    const geometry =
+      new THREE.BufferGeometry();
 
-    const uv =
-      new THREE.BufferAttribute(data.uvs, 2);
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(data.positions, 3),
+    );
+
+    geometry.setAttribute(
+      'uv',
+      new THREE.BufferAttribute(data.uvs, 2),
+    );
 
     // Sombreamento por face (topo claro, laterais mais escuras).
-    const color =
-      new THREE.BufferAttribute(shadeToLinear(data.colors), 3);
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(shadeToLinear(data.colors), 3),
+    );
 
-    const index =
-      new THREE.BufferAttribute(data.indices, 1);
+    geometry.setIndex(
+      new THREE.BufferAttribute(data.indices, 1),
+    );
 
-    const baseGeometry =
-      new THREE.BufferGeometry();
+    const material =
+      new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        alphaTest: 0.5,
+        side: THREE.DoubleSide,
+        vertexColors: true,
+      });
 
-    const overlayGeometry =
-      new THREE.BufferGeometry();
-
-    for (const geometry of [baseGeometry, overlayGeometry]) {
-      geometry.setAttribute('position', position);
-      geometry.setAttribute('uv', uv);
-      geometry.setAttribute('color', color);
-      geometry.setIndex(index);
+    if (structure) {
+      // Pixel em que a estrutura passa no teste de profundidade = ela e a
+      // superficie da frente ali (foi desenhada depois de chao, objetos e
+      // sprites). O raio-x do jogador so aparece nesses pixels.
+      material.stencilWrite = true;
+      material.stencilRef = STRUCTURE_STENCIL;
+      material.stencilFunc = THREE.AlwaysStencilFunc;
+      material.stencilFail = THREE.KeepStencilOp;
+      material.stencilZFail = THREE.KeepStencilOp;
+      material.stencilZPass = THREE.ReplaceStencilOp;
     }
 
-    baseGeometry.setDrawRange(0, data.fullIndexCount);
-
-    const base =
+    const mesh =
       new THREE.Mesh(
-        baseGeometry,
-        new THREE.MeshBasicMaterial({
-          map: baseTexture,
-          transparent: true,
-          alphaTest: 0.5,
-          side: THREE.DoubleSide,
-          vertexColors: true,
-        }),
+        geometry,
+        material,
       );
 
-    // Depois do chao, antes da camada de cima e dos sprites.
-    base.renderOrder = 1;
+    mesh.renderOrder = renderOrder;
 
-    const overlay =
-      new THREE.Mesh(
-        overlayGeometry,
-        new THREE.MeshBasicMaterial({
-          map: overlayTexture,
-          transparent: true,
-          alphaTest: 0.5,
-          side: THREE.DoubleSide,
-          vertexColors: true,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          polygonOffsetUnits: -4,
-        }),
-      );
-
-    overlay.renderOrder = 2;
-
-    return [base, overlay];
+    return mesh;
   }
 
   private buildMapVisual(
@@ -2540,178 +2644,22 @@ export class PlayerRenderer {
       map.height *
       GBA_METATILE_PIXELS;
 
-    const pixels =
-      new Uint8ClampedArray(
-        textureWidth *
-        textureHeight *
-        4,
-      );
+    const data =
+      renderData;
 
-    const foregroundPixels =
-      new Uint8ClampedArray(
-        pixels.length,
-      );
-
-    const drawPixels = (
-      destination:
-        Uint8ClampedArray,
-      graphics:
-        Gen3MetatileGraphics,
-      sourceY: number,
-      sourceX: number,
-      destinationX: number,
-      destinationY: number,
-    ): void => {
-      const sourceOffset =
-        (
-          sourceY *
-            GBA_METATILE_PIXELS +
-          sourceX
-        ) * 4;
-
-      const destinationOffset =
-        (
-          destinationY *
-            textureWidth +
-          destinationX
-        ) * 4;
-
-      destination[
-        destinationOffset
-      ] =
-        graphics.basePixels[
-          sourceOffset
-        ];
-
-      destination[
-        destinationOffset + 1
-      ] =
-        graphics.basePixels[
-          sourceOffset + 1
-        ];
-
-      destination[
-        destinationOffset + 2
-      ] =
-        graphics.basePixels[
-          sourceOffset + 2
-        ];
-
-      destination[
-        destinationOffset + 3
-      ] =
-        graphics.basePixels[
-          sourceOffset + 3
-        ];
-
-      foregroundPixels[
-        destinationOffset
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset
-        ];
-
-      foregroundPixels[
-        destinationOffset + 1
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 1
-        ];
-
-      foregroundPixels[
-        destinationOffset + 2
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 2
-        ];
-
-      foregroundPixels[
-        destinationOffset + 3
-      ] =
-        graphics.foregroundPixels[
-          sourceOffset + 3
-        ];
-    };
-
-    for (
-      let y = 0;
-      y < map.height;
-      y++
-    ) {
-      for (
-        let x = 0;
-        x < map.width;
-        x++
-      ) {
-        const block =
-          renderData.blocks[
-            y * map.width + x
-          ];
-
-        if (!block) {
-          continue;
-        }
-
-        const graphics =
-          renderData.graphics.get(
-            block.metatileId,
-          );
-
-        if (!graphics) {
-          continue;
-        }
-
-        for (
-          let sourceY = 0;
-          sourceY <
-            GBA_METATILE_PIXELS;
-          sourceY++
-        ) {
-          const destinationY =
-            (
-              map.height -
-              1 -
-              y
-            ) *
-              GBA_METATILE_PIXELS +
-            GBA_METATILE_PIXELS -
-            1 -
-            sourceY;
-
-          for (
-            let sourceX = 0;
-            sourceX <
-              GBA_METATILE_PIXELS;
-            sourceX++
-          ) {
-            const destinationX =
-              x *
-                GBA_METATILE_PIXELS +
-              sourceX;
-
-            drawPixels(
-              pixels,
-              graphics,
-              sourceY,
-              sourceX,
-              destinationX,
-              destinationY,
-            );
-          }
-        }
-      }
-    }
-
-    // Volume e troca do chao debaixo dele (ver GroundSubstitution): o
-    // chao recebe o tile de chao mais proximo; os modelos ficam com o
-    // desenho original, com o fundo dos objetos naturais recortado.
-    const volume =
+    // Volume (ver VoxelFolding): o que cada bloco vira - estrutura 3D,
+    // objeto em pe, ledge, grama alta, flor ou chao. Calculado ANTES das
+    // texturas: chao e modelos sao compostos a partir dele.
+    const computed =
       VOXEL_FOLDING
-        ? this.computeVolume(map, renderData.blocks, renderData.graphics)
+        ? this.computeVolume(map, data.blocks, data.graphics)
         : undefined;
 
-    let groundPixels = pixels;
-    let groundForeground = foregroundPixels;
+    const volume =
+      computed?.volume;
+
+    const volumeBlockAt =
+      computed?.blockAt;
 
     // Tile de chao do mapa (o passavel mais comum longe do volume): vai no
     // chao do padding, debaixo das arvores de borda recortadas.
@@ -2723,60 +2671,80 @@ export class PlayerRenderer {
           map.width,
           map.height,
           volume.mask,
-          (x, y) => renderData?.blocks[y * map.width + x],
+          (x, y) => data.blocks[y * map.width + x],
         );
 
       if (cell) {
-        const id = renderData.blocks[cell.y * map.width + cell.x]?.metatileId;
-        groundTile = id === undefined ? undefined : renderData.graphics.get(id)?.basePixels;
+        const id = data.blocks[cell.y * map.width + cell.x]?.metatileId;
+        groundTile = id === undefined ? undefined : data.graphics.get(id)?.basePixels;
       }
     }
 
     this.buildBorderTexture(
       this.createMapKey(map.mapGroup, map.mapNumber),
       map,
-      renderData.graphics,
+      data.graphics,
       groundTile,
     );
 
-    if (volume) {
+    const artAt = (x: number, y: number): CellArt | undefined => {
+      const block =
+        data.blocks[y * map.width + x];
 
-      const sources =
-        volume.groundSources;
+      const graphics =
+        block ? data.graphics.get(block.metatileId) : undefined;
 
-      groundPixels = pixels.slice();
-      groundForeground = foregroundPixels.slice();
+      return graphics
+        ? {
+            base: graphics.basePixels,
+            foreground: graphics.foregroundPixels,
+            bottom: graphics.bottomPixels,
+            top: graphics.topPixels,
+            merged: graphics.pixels,
+          }
+        : undefined;
+    };
 
-      applyGroundSubstitution(
+    // Sem volume: tudo e chao (o desenho original, plano).
+    const kinds =
+      volume?.kinds ?? new Uint8Array(map.width * map.height);
+
+    const sources =
+      volume?.groundSources ?? new Int32Array(map.width * map.height).fill(-1);
+
+    const composed =
+      composeMapTextures(
         map.width,
         map.height,
+        kinds,
         sources,
-        groundPixels,
-        groundForeground,
+        artAt,
       );
 
-      if (map.mapType !== INDOOR_MAP_TYPE && map.mapType !== SECRET_BASE_MAP_TYPE) {
-        cutoutBackgrounds(
-          map.width,
-          map.height,
-          sources,
-          (x, y) => volume.buildingIds[y * map.width + x] === 0,
-          pixels,
-          pixels,
-        );
-      }
-    }
+    const layers =
+      animationLayers(
+        map.width,
+        map.height,
+        kinds,
+        sources,
+        (index) => data.blocks[index]?.metatileId ?? -1,
+      );
+
+    let animation: AnimationLayer[] =
+      volume
+        ? [layers.groundBase, layers.groundOverlay, layers.model]
+        : [layers.groundBase, layers.groundOverlay];
 
     const baseTexture =
       this.createMapTexture(
-        groundPixels,
+        composed.groundBase,
         textureWidth,
         textureHeight,
       );
 
     const overlayTexture =
       this.createMapTexture(
-        groundForeground,
+        composed.groundOverlay,
         textureWidth,
         textureHeight,
       );
@@ -3029,14 +2997,38 @@ export class PlayerRenderer {
         renderData.blocks[index]?.metatileId ?? 0;
     }
 
-    const voxel =
+    let modelTexture =
       volume
-        ? this.buildVoxelGroup(
-            volume,
-            this.createMapTexture(pixels, textureWidth, textureHeight),
-            this.createMapTexture(foregroundPixels, textureWidth, textureHeight),
+        ? this.createMapTexture(composed.model, textureWidth, textureHeight)
+        : undefined;
+
+    // Objetos em pe: os cortes das matas saem da textura dos modelos (onde
+    // cada copa comeca no desenho).
+    const propGeometry =
+      volume
+        ? buildPropGeometry(
+            map.width,
+            map.height,
+            volume.kinds,
+            (x, y) => volumeBlockAt?.(x, y),
+            modelRowOpaque(composed.model, map.width, map.height),
           )
         : undefined;
+
+    const voxel =
+      volume && modelTexture
+        ? this.buildVoxelGroup(
+            volume,
+            propGeometry ?? mergeFoldGeometries([]),
+            modelTexture,
+          )
+        : undefined;
+
+    if (!voxel && modelTexture) {
+      modelTexture.dispose();
+      modelTexture = undefined;
+      animation = animation.slice(0, 2);
+    }
 
     const voxelGroup =
       voxel?.group;
@@ -3067,8 +3059,10 @@ export class PlayerRenderer {
         height:
           map.height,
         voxelGroup,
-        buildings:
-          voxel?.buildings ?? [],
+        modelTexture,
+        propMeshes:
+          voxel?.propMeshes ?? [],
+        animation,
         mapDataAddress:
           map.mapDataAddress,
       };
@@ -3249,71 +3243,111 @@ export class PlayerRenderer {
 
 
   /**
-   * Predio que tapa o jogador fica transparente, como no Faithful: o
-   * jogador atras (ao norte) de uma casa continua visivel atraves dela.
-   * O predio transparente e desenhado depois dos sprites, sem escrever
-   * profundidade, para o jogador aparecer misturado por tras dele.
+   * Fundo da cena: preto fora de interiores e cavernas (o vazio do GBA,
+   * onde os cantos pretos do desenho do Centro Pokemon se misturam), o
+   * azul-escuro de antes ao ar livre.
    */
-  private updateBuildingFade(
-    player: { x: number; z: number },
+  private updateBackground(
+    state: GameState,
   ): void {
-    const step =
-      this.frameDeltaMs / BUILDING_FADE_MS;
+    const map =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      );
 
-    for (const visual of this.mapVisuals.values()) {
-      if (!visual.voxelGroup || visual.buildings.length === 0) {
-        continue;
-      }
+    const interior =
+      !!map && !OUTDOOR_MAP_TYPES.has(map.mapType);
 
-      const originX = visual.voxelGroup.position.x;
-      const originZ = visual.voxelGroup.position.z;
+    if (interior === this.interiorBackground) {
+      return;
+    }
 
-      for (const building of visual.buildings) {
-        const hides =
-          visual.voxelGroup.visible &&
-          player.x > originX + building.x0 - 0.3 &&
-          player.x < originX + building.x1 + 1.3 &&
-          player.z > originZ + building.y0 - BUILDING_FADE_BEHIND &&
-          // Atras da fachada: na linha da porta (a de baixo) o jogador
-          // esta na frente do predio, entrando.
-          player.z < originZ + building.y1;
+    this.interiorBackground = interior;
 
-        const target = hides ? 1 : 0;
+    (this.scene.background as THREE.Color).set(
+      interior ? INTERIOR_BACKGROUND : OUTDOOR_BACKGROUND,
+    );
+  }
 
-        if (building.fade === target) {
-          continue;
-        }
+  /**
+   * Raio-x: o jogador escondido atras de uma estrutura (predio, montanha,
+   * parede) aparece atraves dela SO na parte tapada. Uma copia do sprite e
+   * desenhada por ultimo, onde ha algo na frente dele (profundidade maior
+   * que a gravada) e esse algo e uma estrutura (stencil). Arvores, cercas
+   * e grama tapam o jogador como no GBA.
+   */
+  private updatePlayerXray(): void {
+    const visual =
+      this.playerVisual;
 
-        building.fade =
-          target > building.fade
-            ? Math.min(target, building.fade + Math.max(step, 0.05))
-            : Math.max(target, building.fade - Math.max(step, 0.05));
+    if (!visual) {
+      return;
+    }
 
-        const faded =
-          building.fade > 0;
+    const material =
+      visual.mesh.material as THREE.MeshBasicMaterial;
 
-        building.meshes.forEach((mesh, layer) => {
-          const material =
-            mesh.material as THREE.MeshBasicMaterial;
-
-          material.opacity =
-            1 - (1 - BUILDING_FADE_OPACITY) * building.fade;
-
-          // Com opacidade baixa o alphaTest normal (0.5) cortaria tudo.
-          material.alphaTest =
-            faded ? 0.02 : 0.5;
-
-          // Camada de baixo volta a escrever profundidade quando opaca.
-          if (layer === 0) {
-            material.depthWrite = !faded;
-          }
-
-          mesh.renderOrder =
-            faded ? 4 + layer : 1 + layer;
-
-          material.needsUpdate = true;
+    if (!this.playerXray) {
+      const xrayMaterial =
+        new THREE.MeshBasicMaterial({
+          map: material.map,
+          transparent: true,
+          opacity: XRAY_OPACITY,
+          // Alfa final = alfa do texel x opacidade: 0 ou XRAY_OPACITY.
+          alphaTest: XRAY_OPACITY / 2,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          depthFunc: THREE.GreaterDepth,
         });
+
+      xrayMaterial.stencilWrite = true;
+      xrayMaterial.stencilRef = STRUCTURE_STENCIL;
+      xrayMaterial.stencilFunc = THREE.EqualStencilFunc;
+      xrayMaterial.stencilFail = THREE.KeepStencilOp;
+      xrayMaterial.stencilZFail = THREE.KeepStencilOp;
+      xrayMaterial.stencilZPass = THREE.KeepStencilOp;
+
+      this.playerXray =
+        new THREE.Mesh(
+          visual.mesh.geometry,
+          xrayMaterial,
+        );
+
+      this.playerXray.renderOrder = ORDER_XRAY;
+    }
+
+    const xray =
+      this.playerXray;
+
+    // Filho do sprite: mesma posicao e mesma escala vertical.
+    if (xray.parent !== visual.mesh) {
+      xray.removeFromParent();
+      visual.mesh.add(xray);
+    }
+
+    xray.geometry = visual.mesh.geometry;
+
+    const xrayMaterial =
+      xray.material as THREE.MeshBasicMaterial;
+
+    if (xrayMaterial.map !== material.map) {
+      xrayMaterial.map = material.map;
+    }
+  }
+
+  /** Objetos em pe e arvores do padding: a mesma escala dos sprites. */
+  private updatePropScale(
+    upright: number,
+  ): void {
+    for (const visual of this.mapVisuals.values()) {
+      for (const mesh of visual.propMeshes) {
+        mesh.scale.y = upright;
       }
+    }
+
+    for (const mesh of this.paddingCardMeshes) {
+      mesh.scale.y = upright;
     }
   }
 
@@ -3561,12 +3595,14 @@ export class PlayerRenderer {
           state,
         );
 
+      this.updatePlayerXray();
+
       this.updateCamera(
         playerPosition,
       );
 
-      this.updateBuildingFade(
-        playerPosition,
+      this.updateBackground(
+        state,
       );
 
       this.updateDebug(
@@ -3647,6 +3683,12 @@ export class PlayerRenderer {
 
     this.entityVisuals.clear();
     this.playerVisual = null;
+
+    if (this.playerXray) {
+      this.playerXray.removeFromParent();
+      (this.playerXray.material as THREE.Material).dispose();
+      this.playerXray = null;
+    }
 
     for (const texture of this.spriteTextures.values()) {
       texture.dispose();

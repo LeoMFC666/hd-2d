@@ -318,3 +318,552 @@ export function cutoutTile(
     }
   }
 }
+
+// ------------------------------------------------------------------------
+// Composicao das texturas do mapa por tipo de bloco (ver VoxelFolding,
+// CELL_*). Tres texturas, todas no layout do mapa (16x16 por bloco, de
+// baixo para cima):
+//
+//   CHAO (base e camada de cima): o que fica deitado. Bloco coberto por
+//     modelo recebe o chao do bloco de origem; bloco cujo objeto e so a
+//     camada de cima (topo de arvore, flor) fica so com a camada de baixo.
+//   MODELOS: o que fica em pe. Estruturas com o desenho inteiro; objetos
+//     com o fundo recortado; topos e flores so com a camada de cima.
+//
+// O animador de tiles recompoe as mesmas receitas (RECIPE_*) quando a VRAM
+// muda: agua, flores e animacoes de cidade continuam valendo.
+// ------------------------------------------------------------------------
+
+// Mesmos valores de VoxelFolding (CELL_*); repetidos aqui para o modulo
+// nao depender dele.
+const KIND_GROUND = 0;
+const KIND_STRUCTURE = 1;
+const KIND_STRUCTURE_TOP = 2;
+const KIND_PROP = 3;
+const KIND_PROP_TOP = 4;
+const KIND_LEDGE = 5;
+const KIND_GRASS = 6;
+const KIND_FLOWER = 7;
+
+/** Como recompor um bloco numa textura (TileAnimator). */
+export const RECIPE_NONE = 0;
+// Como o adapter monta a base: fundo (NORMAL) + baixo + cima (COVERED).
+export const RECIPE_BASE = 1;
+// Camada de cima de NORMAL/SPLIT (overlay do chao).
+export const RECIPE_OVERLAY = 2;
+// Fundo (NORMAL) + baixo.
+export const RECIPE_BOTTOM = 3;
+// So a camada de cima.
+export const RECIPE_TOP = 4;
+// Fundo (NORMAL) + baixo + cima, qualquer layerType.
+export const RECIPE_MERGED = 5;
+// Camada de cima sem o fundo: recorte a partir da borda dos pixels iguais
+// aos da camada de baixo (flor animada sobre a grama).
+export const RECIPE_TOP_CUT = 6;
+
+export interface CellArt {
+  // 16x16 RGBA, linha de cima primeiro (como o adapter).
+  base: Uint8ClampedArray;
+  foreground: Uint8ClampedArray;
+  bottom: Uint8ClampedArray;
+  top: Uint8ClampedArray;
+  merged: Uint8ClampedArray;
+}
+
+export interface ComposedTextures {
+  groundBase: Uint8ClampedArray;
+  groundOverlay: Uint8ClampedArray;
+  model: Uint8ClampedArray;
+}
+
+const CELL_BYTES = TILE * TILE * 4;
+
+function writeCell(
+  target: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  cell: Uint8ClampedArray | Uint8Array,
+): void {
+  const textureWidth = width * TILE;
+  const rowBytes = TILE * 4;
+
+  for (let py = 0; py < TILE; py++) {
+    const row = (height - 1 - y) * TILE + (TILE - 1 - py);
+    let to = (row * textureWidth + x * TILE) * 4;
+    let from = py * rowBytes;
+
+    for (let i = 0; i < rowBytes; i++) {
+      target[to++] = cell[from++];
+    }
+  }
+}
+
+function readCell(
+  source: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  out: Uint8ClampedArray,
+): void {
+  const textureWidth = width * TILE;
+  const rowBytes = TILE * 4;
+
+  for (let py = 0; py < TILE; py++) {
+    const row = (height - 1 - y) * TILE + (TILE - 1 - py);
+    const start = (row * textureWidth + x * TILE) * 4;
+
+    out.set(source.subarray(start, start + rowBytes), py * rowBytes);
+  }
+}
+
+/**
+ * Apaga (alfa 0), a partir da borda de um bloco 16x16 RGBA (linha de cima
+ * primeiro), os pixels de fundo conectados a ela. O contorno do desenho
+ * segura o preenchimento: o objeto fica inteiro.
+ */
+export function floodCutout(
+  cell: Uint8ClampedArray | Uint8Array,
+  isBackground: (offset: number) => boolean,
+): void {
+  const visited = new Uint8Array(TILE * TILE);
+  const stack: number[] = [];
+
+  const consider = (px: number, py: number): void => {
+    const key = py * TILE + px;
+
+    if (visited[key]) {
+      return;
+    }
+
+    visited[key] = 1;
+
+    const offset = key * 4;
+
+    if (cell[offset + 3] >= 128 && isBackground(offset)) {
+      stack.push(key);
+    }
+  };
+
+  for (let i = 0; i < TILE; i++) {
+    consider(i, 0);
+    consider(i, TILE - 1);
+    consider(0, i);
+    consider(TILE - 1, i);
+  }
+
+  while (stack.length > 0) {
+    const key = stack.pop() as number;
+    const px = key % TILE;
+    const py = (key - px) / TILE;
+
+    cell[key * 4 + 3] = 0;
+
+    if (px > 0) consider(px - 1, py);
+    if (px < TILE - 1) consider(px + 1, py);
+    if (py > 0) consider(px, py - 1);
+    if (py < TILE - 1) consider(px, py + 1);
+  }
+}
+
+/** Recorte da camada de cima: fundo = pixel igual ao da camada de baixo. */
+export function cutTopAgainstBottom(
+  top: Uint8ClampedArray | Uint8Array,
+  bottom: Uint8ClampedArray | Uint8Array,
+): void {
+  floodCutout(top, (offset) =>
+    bottom[offset + 3] >= 128 &&
+    top[offset] === bottom[offset] &&
+    top[offset + 1] === bottom[offset + 1] &&
+    top[offset + 2] === bottom[offset + 2],
+  );
+}
+
+/**
+ * Monta CHAO e MODELOS a partir do tipo de cada bloco (VoxelFolding.kinds)
+ * e do chao de origem dos blocos cobertos (MapVolume.groundSources).
+ */
+export function composeMapTextures(
+  width: number,
+  height: number,
+  kinds: Uint8Array,
+  sources: Int32Array,
+  artAt: (x: number, y: number) => CellArt | undefined,
+): ComposedTextures {
+  const size = width * TILE * height * TILE * 4;
+  const groundBase = new Uint8ClampedArray(size);
+  const groundOverlay = new Uint8ClampedArray(size);
+  const model = new Uint8ClampedArray(size);
+  const scratch = new Uint8ClampedArray(CELL_BYTES);
+
+  // 1) Chao dos blocos que nao estao cobertos.
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const kind = kinds[y * width + x];
+      const art = artAt(x, y);
+
+      if (!art) {
+        continue;
+      }
+
+      if (kind === KIND_GROUND) {
+        writeCell(groundBase, width, height, x, y, art.base);
+        writeCell(groundOverlay, width, height, x, y, art.foreground);
+      } else if (
+        kind === KIND_STRUCTURE_TOP ||
+        kind === KIND_PROP_TOP ||
+        kind === KIND_FLOWER
+      ) {
+        writeCell(groundBase, width, height, x, y, art.bottom);
+      }
+    }
+  }
+
+  // 2) Chao dos cobertos: copia o do bloco de origem (ja composto).
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const kind = kinds[index];
+
+      if (
+        kind !== KIND_STRUCTURE &&
+        kind !== KIND_PROP &&
+        kind !== KIND_LEDGE &&
+        kind !== KIND_GRASS
+      ) {
+        continue;
+      }
+
+      const from = sources[index];
+
+      if (from < 0) {
+        const art = artAt(x, y);
+
+        if (art) {
+          writeCell(groundBase, width, height, x, y, art.base);
+          writeCell(groundOverlay, width, height, x, y, art.foreground);
+        }
+
+        continue;
+      }
+
+      const fromX = from % width;
+      const fromY = (from - fromX) / width;
+
+      readCell(groundBase, width, height, fromX, fromY, scratch);
+      writeCell(groundBase, width, height, x, y, scratch);
+      readCell(groundOverlay, width, height, fromX, fromY, scratch);
+      writeCell(groundOverlay, width, height, x, y, scratch);
+    }
+  }
+
+  // 3) Modelos.
+  const colorsBySource = new Map<number, Set<number>>();
+
+  const groundColors = (source: number): Set<number> => {
+    const cached = colorsBySource.get(source);
+
+    if (cached) {
+      return cached;
+    }
+
+    const colors = new Set<number>();
+    const sourceX = source % width;
+    const sourceY = (source - sourceX) / width;
+    const cell = new Uint8ClampedArray(CELL_BYTES);
+
+    readCell(groundBase, width, height, sourceX, sourceY, cell);
+
+    for (let offset = 0; offset < cell.length; offset += 4) {
+      if (cell[offset + 3] >= 128) {
+        colors.add((cell[offset] << 16) | (cell[offset + 1] << 8) | cell[offset + 2]);
+      }
+    }
+
+    colorsBySource.set(source, colors);
+
+    return colors;
+  };
+
+  // Matiz do chao de origem (cor mais comum), quando e grama azulada -
+  // a grama da Gen 3. -1 para outros chaos (areia, piso): ai so as cores
+  // exatas do chao contam como fundo.
+  const hueBySource = new Map<number, number>();
+
+  const groundHue = (source: number): number => {
+    const cached = hueBySource.get(source);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const sourceX = source % width;
+    const sourceY = (source - sourceX) / width;
+    const cell = new Uint8ClampedArray(CELL_BYTES);
+    const counts = new Map<number, number>();
+
+    readCell(groundBase, width, height, sourceX, sourceY, cell);
+
+    for (let offset = 0; offset < cell.length; offset += 4) {
+      if (cell[offset + 3] >= 128) {
+        const key = (cell[offset] << 16) | (cell[offset + 1] << 8) | cell[offset + 2];
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+
+    let best = -1;
+    let bestCount = 0;
+
+    for (const [key, count] of counts) {
+      if (count > bestCount) {
+        best = key;
+        bestCount = count;
+      }
+    }
+
+    let hue = -1;
+
+    if (best >= 0) {
+      const [h, saturation] = hueOf((best >> 16) & 255, (best >> 8) & 255, best & 255);
+
+      if (saturation >= SHADOW_MIN_SATURATION && h >= TEAL_HUE_MIN && h <= TEAL_HUE_MAX) {
+        hue = h;
+      }
+    }
+
+    hueBySource.set(source, hue);
+
+    return hue;
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const kind = kinds[index];
+      const art = artAt(x, y);
+
+      if (!art || kind === KIND_GROUND) {
+        continue;
+      }
+
+      if (kind === KIND_STRUCTURE) {
+        writeCell(model, width, height, x, y, art.merged);
+        continue;
+      }
+
+      if (kind === KIND_STRUCTURE_TOP) {
+        writeCell(model, width, height, x, y, art.top);
+        continue;
+      }
+
+      if (kind === KIND_PROP_TOP || kind === KIND_FLOWER) {
+        scratch.set(art.top);
+        cutTopAgainstBottom(scratch, art.bottom);
+        writeCell(model, width, height, x, y, scratch);
+        continue;
+      }
+
+      // Objeto, grama alta, ledge: desenho inteiro sem o fundo de chao.
+      scratch.set(art.merged);
+
+      const source = sources[index];
+
+      if (source >= 0) {
+        const colors = groundColors(source);
+
+        // Arvores e cercas: a sombra no chao (tom de grama mais escuro,
+        // que nao existe no tile de grama) tambem e fundo. Na grama alta
+        // esse tom e o das folhas e fica.
+        const shadowHue =
+          kind === KIND_PROP ? groundHue(source) : -1;
+
+        floodCutout(scratch, (offset) =>
+          colors.has(
+            (scratch[offset] << 16) | (scratch[offset + 1] << 8) | scratch[offset + 2],
+          ) ||
+          (shadowHue >= 0 &&
+            isShadowOf(scratch[offset], scratch[offset + 1], scratch[offset + 2], shadowHue)),
+        );
+      }
+
+      writeCell(model, width, height, x, y, scratch);
+    }
+  }
+
+  return { groundBase, groundOverlay, model };
+}
+
+// Grama da Gen 3 (RSE e FRLG): verde-azulada. A sombra das arvores no
+// chao e um tom mais escuro dessa mesma grama; copas sao verde-amareladas.
+const TEAL_HUE_MIN = 135;
+const TEAL_HUE_MAX = 200;
+const SHADOW_HUE_TOLERANCE = 20;
+const SHADOW_MIN_SATURATION = 0.25;
+
+/** Matiz (graus) e saturacao (0..1) de uma cor. */
+function hueOf(red: number, green: number, blue: number): [number, number] {
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+
+  if (delta === 0 || max === 0) {
+    return [0, 0];
+  }
+
+  let hue: number;
+
+  if (max === red) {
+    hue = 60 * (((green - blue) / delta) % 6);
+  } else if (max === green) {
+    hue = 60 * ((blue - red) / delta + 2);
+  } else {
+    hue = 60 * ((red - green) / delta + 4);
+  }
+
+  if (hue < 0) {
+    hue += 360;
+  }
+
+  return [hue, delta / max];
+}
+
+function isShadowOf(red: number, green: number, blue: number, groundHue: number): boolean {
+  const [hue, saturation] = hueOf(red, green, blue);
+
+  return (
+    saturation >= SHADOW_MIN_SATURATION &&
+    Math.abs(hue - groundHue) <= SHADOW_HUE_TOLERANCE
+  );
+}
+
+export interface AnimationLayer {
+  // Metatile a recompor em cada bloco (-1 = nenhum) e como (RECIPE_*).
+  metatileIds: Int32Array;
+  recipes: Uint8Array;
+}
+
+/**
+ * Receitas do animador para as tres texturas de composeMapTextures. Bloco
+ * coberto anima como o bloco de origem do chao (e o desenho dele que esta
+ * la); objetos recortados ficam parados (o recorte e feito uma vez).
+ */
+export function animationLayers(
+  width: number,
+  height: number,
+  kinds: Uint8Array,
+  sources: Int32Array,
+  metatileAt: (index: number) => number,
+): { groundBase: AnimationLayer; groundOverlay: AnimationLayer; model: AnimationLayer } {
+  const count = width * height;
+
+  const make = (): AnimationLayer => ({
+    metatileIds: new Int32Array(count).fill(-1),
+    recipes: new Uint8Array(count),
+  });
+
+  const groundBase = make();
+  const groundOverlay = make();
+  const model = make();
+
+  const groundRecipe = (index: number): void => {
+    const kind = kinds[index];
+    const id = metatileAt(index);
+
+    if (kind === KIND_GROUND) {
+      groundBase.metatileIds[index] = id;
+      groundBase.recipes[index] = RECIPE_BASE;
+      groundOverlay.metatileIds[index] = id;
+      groundOverlay.recipes[index] = RECIPE_OVERLAY;
+    } else if (
+      kind === KIND_STRUCTURE_TOP ||
+      kind === KIND_PROP_TOP ||
+      kind === KIND_FLOWER
+    ) {
+      groundBase.metatileIds[index] = id;
+      groundBase.recipes[index] = RECIPE_BOTTOM;
+    }
+  };
+
+  for (let index = 0; index < count; index++) {
+    groundRecipe(index);
+  }
+
+  for (let index = 0; index < count; index++) {
+    const kind = kinds[index];
+
+    if (
+      kind !== KIND_STRUCTURE &&
+      kind !== KIND_PROP &&
+      kind !== KIND_LEDGE &&
+      kind !== KIND_GRASS
+    ) {
+      continue;
+    }
+
+    const from = sources[index];
+    const id = metatileAt(index);
+
+    if (from < 0) {
+      groundBase.metatileIds[index] = id;
+      groundBase.recipes[index] = RECIPE_BASE;
+      groundOverlay.metatileIds[index] = id;
+      groundOverlay.recipes[index] = RECIPE_OVERLAY;
+    } else {
+      groundBase.metatileIds[index] = groundBase.metatileIds[from];
+      groundBase.recipes[index] = groundBase.recipes[from];
+      groundOverlay.metatileIds[index] = groundOverlay.metatileIds[from];
+      groundOverlay.recipes[index] = groundOverlay.recipes[from];
+    }
+
+    if (kind === KIND_STRUCTURE) {
+      model.metatileIds[index] = id;
+      model.recipes[index] = RECIPE_MERGED;
+    }
+  }
+
+  for (let index = 0; index < count; index++) {
+    const kind = kinds[index];
+
+    if (kind === KIND_STRUCTURE_TOP) {
+      model.metatileIds[index] = metatileAt(index);
+      model.recipes[index] = RECIPE_TOP;
+    } else if (kind === KIND_FLOWER) {
+      model.metatileIds[index] = metatileAt(index);
+      model.recipes[index] = RECIPE_TOP_CUT;
+    }
+  }
+
+  return { groundBase, groundOverlay, model };
+}
+
+/**
+ * Consulta da textura dos modelos para VoxelFolding.buildPropGeometry: ha
+ * pixel opaco na coluna de blocos x, na linha de pixel `row` do mapa
+ * (0 = topo do mapa)?
+ */
+export function modelRowOpaque(
+  model: Uint8ClampedArray,
+  width: number,
+  height: number,
+): (x: number, row: number) => boolean {
+  const textureWidth = width * TILE;
+  const textureRows = height * TILE;
+
+  return (x, row) => {
+    if (x < 0 || x >= width || row < 0 || row >= textureRows) {
+      return false;
+    }
+
+    const start = ((textureRows - 1 - row) * textureWidth + x * TILE) * 4;
+
+    for (let px = 0; px < TILE; px++) {
+      if (model[start + px * 4 + 3] >= 128) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+}

@@ -1,0 +1,125 @@
+RELATORIO 21 - OBJETOS 2D EM PE, ESTRUTURAS 3D, RAIO-X E ARVORES
+Branch 4 - 12/10/2026
+
+PEDIDO
+  "graficos ainda quebrados ... deixa esse voxel apresentavel. o objetivo
+  e fazer um mapa 2,5d. o efeito de transparencia deve ocorrer so quando o
+  personagem tiver seu sprite submerso por outra construcao, e somente a
+  parte que submerge o sprite deve ser transparente. nada de transparencia
+  a longa distancia ou na frente das casas ... grama, planta/flores,
+  cercas, arvores e pequenos itens ... mesmo 'efeito 3d' que o personagem,
+  de serem 2d mas posicionados no cenario ... arrume o bug visual das
+  arvores ... as unicas construcoes de fato 3d sao casas, construcoes,
+  ginasios, prateleiras, montanhas e etc."
+  Referencia pedida: o codigo do pokeemerald dualscreen (3DS).
+
+O QUE O DUALSCREEN FAZ (src/platform/voxel)
+  Classifica cada tile numa forma (ClassifyTile): chao, decalque, parede,
+  arvore, predio, movel, balcao, placa... Placas e o jogador sao cartoes
+  em pe ("billboard"); paredes e moveis sao caixas; arvore = 2 de altura.
+  O que tapa o jogador e cortado (parede ao sul do jogador desenhada so
+  com 1 tile de altura). Aqui seguimos a mesma ideia - o que e estrutura
+  vira caixa, o resto vira cartao em pe - mas tudo deduzido do proprio ROM
+  (camadas, colisao, comportamento, portas, cores), sem tabela de
+  metatiles por jogo: vale para FireRed, Perfect Fire Red e Emerald.
+
+1. CADA BLOCO VIRA UMA COISA (VoxelFolding.buildMapVolume -> kinds)
+   - ESTRUTURA 3D (caixa): predios (achados pelas portas, como antes),
+     montanhas e rochedos (grupo grande e grosso de blocos solidos que nao
+     sao verdes: penhascos da Route 3, do Mt. Chimney), e no interior as
+     paredes, prateleiras, balcoes e moveis.
+   - OBJETO EM PE (cartao, como o sprite): arvores, matas, arbustos,
+     cercas, placas, postes, caixas de correio, pedras soltas, bicicletas
+     da loja de Mauville; no interior, vasos de planta soltos no chao.
+   - GRAMA ALTA: tufo em pe na frente de quem esta nela (cobre as pernas).
+   - FLOR: so a flor fica em pe; a grama de baixo continua no chao.
+   - LEDGE: faixa baixa, como antes.
+   Os objetos em pe usam a MESMA escala do personagem (esticados na
+   vertical por 1/cos da inclinacao da camera): uma arvore de 2 tiles tem
+   a altura do jogador, como no GBA, e tapa ou e tapada conforme quem esta
+   na frente.
+
+2. CHAO E MODELOS SEPARADOS PELAS CAMADAS DO METATILE
+   O adaptador agora entrega as camadas cruas de cada metatile (de baixo,
+   de cima e os tiles da camada de cima). A textura do mapa foi dividida
+   em (GroundSubstitution.composeMapTextures):
+   - CHAO: o que fica deitado. Debaixo de arvore/casa vai o chao vizinho
+     (o mais comum em volta da mata inteira, para nao misturar areia e
+     grama em faixas); debaixo de copa e flor fica so a camada de baixo.
+   - MODELOS: o que fica em pe. Objetos com o fundo de grama recortado -
+     agora tambem a SOMBRA das arvores no chao (tom de grama mais escuro
+     que nao existe no tile de grama), que aparecia como manchas
+     verde-azuladas nos cartoes.
+   Topos de objeto em metatiles COVERED (copas da Viridian Forest) agora
+   sobem junto com a arvore; antes ficavam pintados no chao.
+
+3. O BUG DAS ARVORES
+   Na Viridian Forest e nas matas do FireRed as copas se sobrepoem: a copa
+   de baixo cobre o pe da de cima e cada copa COMECA NO MEIO de uma linha
+   de tile (10 pixels abaixo do topo do tile na Viridian Forest, 4 nos
+   pinheiros da Route 1). O corte dos cartoes era feito na borda dos tiles,
+   partindo cada copa ao meio - era o "desalinhado" das copas.
+   Agora (VoxelFolding.buildPropGeometry):
+   - a repeticao da mata (periodo) sai da comparacao dos desenhos; pilha
+     curta (duas copas) usa o periodo que os mesmos metatiles tem nas pilhas
+     longas do mapa;
+   - o corte e feito no PIXEL em que as copas comecam, medido no topo da
+     pilha na textura dos modelos, igual para as colunas vizinhas da mesma
+     pilha (o topo da copa);
+   - a arvore da frente (com tronco) fica inteira;
+   - fileiras norte-sul de objetos iguais (cercas, arbustos) viram um
+     cartao por linha - inteiras elas ficavam uma torre em pe;
+   - cerca colada na base da mata vira objeto proprio.
+
+4. TRANSPARENCIA SO NA PARTE TAPADA (RAIO-X)
+   Saiu o esmaecimento do predio inteiro (que acontecia na frente das
+   casas e longe delas). Agora as estruturas sao desenhadas depois dos
+   sprites e marcam o stencil onde ficam na frente; uma copia do sprite
+   do jogador e desenhada por ultimo so onde ha estrutura na frente dele
+   (profundidade maior que a gravada + stencil), a 55%. Resultado: so os
+   pixels do jogador que a construcao cobre aparecem atraves dela. Arvores,
+   cercas e grama tapam o jogador como no GBA, sem raio-x.
+
+5. PREDIOS, CERCAS E ARBUSTOS
+   - Arvore ou arbusto colado no predio (Pewter, Viridian): o teste de
+     "natureza solta" agora e por grupo - se a maior parte da borda do
+     grupo da para o chao, ele fica fora do predio.
+   - Cerca/sebe da cidade grudada no predio (Celadon): linha fina (fora de
+     qualquer quadrado 2x2 do predio) com 3 ou mais blocos sai do predio e
+     vira objeto em pe. O mesmo vale para muros finos grudados em montanha.
+
+6. INTERIORES
+   - Fundo preto fora de interiores e cavernas, como o vazio do GBA: os
+     triangulos pretos dos cantos do Centro Pokemon somem no fundo.
+   - Vasos de planta soltos no chao viram objetos em pe; prateleiras,
+     balcoes e paredes continuam caixas.
+
+7. ANIMACAO
+   O animador de tiles agora recompoe varias texturas com uma receita por
+   bloco: o chao debaixo da arvore anima como o bloco de grama de onde
+   veio, e a flor em pe anima ja recortada. tools/verify-composition.mjs
+   confere que recompor tudo com a VRAM igual ao ROM da exatamente as
+   texturas montadas no carregamento (12 mapas de FR, Emerald e Perfect:
+   chao, camada de cima e modelos sem nenhum byte diferente).
+
+8. PADDING
+   As arvores da borda (cartoes) ficam no centro da linha e com a mesma
+   escala dos objetos em pe; a textura da borda usa o desenho completo
+   (parte das matas do FRLG esta na camada de cima).
+
+CONFERENCIA
+  Offline (tools/render-world.mjs, agora com o jogador de teste e o
+  raio-x): Route 1, Pallet, Viridian, Pewter, Route 3, Celadon, Viridian
+  Forest e interiores (FR); Littleroot, Oldale, Route 101, Mauville,
+  Rustboro, Route 112, Fortree e interiores (Emerald); Cinnabar e Route 1
+  (Perfect). Navegador (Chromium headless, com os saves): FireRed em
+  Cinnabar andando ate atras do Mart (raio-x so nas pernas tapadas pelo
+  telhado), Emerald no Centro Pokemon e em Mauville, Perfect Fire Red em
+  Cinnabar. Sem erros no console; animacao da agua aplicada.
+  Imagens 21-*.png.
+
+PENDENCIAS
+  - Montanhas sao caixas de topo plano; os degraus por elevacao do
+    Faithful (planalto mais alto) ainda nao.
+  - Itens desenhados DENTRO da arte da prateleira nao tem como ser
+    separados; ficam na face da caixa.

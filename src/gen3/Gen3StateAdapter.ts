@@ -238,6 +238,16 @@ export interface Gen3MetatileGraphics {
   pixels: Uint8ClampedArray;
   basePixels: Uint8ClampedArray;
   foregroundPixels: Uint8ClampedArray;
+
+  // Camadas cruas, para separar chao de objeto (ver GroundSubstitution):
+  //   bottomPixels = fundo (so NORMAL) + camada de baixo
+  //   topPixels    = so a camada de cima, qualquer layerType
+  bottomPixels: Uint8ClampedArray;
+  topPixels: Uint8ClampedArray;
+
+  // Tiles (ids globais) da camada de cima: as flores animadas do tileset
+  // geral (508-511) ficam nela.
+  topTileIds: number[];
 }
 
 const PLAYER_AVATAR_STATE_NOT_MOVING =
@@ -1673,6 +1683,9 @@ export class Gen3StateAdapter {
     pixels: Uint8ClampedArray;
     basePixels: Uint8ClampedArray;
     foregroundPixels: Uint8ClampedArray;
+    bottomPixels: Uint8ClampedArray;
+    topPixels: Uint8ClampedArray;
+    topTileIds: number[];
   } | null {
     const basePixels =
       new Uint8ClampedArray(
@@ -1727,6 +1740,22 @@ export class Gen3StateAdapter {
     const topTiles =
       metatile.tiles.slice(4, 8);
 
+    // Antes de juntar a camada de cima (COVERED): fundo + camada de baixo.
+    const bottomPixels =
+      new Uint8ClampedArray(
+        basePixels,
+      );
+
+    const topPixels =
+      new Uint8ClampedArray(
+        basePixels.length,
+      );
+
+    this.drawMetatileLayer(
+      topPixels,
+      topTiles,
+    );
+
     if (
       metatile.layerType ===
       METATILE_LAYER_TYPE_COVERED
@@ -1773,6 +1802,10 @@ export class Gen3StateAdapter {
       pixels,
       basePixels,
       foregroundPixels,
+      bottomPixels,
+      topPixels,
+      topTileIds:
+        topTiles.map((tile) => tile.tileId),
     };
   }
 

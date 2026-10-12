@@ -13,6 +13,16 @@ import type {
   TileAnimationSource,
 } from '../gen3/Gen3StateAdapter';
 
+import {
+  RECIPE_BASE,
+  RECIPE_BOTTOM,
+  RECIPE_MERGED,
+  RECIPE_OVERLAY,
+  RECIPE_TOP,
+  RECIPE_TOP_CUT,
+  cutTopAgainstBottom,
+} from './GroundSubstitution';
+
 /**
  * Animacao de tiles (agua, borda da agua, flores, plantas e as animacoes
  * dos tilesets secundarios).
@@ -24,6 +34,11 @@ import type {
  *   textura base   : [fundo 0x14, se NORMAL] -> camada de baixo ->
  *                    [camada de cima, se COVERED]
  *   textura overlay: [camada de cima, se NORMAL ou SPLIT]
+ *
+ * Com o voxel o mapa tem TRES texturas (chao, camada de cima do chao e
+ * modelos em pe - ver GroundSubstitution.composeMapTextures), e cada bloco
+ * diz em cada uma o que recompor (RECIPE_*): o chao debaixo de uma arvore
+ * anima como o bloco de grama de onde veio, a flor em pe anima recortada.
  *
  * Pintar por cima foi o que apagava a borda da agua: a borda fica na
  * camada de CIMA de metatiles COVERED, e repintar o tile de agua animado
@@ -98,10 +113,31 @@ interface LayerRef {
 // mapa que usam o mesmo metatile compartilham a receita: a celula e
 // composta uma vez e copiada para cada bloco.
 interface CellRecipe {
+  // Textura (indice em targets).
+  target: number;
+
+  // Quadrante 8x8 (0-3), ou -1 para o bloco 16x16 inteiro (recorte).
   quadrant: number;
-  overlay: boolean;
   layers: LayerRef[];
+
+  // Bloco inteiro: camadas de cima e de baixo por quadrante; o resultado e
+  // a de cima sem os pixels iguais aos da de baixo (a partir da borda).
+  cutTop?: LayerRef[][];
+  cutBottom?: LayerRef[][];
+
   blocks: number[];
+}
+
+/** Uma textura animada e, por bloco, o metatile e a receita. */
+export interface AnimatedTarget {
+  texture: THREE.DataTexture;
+  metatileIds: Int32Array;
+  recipes: Uint8Array;
+}
+
+interface TargetState {
+  texture: THREE.DataTexture;
+  pixels: Uint8Array | null;
 }
 
 export class TileAnimator {
@@ -115,13 +151,7 @@ export class TileAnimator {
 
   private mapHeight = 0;
 
-  private baseTexture: THREE.DataTexture | null = null;
-
-  private overlayTexture: THREE.DataTexture | null = null;
-
-  private basePixels: Uint8Array | null = null;
-
-  private overlayPixels: Uint8Array | null = null;
+  private targets: TargetState[] = [];
 
   private recipes: CellRecipe[] = [];
 
@@ -164,6 +194,12 @@ export class TileAnimator {
   private readonly cellScratch =
     new Uint8Array(TILE_AREA * 4);
 
+  private readonly blockTop =
+    new Uint8Array(METATILE_PIXELS * METATILE_PIXELS * 4);
+
+  private readonly blockBottom =
+    new Uint8Array(METATILE_PIXELS * METATILE_PIXELS * 4);
+
   constructor(
     memoryReader: MemoryReader,
     adapter: Gen3StateAdapter,
@@ -179,9 +215,7 @@ export class TileAnimator {
   setActiveMap(
     key: string,
     map: MapDefinition,
-    metatileIds: Uint16Array,
-    baseTexture: THREE.DataTexture,
-    overlayTexture: THREE.DataTexture,
+    targets: AnimatedTarget[],
   ): void {
     if (this.activeKey === key) {
       return;
@@ -191,11 +225,22 @@ export class TileAnimator {
 
     this.activeKey = key;
 
+    const used =
+      new Set<number>();
+
+    for (const target of targets) {
+      for (const id of target.metatileIds) {
+        if (id >= 0) {
+          used.add(id);
+        }
+      }
+    }
+
     const source =
       this.adapter.getTileAnimationSource(
         map.primaryTilesetAddress,
         map.secondaryTilesetAddress,
-        metatileIds,
+        used,
       );
 
     if (!source) {
@@ -208,20 +253,18 @@ export class TileAnimator {
       return;
     }
 
-    this.baseTexture = baseTexture;
-    this.overlayTexture = overlayTexture;
-
-    this.basePixels =
-      (baseTexture.image as { data?: Uint8Array }).data ?? null;
-
-    this.overlayPixels =
-      (overlayTexture.image as { data?: Uint8Array }).data ?? null;
+    this.targets =
+      targets.map((target) => ({
+        texture: target.texture,
+        pixels:
+          (target.texture.image as { data?: Uint8Array }).data ?? null,
+      }));
 
     this.mapWidth = map.width;
     this.mapHeight = map.height;
 
     this.buildRecipes(
-      metatileIds,
+      targets,
       source,
     );
 
@@ -249,10 +292,7 @@ export class TileAnimator {
 
   clear(): void {
     this.activeKey = null;
-    this.baseTexture = null;
-    this.overlayTexture = null;
-    this.basePixels = null;
-    this.overlayPixels = null;
+    this.targets = [];
     this.recipes = [];
     this.recipesByTile = new Map();
     this.romTiles = new Map();
@@ -302,31 +342,9 @@ export class TileAnimator {
   // ----------------------------------------------------------------------
 
   private buildRecipes(
-    metatileIds: Uint16Array,
+    targets: AnimatedTarget[],
     source: TileAnimationSource,
   ): void {
-    const blocksByMetatile =
-      new Map<number, number[]>();
-
-    for (
-      let blockIndex = 0;
-      blockIndex < metatileIds.length;
-      blockIndex++
-    ) {
-      const metatileId =
-        metatileIds[blockIndex];
-
-      let blocks =
-        blocksByMetatile.get(metatileId);
-
-      if (!blocks) {
-        blocks = [];
-        blocksByMetatile.set(metatileId, blocks);
-      }
-
-      blocks.push(blockIndex);
-    }
-
     const background: LayerRef = {
       tileId: source.backgroundTileId,
       palette: source.backgroundPalette,
@@ -334,71 +352,128 @@ export class TileAnimator {
       vFlip: false,
     };
 
-    for (
-      const [metatileId, blocks] of blocksByMetatile
-    ) {
-      const layout =
-        source.layouts.get(metatileId);
+    targets.forEach((target, targetIndex) => {
+      // Blocos por (metatile, receita): a celula e composta uma vez.
+      const groups =
+        new Map<number, number[]>();
 
-      if (!layout) {
-        continue;
-      }
-
-      const layerType =
-        layout.layerType;
-
-      // Outros layerTypes nao sao desenhados pelo adapter; mantem igual.
-      if (
-        layerType !== LAYER_TYPE_NORMAL &&
-        layerType !== LAYER_TYPE_COVERED &&
-        layerType !== LAYER_TYPE_SPLIT
+      for (
+        let blockIndex = 0;
+        blockIndex < target.metatileIds.length;
+        blockIndex++
       ) {
-        continue;
+        const metatileId =
+          target.metatileIds[blockIndex];
+
+        const recipe =
+          target.recipes[blockIndex];
+
+        if (metatileId < 0 || recipe === 0) {
+          continue;
+        }
+
+        const groupKey =
+          metatileId * 16 + recipe;
+
+        let blocks =
+          groups.get(groupKey);
+
+        if (!blocks) {
+          blocks = [];
+          groups.set(groupKey, blocks);
+        }
+
+        blocks.push(blockIndex);
       }
 
       for (
-        let quadrant = 0;
-        quadrant < 4;
-        quadrant++
+        const [groupKey, blocks] of groups
       ) {
-        const bottom =
-          layout.tiles[quadrant];
+        const metatileId =
+          Math.floor(groupKey / 16);
 
-        const top =
-          layout.tiles[quadrant + 4];
+        const recipe =
+          groupKey % 16;
 
-        const baseLayers: LayerRef[] = [];
+        const layout =
+          source.layouts.get(metatileId);
 
-        if (layerType === LAYER_TYPE_NORMAL) {
-          baseLayers.push(background);
+        if (!layout) {
+          continue;
         }
 
-        baseLayers.push(bottom);
+        const layerType =
+          layout.layerType;
 
-        if (layerType === LAYER_TYPE_COVERED) {
-          baseLayers.push(top);
-        }
-
-        this.addRecipe({
-          quadrant,
-          overlay: false,
-          layers: baseLayers,
-          blocks,
-        });
-
+        // Outros layerTypes nao sao desenhados pelo adapter; mantem igual.
         if (
-          layerType === LAYER_TYPE_NORMAL ||
-          layerType === LAYER_TYPE_SPLIT
+          layerType !== LAYER_TYPE_NORMAL &&
+          layerType !== LAYER_TYPE_COVERED &&
+          layerType !== LAYER_TYPE_SPLIT
         ) {
+          continue;
+        }
+
+        const bottomLayers = (quadrant: number): LayerRef[] =>
+          layerType === LAYER_TYPE_NORMAL
+            ? [background, layout.tiles[quadrant]]
+            : [layout.tiles[quadrant]];
+
+        if (recipe === RECIPE_TOP_CUT) {
           this.addRecipe({
+            target: targetIndex,
+            quadrant: -1,
+            layers: [],
+            cutTop: [0, 1, 2, 3].map((quadrant) => [layout.tiles[quadrant + 4]]),
+            cutBottom: [0, 1, 2, 3].map(bottomLayers),
+            blocks,
+          });
+
+          continue;
+        }
+
+        for (
+          let quadrant = 0;
+          quadrant < 4;
+          quadrant++
+        ) {
+          const top =
+            layout.tiles[quadrant + 4];
+
+          let layers: LayerRef[] | null = null;
+
+          if (recipe === RECIPE_BASE) {
+            layers =
+              layerType === LAYER_TYPE_COVERED
+                ? [...bottomLayers(quadrant), top]
+                : bottomLayers(quadrant);
+          } else if (recipe === RECIPE_OVERLAY) {
+            layers =
+              layerType === LAYER_TYPE_NORMAL ||
+              layerType === LAYER_TYPE_SPLIT
+                ? [top]
+                : null;
+          } else if (recipe === RECIPE_BOTTOM) {
+            layers = bottomLayers(quadrant);
+          } else if (recipe === RECIPE_TOP) {
+            layers = [top];
+          } else if (recipe === RECIPE_MERGED) {
+            layers = [...bottomLayers(quadrant), top];
+          }
+
+          if (!layers) {
+            continue;
+          }
+
+          this.addRecipe({
+            target: targetIndex,
             quadrant,
-            overlay: true,
-            layers: [top],
+            layers,
             blocks,
           });
         }
       }
-    }
+    });
 
     this.palettes =
       source.palettes;
@@ -439,8 +514,14 @@ export class TileAnimator {
 
     this.recipes.push(recipe);
 
+    const allLayers = [
+      ...recipe.layers,
+      ...(recipe.cutTop ?? []).flat(),
+      ...(recipe.cutBottom ?? []).flat(),
+    ];
+
     for (
-      const layer of recipe.layers
+      const layer of allLayers
     ) {
       let list =
         this.recipesByTile.get(layer.tileId);
@@ -545,8 +626,8 @@ export class TileAnimator {
       }
     }
 
-    let touchedBase = false;
-    let touchedOverlay = false;
+    const touched =
+      new Set<number>();
 
     for (
       const recipeIndex of dirty
@@ -557,20 +638,12 @@ export class TileAnimator {
       if (
         this.paintRecipe(recipe)
       ) {
-        if (recipe.overlay) {
-          touchedOverlay = true;
-        } else {
-          touchedBase = true;
-        }
+        touched.add(recipe.target);
       }
     }
 
-    if (touchedBase && this.baseTexture) {
-      this.baseTexture.needsUpdate = true;
-    }
-
-    if (touchedOverlay && this.overlayTexture) {
-      this.overlayTexture.needsUpdate = true;
+    for (const targetIndex of touched) {
+      this.targets[targetIndex].texture.needsUpdate = true;
     }
 
     if (!this.firstFrameReported) {
@@ -593,12 +666,14 @@ export class TileAnimator {
     recipe: CellRecipe,
   ): boolean {
     const target =
-      recipe.overlay
-        ? this.overlayPixels
-        : this.basePixels;
+      this.targets[recipe.target]?.pixels;
 
     if (!target) {
       return false;
+    }
+
+    if (recipe.quadrant < 0) {
+      return this.paintCutRecipe(recipe, target);
     }
 
     const cell =
@@ -607,8 +682,55 @@ export class TileAnimator {
     // Celula comeca transparente, exatamente como o buffer do adapter.
     cell.fill(0);
 
+    this.composeLayers(recipe.layers, cell, TILE_PIXELS, 0, 0);
+
+    const quadrantX =
+      (recipe.quadrant % 2) * TILE_PIXELS;
+
+    const quadrantY =
+      Math.floor(recipe.quadrant / 2) * TILE_PIXELS;
+
+    this.copyToBlocks(cell, TILE_PIXELS, quadrantX, quadrantY, recipe.blocks, target);
+
+    return true;
+  }
+
+  /** Flor em pe: camada de cima sem o fundo igual a camada de baixo. */
+  private paintCutRecipe(
+    recipe: CellRecipe,
+    target: Uint8Array,
+  ): boolean {
+    const top = this.blockTop;
+    const bottom = this.blockBottom;
+
+    top.fill(0);
+    bottom.fill(0);
+
+    for (let quadrant = 0; quadrant < 4; quadrant++) {
+      const x = (quadrant % 2) * TILE_PIXELS;
+      const y = Math.floor(quadrant / 2) * TILE_PIXELS;
+
+      this.composeLayers(recipe.cutTop?.[quadrant] ?? [], top, METATILE_PIXELS, x, y);
+      this.composeLayers(recipe.cutBottom?.[quadrant] ?? [], bottom, METATILE_PIXELS, x, y);
+    }
+
+    cutTopAgainstBottom(top, bottom);
+
+    this.copyToBlocks(top, METATILE_PIXELS, 0, 0, recipe.blocks, target);
+
+    return true;
+  }
+
+  /** Compoe camadas 8x8 (indices da VRAM) num buffer RGBA de largura `stride`. */
+  private composeLayers(
+    layers: LayerRef[],
+    out: Uint8Array,
+    stride: number,
+    originX: number,
+    originY: number,
+  ): void {
     for (
-      const layer of recipe.layers
+      const layer of layers
     ) {
       const indices =
         this.paintedTiles.get(layer.tileId);
@@ -649,27 +771,34 @@ export class TileAnimator {
           }
 
           const offset =
-            (y * TILE_PIXELS + x) * 4;
+            ((originY + y) * stride + originX + x) * 4;
 
-          cell[offset] = palette[colorIndex * 3];
-          cell[offset + 1] = palette[colorIndex * 3 + 1];
-          cell[offset + 2] = palette[colorIndex * 3 + 2];
-          cell[offset + 3] = 255;
+          out[offset] = palette[colorIndex * 3];
+          out[offset + 1] = palette[colorIndex * 3 + 1];
+          out[offset + 2] = palette[colorIndex * 3 + 2];
+          out[offset + 3] = 255;
         }
       }
     }
+  }
 
+  /**
+   * Copia um pedaco composto (size x size, a partir de (offsetX, offsetY)
+   * dentro do metatile) para todos os blocos da receita.
+   */
+  private copyToBlocks(
+    cell: Uint8Array,
+    size: number,
+    offsetX: number,
+    offsetY: number,
+    blocks: number[],
+    target: Uint8Array,
+  ): void {
     const textureWidth =
       this.mapWidth * METATILE_PIXELS;
 
-    const quadrantX =
-      (recipe.quadrant % 2) * TILE_PIXELS;
-
-    const quadrantY =
-      Math.floor(recipe.quadrant / 2) * TILE_PIXELS;
-
     for (
-      const blockIndex of recipe.blocks
+      const blockIndex of blocks
     ) {
       const blockX =
         blockIndex % this.mapWidth;
@@ -679,14 +808,14 @@ export class TileAnimator {
 
       for (
         let y = 0;
-        y < TILE_PIXELS;
+        y < size;
         y++
       ) {
         // MESMA inversao vertical de PlayerRenderer.buildMapVisual:
         // pixel (mx, my) do metatile vai para
         // (bx*16 + mx, (H-1-by)*16 + 15 - my).
         const metatileY =
-          quadrantY + y;
+          offsetY + y;
 
         const textureY =
           (this.mapHeight - 1 - blockY) * METATILE_PIXELS +
@@ -695,19 +824,17 @@ export class TileAnimator {
         const rowStart =
           (textureY * textureWidth +
             blockX * METATILE_PIXELS +
-            quadrantX) * 4;
+            offsetX) * 4;
 
         target.set(
           cell.subarray(
-            y * TILE_PIXELS * 4,
-            (y + 1) * TILE_PIXELS * 4,
+            y * size * 4,
+            (y + 1) * size * 4,
           ),
           rowStart,
         );
       }
     }
-
-    return true;
   }
 
   /**

@@ -79,6 +79,11 @@ export interface PaddingMeshData {
 // Cartoes de arvore tem luz plena, como os de VoxelFolding.
 const SHADE_TOP = 1.0;
 
+// Cartao de arvore no centro da linha, como os objetos em pe do mapa
+// (VoxelFolding.buildPropGeometry); o renderizador estica a malha na
+// vertical como os sprites.
+const CARD_Z = 0.5;
+
 const NO_OWNER = -1;
 const BLOCKED = -2;
 
@@ -309,6 +314,8 @@ export function buildPadding(
             ? Math.max(raisedHeight, map.borderHeight)
             : 0;
 
+        const cardZ = north + CARD_Z;
+
         for (let level = 0; level < cardRows; level++) {
           // Linha do padrao mostrada neste andar do cartao.
           const rowSouth = south - level;
@@ -316,10 +323,10 @@ export function buildPadding(
           quad(
             target,
             [
-              [left, level, south],
-              [right, level, south],
-              [right, level + 1, south],
-              [left, level + 1, south],
+              [left, level, cardZ],
+              [right, level, cardZ],
+              [right, level + 1, cardZ],
+              [left, level + 1, cardZ],
             ],
             [
               [uOf(left), vOf(rowSouth)],
