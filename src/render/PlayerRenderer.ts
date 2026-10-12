@@ -85,6 +85,21 @@ const ORDER_STRUCTURES =
 const ORDER_XRAY =
   5;
 
+// Efeito de campo preso a um personagem (grama em volta dos pes, prancha
+// do surf, ! sobre a cabeca): na frente dele quando o GBA o desenha por
+// cima (passa da grama alta em pe, que fica a 0.3 da frente do tile), atras
+// quando por baixo.
+const FIELD_FRONT =
+  0.4;
+
+const FIELD_BEHIND =
+  0.1;
+
+// Texturas de efeito guardadas (cada quadro e cada passo de fade da paleta
+// e uma imagem nova); acima disto o cache e esvaziado.
+const MAX_FIELD_TEXTURES =
+  256;
+
 // Marca no stencil dos pixels em que uma estrutura e a superficie da
 // frente.
 const STRUCTURE_STENCIL =
@@ -203,6 +218,7 @@ import {
 import {
   LiveSprites,
   type LiveSpriteState,
+  type RawSprite,
 } from '../gen3/LiveSprites';
 
 /**
@@ -268,6 +284,9 @@ interface EntityVisual {
   lastSpriteX: number;
   lastSpriteY: number;
   stillSince: number;
+
+  // O jogo escondeu o sprite (porta, Fly).
+  hidden: boolean;
 }
 
 /**
@@ -424,6 +443,23 @@ export class PlayerRenderer {
   // Um visual por slot de ObjectEvent, reaproveitado entre frames.
   private readonly entityVisuals =
     new Map<number, EntityVisual>();
+
+  // Onde o jogador parado aparece na tela do GBA e no mundo 3D: converte
+  // os sprites que o jogo move pela tela (Fly).
+  private cameraRef: {
+    worldX: number;
+    worldZ: number;
+    screenX: number;
+    screenBottom: number;
+  } | null = null;
+
+  // Efeitos de campo (grama, agua, surf, Fly) por id de sprite, e as
+  // texturas deles (lidas da VRAM).
+  private readonly fieldMeshes =
+    new Map<number, THREE.Mesh>();
+
+  private readonly fieldTextures =
+    new Map<string, THREE.DataTexture>();
 
   // Copia do sprite do jogador desenhada so onde uma estrutura o tapa.
   private playerXray:
@@ -1616,7 +1652,7 @@ export class PlayerRenderer {
 
       if (visual) {
         this.entityVisuals.set(object.id, visual);
-        visual.mesh.visible = true;
+        visual.mesh.visible = !visual.hidden;
       }
     }
 
@@ -1648,6 +1684,214 @@ export class PlayerRenderer {
     }
 
     this.updatePropScale(upright);
+
+    this.updateFieldSprites(state, upright);
+  }
+
+  /**
+   * Efeitos de campo: todo sprite do jogo que nao e personagem - grama alta
+   * e baixa mexendo, respingos e ondas na agua rasa e nas pocas, prancha do
+   * surf, sombra do pulo, ! sobre a cabeca, passaro do Fly. A imagem vem da
+   * VRAM (o quadro que o GBA esta mostrando) e a posicao do proprio sprite.
+   *
+   * Efeito que encosta num personagem fica preso a ele (na frente ou atras,
+   * pela ordem de desenho do GBA; o que sobe na tela vira altura). O resto
+   * fica no chao, onde o jogo o pos. Sprites que o jogo move pela TELA so
+   * entram montados num personagem (o passaro carregando o jogador).
+   */
+  private updateFieldSprites(
+    state: GameState,
+    upright: number,
+  ): void {
+    const seen =
+      new Set<number>();
+
+    const anchors: Array<{ raw: RawSprite; visual: EntityVisual }> = [];
+    const objectSprites = new Set<number>();
+    const objectTiles = new Set<number>();
+    let playerAnchor: { raw: RawSprite; visual: EntityVisual } | null = null;
+
+    for (const object of state.objects) {
+      if (object.spriteId === undefined) {
+        continue;
+      }
+
+      objectSprites.add(object.spriteId);
+
+      const raw = this.liveSprites.readRaw(object.spriteId);
+
+      if (!raw) {
+        continue;
+      }
+
+      // Reflexo na agua: copia do sprite com os mesmos tiles.
+      objectTiles.add(raw.tileNum);
+
+      const visual =
+        object.isPlayer
+          ? this.playerVisual
+          : this.entityVisuals.get(object.id);
+
+      if (!visual || !visual.mesh.visible) {
+        continue;
+      }
+
+      anchors.push({ raw, visual });
+
+      if (object.isPlayer) {
+        playerAnchor = anchors[anchors.length - 1];
+      }
+    }
+
+    // Fora do overworld (batalha, menus) a VRAM de objetos e de outra tela.
+    const sprites =
+      playerAnchor && this.tileAnimator.isShowingMap()
+        ? this.liveSprites.readAll()
+        : [];
+
+    for (const raw of sprites) {
+      if (
+        raw.invisible ||
+        objectSprites.has(raw.id) ||
+        objectTiles.has(raw.tileNum)
+      ) {
+        continue;
+      }
+
+      let anchor: { raw: RawSprite; visual: EntityVisual } | null = null;
+      let best = Number.POSITIVE_INFINITY;
+
+      for (const candidate of anchors) {
+        const other = candidate.raw;
+        const dx = Math.abs(other.centerX - raw.centerX);
+        const dy = Math.abs(other.centerY - raw.centerY);
+
+        if (
+          other.coordOffset !== raw.coordOffset ||
+          dx * 2 >= other.width + raw.width ||
+          dy * 2 >= other.height + raw.height ||
+          dx + dy >= best
+        ) {
+          continue;
+        }
+
+        anchor = candidate;
+        best = dx + dy;
+      }
+
+      const reference = anchor ?? playerAnchor;
+
+      if (!reference || reference.raw.coordOffset !== raw.coordOffset) {
+        continue;
+      }
+
+      const frame =
+        this.liveSprites.frameFromVram(raw);
+
+      if (!frame) {
+        continue;
+      }
+
+      const onTop =
+        raw.priority < reference.raw.priority ||
+        (raw.priority === reference.raw.priority &&
+          raw.subpriority < reference.raw.subpriority);
+
+      const base = reference.visual.mesh.position;
+      const bottom = raw.centerY + raw.height / 2;
+      const referenceBottom = reference.raw.centerY + reference.raw.height / 2;
+      const x = base.x + (raw.centerX - reference.raw.centerX) / PIXELS_PER_TILE;
+      const nudge = onTop ? FIELD_FRONT : -FIELD_BEHIND;
+
+      let y: number;
+      let z: number;
+
+      if (anchor) {
+        z = base.z + nudge;
+        y = base.y + Math.max(0, referenceBottom - bottom) / PIXELS_PER_TILE * upright;
+      } else {
+        // No chao, onde o jogo o pos (a linha de baixo do sprite e a borda
+        // de baixo do tile, como a dos personagens).
+        z =
+          base.z +
+          (bottom - raw.y2 - (referenceBottom - reference.raw.y2)) / PIXELS_PER_TILE +
+          nudge;
+
+        y = this.groundHeightAt(x, z) + Math.max(0, -raw.y2) / PIXELS_PER_TILE * upright;
+      }
+
+      let mesh = this.fieldMeshes.get(raw.id);
+
+      if (!mesh) {
+        mesh =
+          new THREE.Mesh(
+            this.getSpriteGeometry(frame),
+            new THREE.MeshBasicMaterial({
+              transparent: true,
+              alphaTest: 0.5,
+              side: THREE.DoubleSide,
+            }),
+          );
+
+        mesh.renderOrder = ORDER_SPRITES;
+        this.root.add(mesh);
+        this.fieldMeshes.set(raw.id, mesh);
+      }
+
+      mesh.geometry = this.getSpriteGeometry(frame);
+      (mesh.material as THREE.MeshBasicMaterial).map = this.getFieldTexture(frame);
+      mesh.position.set(x, y, z);
+      mesh.scale.set(1, upright, 1);
+      mesh.visible = true;
+      seen.add(raw.id);
+    }
+
+    for (const [id, mesh] of this.fieldMeshes) {
+      if (!seen.has(id)) {
+        mesh.visible = false;
+      }
+    }
+  }
+
+  private getFieldTexture(
+    frame: SpriteFrame,
+  ): THREE.DataTexture {
+    const cached =
+      this.fieldTextures.get(frame.key);
+
+    if (cached) {
+      return cached;
+    }
+
+    // Cada quadro de animacao e cada passo de fade da paleta e uma imagem
+    // nova: esvazia de tempos em tempos (os materiais pegam de novo).
+    if (this.fieldTextures.size >= MAX_FIELD_TEXTURES) {
+      for (const texture of this.fieldTextures.values()) {
+        texture.dispose();
+      }
+
+      this.fieldTextures.clear();
+    }
+
+    const texture =
+      new THREE.DataTexture(
+        frame.rgba,
+        frame.width,
+        frame.height,
+        THREE.RGBAFormat,
+        THREE.UnsignedByteType,
+      );
+
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    this.fieldTextures.set(frame.key, texture);
+
+    return texture;
   }
 
   /**
@@ -1924,6 +2168,7 @@ export class PlayerRenderer {
         lastSpriteX: Number.NaN,
         lastSpriteY: Number.NaN,
         stillSince: now,
+        hidden: false,
       };
 
       if (motion) {
@@ -1957,6 +2202,8 @@ export class PlayerRenderer {
         (motion?.live.lift ?? 0) / PIXELS_PER_TILE,
       visual.displayZ,
     );
+
+    visual.hidden = motion?.live.invisible ?? false;
 
     return visual;
   }
@@ -3212,7 +3459,37 @@ export class PlayerRenderer {
 
     if (this.playerVisual) {
       this.player.visible = false;
-      this.playerVisual.mesh.visible = true;
+      this.playerVisual.mesh.visible = !this.playerVisual.hidden;
+
+      const raw =
+        playerObject?.spriteId !== undefined
+          ? this.liveSprites.readRaw(playerObject.spriteId)
+          : null;
+
+      if (raw?.coordOffset && !raw.invisible) {
+        // Referencia tela <-> mundo: onde o jogador parado aparece na tela.
+        this.cameraRef = {
+          worldX: this.playerVisual.displayX,
+          worldZ: this.playerVisual.displayZ,
+          screenX: raw.screenCenterX,
+          screenBottom: raw.screenCenterY - raw.y2 + raw.height / 2,
+        };
+      } else if (raw && !raw.coordOffset && this.cameraRef) {
+        // Montado no passaro do Fly: o jogo move o sprite pela TELA. Subir
+        // na tela vira altura; a camera fica onde estava, como no GBA.
+        const ref = this.cameraRef;
+        const x = ref.worldX + (raw.centerX - ref.screenX) / PIXELS_PER_TILE;
+
+        this.playerVisual.mesh.position.set(
+          x,
+          this.groundHeightAt(x, ref.worldZ) +
+            Math.max(0, ref.screenBottom - (raw.centerY + raw.height / 2)) /
+              PIXELS_PER_TILE * this.getUprightSpriteScale(),
+          ref.worldZ,
+        );
+
+        return { x: ref.worldX, z: ref.worldZ };
+      }
 
       // A camera segue a posicao EXIBIDA, presa ao sprite: o mundo rola
       // junto com o passo, como no GBA, sem atraso nem balanco.
@@ -3683,6 +3960,18 @@ export class PlayerRenderer {
 
     this.entityVisuals.clear();
     this.playerVisual = null;
+
+    for (const mesh of this.fieldMeshes.values()) {
+      this.root.remove(mesh);
+      (mesh.material as THREE.Material).dispose();
+    }
+
+    for (const texture of this.fieldTextures.values()) {
+      texture.dispose();
+    }
+
+    this.fieldMeshes.clear();
+    this.fieldTextures.clear();
 
     if (this.playerXray) {
       this.playerXray.removeFromParent();

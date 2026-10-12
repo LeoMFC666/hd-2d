@@ -52,10 +52,65 @@ const EWRAM_END =
 const RESCAN_INTERVAL_MS =
   1500;
 
+// VRAM de objetos (tiles 4bpp, mapeamento 1D) e paletas de objetos.
+const OBJ_VRAM =
+  0x06010000;
+
+const OBJ_PALETTES =
+  0x05000200;
+
+// Largura x altura por forma (quadrado, deitado, em pe) e tamanho da OAM.
+const OBJ_SIZES: Array<Array<[number, number]>> = [
+  [[8, 8], [16, 16], [32, 32], [64, 64]],
+  [[16, 8], [32, 8], [32, 16], [64, 32]],
+  [[8, 16], [8, 32], [16, 32], [32, 64]],
+];
+
+const toSigned8 = (value: number): number =>
+  value >= 0x80 ? value - 0x100 : value;
+
+/**
+ * Sprite cru de gSprites. Centro (x + x2, y + y2) no espaco do sprite:
+ * mundo do jogo quando coordOffset (segue a camera), tela quando nao
+ * (passaro do Fly e o jogador montado nele).
+ */
+export interface RawSprite {
+  id: number;
+  coordOffset: boolean;
+  invisible: boolean;
+  centerX: number;
+  centerY: number;
+
+  // Deslocamento vertical do jogo (pulo, balanco da prancha do surf).
+  y2: number;
+
+  width: number;
+  height: number;
+
+  // Centro na TELA do GBA (pela OAM, com a camera aplicada).
+  screenCenterX: number;
+  screenCenterY: number;
+
+  tileNum: number;
+  palette: number;
+
+  // Ordem de desenho do GBA: prioridade menor e subprioridade menor por
+  // cima.
+  priority: number;
+  subpriority: number;
+
+  hFlip: boolean;
+  vFlip: boolean;
+  eightBit: boolean;
+}
+
 export interface LiveSpriteState {
   // Posicao do sprite em pixels (espaco do mundo do jogo).
   x: number;
   y: number;
+
+  // Escondido pelo jogo (piscando, durante o Fly).
+  invisible: boolean;
 
   // Altura acima do chao, em pixels (pulos). 0 no chao.
   lift: number;
@@ -160,6 +215,7 @@ export class LiveSprites {
     return {
       x: this.s16(address + 0x20),
       y: this.s16(address + 0x22),
+      invisible: (this.memory.readU8(address + 0x3e) & 0x04) !== 0,
       lift: y2 < 0 ? -y2 : 0,
       frame:
         this.sprites.getFrameFromAnimation(
@@ -168,6 +224,150 @@ export class LiveSprites {
           this.memory.readU8(address + 0x2a),
           this.memory.readU8(address + 0x2b),
         ),
+    };
+  }
+
+  /**
+   * Todos os sprites em uso, crus (para os efeitos de campo: grama, agua,
+   * prancha do surf, passaro do Fly). [] enquanto gSprites nao foi achado.
+   */
+  readAll(): RawSprite[] {
+    const sprites: RawSprite[] = [];
+
+    if (this.base === 0) {
+      return sprites;
+    }
+
+    for (let id = 0; id < MAX_SPRITES; id++) {
+      const raw = this.readRaw(id);
+
+      if (raw) {
+        sprites.push(raw);
+      }
+    }
+
+    return sprites;
+  }
+
+  /** Sprite cru `id`, ou null se nao esta em uso. */
+  readRaw(
+    id: number,
+  ): RawSprite | null {
+    if (this.base === 0 || id >= MAX_SPRITES) {
+      return null;
+    }
+
+    const address =
+      this.base + id * SPRITE_SIZE;
+
+    const flags =
+      this.memory.readU8(address + 0x3e);
+
+    if ((flags & 0x01) === 0) {
+      return null;
+    }
+
+    const attr0 = this.memory.readU16(address);
+    const attr1 = this.memory.readU16(address + 2);
+    const attr2 = this.memory.readU16(address + 4);
+    const affine = (attr0 >> 8) & 3;
+    const [width, height] = OBJ_SIZES[(attr0 >> 14) & 3]?.[(attr1 >> 14) & 3] ?? [0, 0];
+    const corner = this.memory.readU16(address + 0x28);
+    const x2 = this.s16(address + 0x24);
+    const y2 = this.s16(address + 0x26);
+    const oamX = attr1 & 0x1ff;
+    const oamY = attr0 & 0xff;
+
+    return {
+      id,
+      coordOffset: (flags & 0x02) !== 0,
+      invisible: (flags & 0x04) !== 0 || affine === 2,
+      centerX: this.s16(address + 0x20) + x2,
+      centerY: this.s16(address + 0x22) + y2,
+      y2,
+      width,
+      height,
+      // Coordenadas da OAM sao de 9 (x) e 8 (y) bits: acima da tela voltam
+      // como numeros altos.
+      screenCenterX: (oamX >= 256 ? oamX - 512 : oamX) - toSigned8(corner & 0xff),
+      screenCenterY: (oamY >= 192 ? oamY - 256 : oamY) - toSigned8(corner >> 8),
+      tileNum: attr2 & 0x3ff,
+      palette: attr2 >> 12,
+      priority: (attr2 >> 10) & 3,
+      subpriority: this.memory.readU8(address + 0x43),
+      hFlip: affine === 0 && (attr1 & 0x1000) !== 0,
+      vFlip: affine === 0 && (attr1 & 0x2000) !== 0,
+      eightBit: (attr0 & 0x2000) !== 0,
+    };
+  }
+
+  /**
+   * Quadro atual de um sprite qualquer, lido como o GBA desenha: tiles da
+   * VRAM de objetos e paleta da RAM de paletas. Serve para qualquer efeito
+   * sem tabela por jogo. null para 8bpp e tamanhos invalidos.
+   */
+  frameFromVram(
+    raw: RawSprite,
+  ): SpriteFrame | null {
+    const { width, height } = raw;
+
+    if (width === 0 || height === 0 || raw.eightBit) {
+      return null;
+    }
+
+    const tileCount = (width >> 3) * (height >> 3);
+    const words = new Uint32Array(tileCount * 8);
+
+    for (let index = 0; index < words.length; index++) {
+      words[index] = this.memory.readU32(OBJ_VRAM + raw.tileNum * 32 + index * 4);
+    }
+
+    const palette = new Uint16Array(16);
+
+    for (let index = 0; index < 16; index++) {
+      palette[index] = this.memory.readU16(OBJ_PALETTES + raw.palette * 32 + index * 2);
+    }
+
+    // FNV-1a do conteudo: mesma imagem, mesma textura em cache.
+    let hash = 0x811c9dc5;
+
+    for (const value of [...words, ...palette, raw.hFlip ? 1 : 0, raw.vFlip ? 1 : 0]) {
+      hash = Math.imul(hash ^ value, 0x01000193) >>> 0;
+    }
+
+    const rgba = new Uint8Array(width * height * 4);
+    const tilesPerRow = width >> 3;
+
+    for (let y = 0; y < height; y++) {
+      // Linhas de baixo para cima (flipY = false no DataTexture).
+      const row = height - 1 - y;
+      const sourceY = raw.vFlip ? height - 1 - y : y;
+
+      for (let x = 0; x < width; x++) {
+        const sourceX = raw.hFlip ? width - 1 - x : x;
+        const tile = (sourceY >> 3) * tilesPerRow + (sourceX >> 3);
+        const word = words[tile * 8 + (sourceY & 7)];
+        const colorIndex = (word >>> ((sourceX & 7) * 4)) & 0x0f;
+
+        if (colorIndex === 0) {
+          continue;
+        }
+
+        const color = palette[colorIndex];
+        const offset = (row * width + x) * 4;
+
+        rgba[offset] = ((color & 0x1f) << 3) | ((color & 0x1f) >> 2);
+        rgba[offset + 1] = (((color >> 5) & 0x1f) << 3) | (((color >> 5) & 0x1f) >> 2);
+        rgba[offset + 2] = (((color >> 10) & 0x1f) << 3) | (((color >> 10) & 0x1f) >> 2);
+        rgba[offset + 3] = 255;
+      }
+    }
+
+    return {
+      key: 'vram:' + width + 'x' + height + ':' + hash.toString(16),
+      width,
+      height,
+      rgba,
     };
   }
 

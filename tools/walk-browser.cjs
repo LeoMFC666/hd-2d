@@ -26,8 +26,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.locator('#stage').screenshot({ path: `${prefix}-0.png` });
   let k = 1;
   for (const mv of plan.split(',').filter(Boolean)) {
-    const [key, n, shot] = mv.split(':');
-    for (let i = 0; i < Number(n); i++) { await tap(key, 60); await sleep(320); }
+    // Tecla:vezes[:s[:segurar ms]]
+    const [key, n, shot, hold] = mv.split(':');
+    // espera:ms deixa o jogo rodar (textos, animacoes de campo).
+    if (key === 'espera') { await sleep(Number(n)); } else
+    for (let i = 0; i < Number(n); i++) { await tap(key, Number(hold || 60)); await sleep(320); }
     await sleep(500);
     console.log(mv, '->', await where());
     if (shot) { await page.locator('#stage').screenshot({ path: `${prefix}-${k++}.png` }); }
