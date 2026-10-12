@@ -8,6 +8,7 @@
 //   export { MapCatalog } from '<repo>/src/gen3/world/MapCatalog';
 //   export * from '<repo>/src/render/VoxelFolding';
 //   export { buildPadding, isBorderRaised } from '<repo>/src/render/PaddingBuilder';
+//   export * from '<repo>/src/render/GroundSubstitution';
 // e depois:
 //   esbuild entry8.ts --bundle --format=esm --platform=node --outfile=b8.mjs
 //
@@ -16,7 +17,7 @@
 // NOEXT=1 sem topos de objeto; PROBE=x,y lista triangulos do pixel.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { Gen3StateAdapter, MapCatalog, buildPadding, isBorderRaised, buildMapVolume, buildGroundGeometry, WATER_DEPTH, markRocksInWater } from './b8.mjs';
+import { Gen3StateAdapter, MapCatalog, buildPadding, isBorderRaised, buildMapVolume, buildGroundGeometry, WATER_DEPTH, markRocksInWater, chooseGroundSources, applyGroundSubstitution, cutoutBackgrounds, cutoutTile, tileColors, findGroundCell } from './b8.mjs';
 const BASE=0x08000000, PX=16;
 const u16=(r,o)=>r[o]|(r[o+1]<<8), u32=(r,o)=>(r[o]|(r[o+1]<<8)|(r[o+2]<<16)|(r[o+3]<<24))>>>0;
 function png(w,h,rgba){const T=new Int32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c;});const crc=b=>{let c=-1;for(const x of b)c=T[(c^x)&255]^(c>>>8);return(c^-1)>>>0;};const ch=(t,d)=>{const b=Buffer.alloc(12+d.length);b.writeUInt32BE(d.length,0);b.write(t,4);d.copy(b,8);b.writeUInt32BE(crc(b.subarray(4,8+d.length)),8+d.length);return b;};const raw=Buffer.alloc((w*4+1)*h);for(let y=0;y<h;y++){raw[y*(w*4+1)]=0;Buffer.from(rgba.buffer,y*w*4,w*4).copy(raw,y*(w*4+1)+1);}const ih=Buffer.alloc(13);ih.writeUInt32BE(w,0);ih.writeUInt32BE(h,4);ih[8]=8;ih[9]=6;return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),ch('IHDR',ih),ch('IDAT',deflateSync(raw)),ch('IEND',Buffer.alloc(0))]);}
@@ -41,15 +42,18 @@ function loadMap(g,m,x,z){
   for(let ty=0;ty<bh;ty++)for(let tx=0;tx<bw;tx++){const gr=rd.graphics.get(borderRaw[ty*bw+tx]&0x3ff);if(!gr)continue;
     for(let sy=0;sy<PX;sy++)for(let sx=0;sx<PX;sx++){const so=(sy*PX+sx)*4,dy=(bh-1-ty)*PX+PX-1-sy,d=(dy*BW+tx*PX+sx)*4;for(let c=0;c<4;c++)btex[d+c]=gr.basePixels[so+c];}}
   const op=px=>{for(let i=3;i<px.length;i+=4)if(px[i]>127)return true;return false;};
-  const blockAt=(xx,y)=>{const b=rd.blocks[y*W+xx];if(!b)return undefined;const g=rd.graphics.get(b.metatileId);return {...b,behavior:g?.behavior??0,hasForeground:!!g&&op(g.foregroundPixels)};};
+  const blockAt=(xx,y)=>{const b=rd.blocks[y*W+xx];if(!b)return undefined;const g=rd.graphics.get(b.metatileId);return {...b,behavior:g?.behavior??0,hasForeground:!!g&&op(g.foregroundPixels),basePixels:g?.basePixels,secondary:b.metatileId>=(String.fromCharCode(...rom.slice(0xac,0xaf))==="BPR"||String.fromCharCode(...rom.slice(0xac,0xaf))==="BPG"?640:512)};};
   const type=rom[hdr-BASE+0x17]; const style=(type===8||type===9)?'interior':'outdoor';
-  const vol=buildMapVolume(W,H,blockAt,cat.readWarps(rom,hdr),style,2);
+  const vol=buildMapVolume(W,H,blockAt,cat.readWarps(rom,hdr),style,2,new Set(borderRaw.map(v=>v&0x3ff)));
   const ids=new Uint16Array(W*H); for(let i=0;i<ids.length;i++)ids[i]=rd.blocks[i]?.metatileId??0;
   const raised=isBorderRaised(borderRaw.map(v=>v&0x3ff),ids,vol.mask);
-  const water=new Uint8Array(W*H); for(let i=0;i<W*H;i++)water[i]=rd.blocks[i]?.elevation===1?1:0; markRocksInWater(W,H,water,(xx,y)=>rd.blocks[y*W+xx].collision!==0);
+  const water=new Uint8Array(W*H); const wbs=new Set(); for(let i=0;i<W*H;i++){if(rd.blocks[i]?.elevation===1){water[i]=1;const bh=rd.graphics.get(rd.blocks[i].metatileId)?.behavior;if(bh)wbs.add(bh);}} for(let i=0;i<W*H;i++){const bh=rd.graphics.get(rd.blocks[i]?.metatileId)?.behavior; if(bh!==undefined&&wbs.has(bh))water[i]=1;} markRocksInWater(W,H,water,(xx,y)=>rd.blocks[y*W+xx].collision!==0);
   const wb=new Set(); for(let i=0;i<W*H;i++)if(rd.blocks[i]?.elevation===1){const bh=rd.graphics.get(rd.blocks[i].metatileId)?.behavior; if(bh!==undefined)wb.add(bh);} let wet=0; for(const v of borderRaw){const bh=rd.graphics.get(v&0x3ff)?.behavior; if(bh!==undefined&&wb.has(bh))wet++;} const lowered=borderRaw.length>0&&wet*2>=borderRaw.length; if(process.env.WDBG)console.error(g,m,[...wb],borderRaw.map(v=>(v&0x3ff).toString(16)+":"+rd.graphics.get(v&0x3ff)?.behavior+":"+(v>>10)));
+  const srcs=vol.groundSources;
+  const gbase=base.slice(), gover=over.slice(); if(!process.env.NOSUB){applyGroundSubstitution(W,H,srcs,gbase,gover); if(style==='outdoor')cutoutBackgrounds(W,H,srcs,(xx,y)=>vol.buildingIds[y*W+xx]===0,base,base);}
+  let gtile=null; {const gc=findGroundCell(W,H,vol.mask,(xx,y)=>rd.blocks[y*W+xx]); if(gc){const gp=rd.graphics.get(rd.blocks[gc.y*W+gc.x].metatileId)?.basePixels; if(gp){gtile=new Uint8Array(256*4); for(let r=0;r<16;r++)gtile.set(gp.subarray(r*64,(r+1)*64),(15-r)*64); if(raised){const cols=tileColors(gp); for(let ty=0;ty<bh;ty++)for(let tx=0;tx<bw;tx++)cutoutTile(btex,BW,tx*16,ty*16,cols);}}}}
   const folds=[vol.natural,vol.details,...vol.buildings.map(b=>b.geometry)]; const patch=vol.patch;
-  return {water,lowered,rd,key:`${g}:${m}`,g,m,x,z,W,H,base,over,TW,TH,btex,BW,BH,bw,bh,raised,folds,patch,type:rom[hdr-BASE+0x17],hdr};
+  return {gtile,water,lowered,rd,key:`${g}:${m}`,g,m,x,z,W,H,base,over,gbase,gover,TW,TH,btex,BW,BH,bw,bh,raised,folds,patch,type:rom[hdr-BASE+0x17],hdr};
 }
 const main=loadMap(+G,+M,0,0); const maps=[main];
 if(neighborsFlag!=='0'){
@@ -67,14 +71,14 @@ const tris=[]; const add=(P,U,I,tex,tw,th,wrap,bias,C)=>{for(let i=0;i<I.length;
 const arr=(f,n)=>{const o=[];for(let i=0;i<f.length/n;i++)o.push(Array.from(f.slice(i*n,i*n+n)));return o;};
 for(const m of maps){
   {const gd=buildGroundGeometry(m.W,m.H,(xx,y)=>m.water[y*m.W+xx]===1,0); const GP=arr(gd.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), GU=arr(gd.uvs,2), GC=arr(gd.colors,3).map(c=>c[0]), GI=Array.from(gd.indices);
-  add(GP,GU,GI,m.base,m.TW,m.TH,false,0,GC); add(GP,GU,GI,m.over,m.TW,m.TH,false,1,GC);}
+  add(GP,GU,GI,m.gbase,m.TW,m.TH,false,0,GC); add(GP,GU,GI,m.gover,m.TW,m.TH,false,1,GC);}
   for(const fold of m.folds){const FP=arr(fold.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]), FU=arr(fold.uvs,2);
   const FC=arr(fold.colors,3).map(c=>c[0]); const FI=Array.from(fold.indices);
   add(FP,FU,FI.slice(0,fold.fullIndexCount),m.base,m.TW,m.TH,false,0,FC);
   add(FP,FU,FI,m.over,m.TW,m.TH,false,1,FC);}
   if(m.patch){const PP=arr(m.patch.positions,3).map(p=>[p[0]+m.x,p[1],p[2]+m.z]); add(PP,arr(m.patch.uvs,2),Array.from(m.patch.indices),m.base,m.TW,m.TH,false,1.5);}
 }
-for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1,arr(p.colors,3).map(c=>c[0]));}
+for(const p of padding){const m=maps.find(x=>x.key===p.key); add(arr(p.positions,3),arr(p.uvs,2),Array.from(p.indices),m.btex,m.BW,m.BH,true,-1,arr(p.colors,3).map(c=>c[0])); if(p.floor){ if(m.gtile) add(arr(p.floor.positions,3),arr(p.floor.uvs,2),Array.from(p.floor.indices),m.gtile,16,16,true,-1.5); else add(arr(p.floor.positions,3),arr(p.floor.uvs,2).map(([a,b])=>[a/m.bw,b/m.bh]),Array.from(p.floor.indices),m.btex,m.BW,m.BH,true,-1.5);}}
 log(maps.map(m=>`${m.key} @(${m.x},${m.z}) ${m.W}x${m.H} borda ${m.bw}x${m.bh} ${m.raised?'ELEVADA':'plana'}`).join('\n'));
 log('padding:', padding.map(p=>`${p.key}=${p.cellCount} celulas`).join(', '));
 // camera

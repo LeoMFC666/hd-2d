@@ -26,6 +26,8 @@
  * em coordenadas LOCAIS do mapa (x de 0 a width, z de 0 a height).
  */
 
+import { chooseGroundSources } from './GroundSubstitution';
+
 export interface FoldBlock {
   collision: number;
   elevation: number;
@@ -329,6 +331,13 @@ export interface FoldOptions {
   // Interior: chao andavel. Movel solto tem chao logo acima; a parede do
   // fundo encosta no topo do mapa ou no vazio.
   isFloor?: (x: number, y: number) => boolean;
+
+  // Metatile de cada bloco: a altura das arvores sai da repeticao dele.
+  metatileAt?: (x: number, y: number) => number;
+
+  // Linhas de fachada de um trecho de predio (colunas x0..x1, linhas
+  // y0..y1). Sem isto vale maxWallRows.
+  facadeRowsFor?: (x0: number, x1: number, y0: number, y1: number) => number;
 }
 
 // Brilho de cada face. Topo pleno; fachada (voltada para a camera) um
@@ -340,12 +349,19 @@ const SHADE_WEST = 0.7;
 
 // Quanto o telhado de um predio sobe por linha de telhado, em tiles, e o
 // maximo que ele sobe no total.
-const ROOF_PITCH = 0.35;
+// 0: telhado plano, como os predios do Faithful (o desenho do GBA ja traz
+// o caimento pintado).
+const ROOF_PITCH = 0;
 const MAX_ROOF_RISE = 1.0;
 
 // Altura dos cartoes de arvore/pedra: cada linha mostra a si mesma e a de
 // cima, em pe (2 tiles), como as arvores do Faithful.
 const NATURAL_CARD_ROWS = 2;
+
+// Objeto natural solto ate esta altura vira um cartao so; acima disso
+// procura a repeticao do desenho (periodo de ate MAX_OBJECT_PERIOD).
+const MAX_LONE_OBJECT_ROWS = 4;
+const MAX_OBJECT_PERIOD = 4;
 
 // Interior: sequencias com ate tantas linhas sao moveis (caixa de 1 tile).
 const INTERIOR_FURNITURE_ROWS = 2;
@@ -574,6 +590,37 @@ export function buildFoldGeometry(
     );
   };
 
+  // Altura (em linhas) de cada objeto natural de uma sequencia.
+  const objectHeight = (run: Run): number => {
+    const rows = run.y1 - run.y0 + 1;
+    const metatileAt = options.metatileAt;
+
+    if (rows <= MAX_LONE_OBJECT_ROWS || !metatileAt) {
+      return Math.max(1, Math.min(rows, MAX_LONE_OBJECT_ROWS));
+    }
+
+    for (let period = 2; period <= MAX_OBJECT_PERIOD; period++) {
+      let same = 0;
+      let total = 0;
+
+      for (let x = run.x0; x <= run.x1; x++) {
+        for (let y = run.y0 + period; y <= run.y1; y++) {
+          total++;
+
+          if (metatileAt(x, y) === metatileAt(x, y - period)) {
+            same++;
+          }
+        }
+      }
+
+      if (total > 0 && same * 10 >= total * 7) {
+        return period;
+      }
+    }
+
+    return NATURAL_CARD_ROWS;
+  };
+
   for (const run of merged) {
     const left = run.x0;
     const right = run.x1 + 1;
@@ -586,26 +633,28 @@ export function buildFoldGeometry(
       (buildingAt?.(run.x0, run.y1) ?? 0) > 0;
 
     // ---- arvores, pedras, penhascos, placas, cercas: cartoes em pe ----
+    // Cada objeto vira UM cartao em pe na borda sul da sua linha de baixo.
+    // A altura do objeto sai do proprio desenho: numa mata o padrao de
+    // metatiles se repete a cada N linhas (arvore de 2 linhas na borda da
+    // Route 1, de 3 nas arvores soltas); a sequencia e cortada nesse
+    // periodo a partir de baixo (a linha de baixo e sempre tronco). Objeto
+    // solto (sem repeticao) e um cartao so com a altura inteira. O fundo
+    // do desenho e recortado na textura dos modelos (GroundSubstitution).
     if (style === 'outdoor' && !building && !run.card) {
-      for (let row = run.y0; row <= run.y1; row++) {
-        const z = row + 1;
+      const unit =
+        objectHeight(run);
 
-        // A linha em si, do chao ate 1. Topo de objeto (so camada de cima)
-        // nao ganha cartao proprio: ele ja aparece no cartao da linha de
-        // baixo, e repetido apareceria pelos furos da copa.
-        if (!isOverhangRow(row)) {
-          standing(left, right, z, 0, 1, row, 1, false);
-        }
+      for (let bottom = run.y1; bottom >= run.y0; bottom -= unit) {
+        const z = bottom + 1;
 
-        // As linhas de cima, empilhadas no mesmo cartao.
-        for (let above = 1; above < NATURAL_CARD_ROWS; above++) {
-          const upper = row - above;
+        for (let level = 0; level < unit; level++) {
+          const row = bottom - level;
 
-          if (upper < run.y0) {
+          if (row < run.y0) {
             break;
           }
 
-          standing(left, right, z, above, above + 1, upper, 1, isOverhangRow(upper));
+          standing(left, right, z, level, level + 1, row, 1, isOverhangRow(row));
         }
       }
 
@@ -629,7 +678,9 @@ export function buildFoldGeometry(
         ? 1
         : style === 'interior'
           ? INTERIOR_WALL_ROWS
-          : maxWallRows;
+          : building && options.facadeRowsFor && !run.card
+            ? options.facadeRowsFor(run.x0, run.x1, run.y0, run.y1)
+            : maxWallRows;
 
     const wall = Math.min(rows, wallLimit);
     const roofRows = run.card ? 0 : rows - wall;
@@ -638,7 +689,7 @@ export function buildFoldGeometry(
     const northZ = southZ - roofRows;
 
     const pitched =
-      building && style === 'outdoor' && roofRows > 0;
+      ROOF_PITCH > 0 && building && style === 'outdoor' && roofRows > 0;
 
     const pitch =
       Math.min(ROOF_PITCH, MAX_ROOF_RISE / Math.max(1, roofRows));
@@ -707,6 +758,13 @@ export function buildFoldGeometry(
     const gableEastU = u(right) - 0.5 / width;
     const gableV = facadeTopV - 0.5 / (height * 16);
 
+    // Coluna da fachada repetida nas laterais: a segunda a partir da quina
+    // (janelas, parede) quando o predio e largo; a quina tem a coluna do
+    // canto e repetida virava listras de pilar.
+    const runWidth = right - left;
+    const sideWest = runWidth >= 3 ? left + 1 : left;
+    const sideEast = runWidth >= 3 ? right - 2 : right - 1;
+
     const firstSolidRoofRow =
       Math.min(Math.max(run.y0, overhangEnd + 1), roofBottomRow + 1);
 
@@ -721,10 +779,10 @@ export function buildFoldGeometry(
           [left, wall, z],
         ],
         [
-          [u(left + 1), facadeBottomV],
-          [u(left), facadeBottomV],
-          [u(left), facadeTopV],
-          [u(left + 1), facadeTopV],
+          [u(sideWest + 1), facadeBottomV],
+          [u(sideWest), facadeBottomV],
+          [u(sideWest), facadeTopV],
+          [u(sideWest + 1), facadeTopV],
         ],
         SHADE_WEST,
       );
@@ -737,10 +795,10 @@ export function buildFoldGeometry(
           [right, wall, z + 1],
         ],
         [
-          [u(right), facadeBottomV],
-          [u(right - 1), facadeBottomV],
-          [u(right - 1), facadeTopV],
-          [u(right), facadeTopV],
+          [u(sideEast + 1), facadeBottomV],
+          [u(sideEast), facadeBottomV],
+          [u(sideEast), facadeTopV],
+          [u(sideEast + 1), facadeTopV],
         ],
         SHADE_EAST,
       );
@@ -1125,6 +1183,149 @@ export interface VolumeBlock {
 
   // O metatile tem pixels na camada de cima.
   hasForeground: boolean;
+
+  // Pixels da camada de baixo do metatile (16x16 RGBA), para medir quantas
+  // linhas de um predio sao fachada.
+  basePixels?: Uint8ClampedArray;
+
+  // Metatile do tileset SECUNDARIO (o da cidade). Na Gen 3 os predios de
+  // cada cidade ficam nele; arvores, cercas e placas, no primario.
+  secondary?: boolean;
+}
+
+// Fachada de predio: limites de linhas em pe.
+const MIN_FACADE_ROWS = 1;
+const MAX_FACADE_ROWS = 6;
+
+// Semelhanca minima (0..1) entre as cores de uma linha e as da linha da
+// porta para a linha contar como parede.
+const FACADE_SIMILARITY = 0.45;
+const FACADE_SECOND_ROW_SIMILARITY = 0.25;
+
+function colorHistogram(
+  pixels: Array<Uint8ClampedArray | undefined>,
+): Map<number, number> {
+  const histogram = new Map<number, number>();
+
+  for (const cell of pixels) {
+    if (!cell) {
+      continue;
+    }
+
+    for (let offset = 0; offset < cell.length; offset += 4) {
+      if (cell[offset + 3] < 128) {
+        continue;
+      }
+
+      // 4 bits por canal: tons quase iguais contam como a mesma cor.
+      const key =
+        ((cell[offset] >> 4) << 8) |
+        ((cell[offset + 1] >> 4) << 4) |
+        (cell[offset + 2] >> 4);
+
+      histogram.set(key, (histogram.get(key) ?? 0) + 1);
+    }
+  }
+
+  return histogram;
+}
+
+function histogramSimilarity(
+  a: Map<number, number>,
+  b: Map<number, number>,
+): number {
+  let totalA = 0;
+  let totalB = 0;
+  let shared = 0;
+
+  for (const value of a.values()) {
+    totalA += value;
+  }
+
+  for (const value of b.values()) {
+    totalB += value;
+  }
+
+  if (totalA === 0 || totalB === 0) {
+    return 0;
+  }
+
+  for (const [key, value] of a) {
+    const other = b.get(key);
+
+    if (other !== undefined) {
+      shared += Math.min(value / totalA, other / totalB);
+    }
+  }
+
+  return shared;
+}
+
+/**
+ * Quantas linhas de baixo de um predio sao FACHADA (parede em pe), pelas
+ * cores: sobe a partir da linha da porta enquanto a linha se parece com
+ * ela. O Centro Pokemon para no telhado vermelho; a loja de departamentos
+ * de Celadon sobe andar por andar, como no Faithful.
+ */
+function measureFacadeRows(
+  cells: Array<{ x: number; y: number }>,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+): number {
+  // Borda sul mais comum entre as colunas.
+  const bottoms = new Map<number, number>();
+
+  for (const cell of cells) {
+    bottoms.set(cell.x, Math.max(bottoms.get(cell.x) ?? -1, cell.y));
+  }
+
+  const votes = new Map<number, number>();
+
+  for (const bottom of bottoms.values()) {
+    votes.set(bottom, (votes.get(bottom) ?? 0) + 1);
+  }
+
+  let edge = -1;
+  let best = 0;
+
+  for (const [bottom, count] of votes) {
+    if (count > best) {
+      edge = bottom;
+      best = count;
+    }
+  }
+
+  const top =
+    Math.min(...cells.map((cell) => cell.y));
+
+  const rowCells = (row: number): Array<Uint8ClampedArray | undefined> =>
+    cells
+      .filter((cell) => cell.y === row)
+      .map((cell) => blockAt(cell.x, cell.y)?.basePixels);
+
+  const reference =
+    colorHistogram(rowCells(edge));
+
+  let rows = 1;
+
+  for (let row = edge - 1; row > top; row--) {
+    // A segunda linha (logo acima da porta) entra com menos semelhanca: em
+    // casas pequenas ela mistura parede e beiral. Daí para cima so entra
+    // linha bem parecida (andares de predio alto).
+    const needed =
+      rows === 1 ? FACADE_SECOND_ROW_SIMILARITY : FACADE_SIMILARITY;
+
+    if (
+      rows >= MAX_FACADE_ROWS ||
+      histogramSimilarity(colorHistogram(rowCells(row)), reference) < needed
+    ) {
+      break;
+    }
+
+    rows++;
+  }
+
+  // Sempre sobra pelo menos uma linha de telhado.
+  return Math.max(MIN_FACADE_ROWS, Math.min(rows, edge - top));
 }
 
 export interface BuildingVolume {
@@ -1136,12 +1337,21 @@ export interface BuildingVolume {
   x1: number;
   y1: number;
 
+  // Linhas de fachada em pe (medidas pelas cores).
+  facadeRows: number;
+
   geometry: FoldGeometryData;
 }
 
 export interface MapVolume {
   // Mascara final (FOLD_*), para quem precisa saber o que subiu.
   mask: Uint8Array;
+
+  // Predio de cada bloco (0 = nenhum).
+  buildingIds: Int32Array;
+
+  // Bloco de chao que vai debaixo de cada bloco coberto (-1 = nenhum).
+  groundSources: Int32Array;
 
   // Arvores, pedras, cercas (ou, no interior, paredes e moveis).
   natural: FoldGeometryData;
@@ -1168,9 +1378,36 @@ export function buildMapVolume(
   warps: ReadonlyArray<{ x: number; y: number }>,
   style: FoldStyle,
   maxWallRows: number,
+  // Metatiles que sao natureza com certeza (os do bloco de borda do mapa:
+  // a mata em volta da cidade).
+  natureMetatiles: ReadonlySet<number> = new Set(),
 ): MapVolume {
   const mask =
     computeFoldMask(width, height, blockAt);
+
+  // Bloco com comportamento de agua (pedra no mar, borda de mar
+  // impassavel) nunca sobe: fica na agua, rebaixado com ela.
+  const waterBehaviors = new Set<number>();
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const block = blockAt(x, y);
+
+      if (block && block.elevation === 1 && block.behavior !== 0) {
+        waterBehaviors.add(block.behavior);
+      }
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const behavior = blockAt(x, y)?.behavior;
+
+      if (behavior !== undefined && waterBehaviors.has(behavior)) {
+        mask[y * width + x] = 0;
+      }
+    }
+  }
 
   classifyLedges(
     width,
@@ -1205,15 +1442,39 @@ export function buildMapVolume(
     },
   );
 
+  // Chao de origem de cada bloco coberto (ver GroundSubstitution): vai
+  // para debaixo do modelo e diz quais cores sao "fundo" no desenho.
+  const groundSources =
+    chooseGroundSources({
+      width,
+      height,
+      covered: (x, y) => mask[y * width + x] !== 0,
+      isGround: (x, y) => {
+        const block = blockAt(x, y);
+
+        return (
+          !!block &&
+          block.collision === 0 &&
+          block.elevation !== 1 &&
+          block.behavior !== MB_TALL_GRASS
+        );
+      },
+    });
+
+  const natural =
+    style === 'outdoor'
+      ? markNaturalCells(width, height, mask, blockAt, groundSources, natureMetatiles)
+      : new Uint8Array(width * height);
+
   const buildingIds =
     style === 'outdoor'
-      ? computeBuildingIds(width, height, mask, warps)
+      ? findBuildings(width, height, mask, natural, warps)
       : new Int32Array(width * height);
 
   const overlayOnly = (x: number, y: number): boolean =>
     mask[y * width + x] === FOLD_OVERHANG;
 
-  const natural =
+  const naturalGeometry =
     buildFoldGeometry(
       width,
       height,
@@ -1224,6 +1485,7 @@ export function buildMapVolume(
       {
         style,
         overlayOnly,
+        metatileAt: (x, y) => blockAt(x, y)?.metatileId ?? -1,
         isFloor: (x, y) => {
           const block = blockAt(x, y);
 
@@ -1259,19 +1521,46 @@ export function buildMapVolume(
   const buildings: BuildingVolume[] = [];
 
   for (const [id, box] of bounds) {
+    const cells: Array<{ x: number; y: number }> = [];
+
+    for (let y = box.y0; y <= box.y1; y++) {
+      for (let x = box.x0; x <= box.x1; x++) {
+        if (buildingIds[y * width + x] === id) {
+          cells.push({ x, y });
+        }
+      }
+    }
+
+    const facadeRows =
+      measureFacadeRows(cells, blockAt);
+
     buildings.push({
       id,
       ...box,
+      facadeRows,
       geometry:
         buildFoldGeometry(
           width,
           height,
           (x, y) => buildingIds[y * width + x] === id,
-          maxWallRows,
+          facadeRows,
           {
             style,
             overlayOnly,
             buildingAt: (x, y) => buildingIds[y * width + x],
+            // Cada trecho do predio mede a propria fachada: predios
+            // colados (Celadon) tem alturas diferentes.
+            facadeRowsFor: (x0, x1, y0, y1) => {
+              const part: Array<{ x: number; y: number }> = [];
+
+              for (let y = y0; y <= y1; y++) {
+                for (let x = x0; x <= x1; x++) {
+                  part.push({ x, y });
+                }
+              }
+
+              return measureFacadeRows(part, blockAt);
+            },
           },
         ),
     });
@@ -1288,27 +1577,19 @@ export function buildMapVolume(
         blockAt(x, y)?.behavior === MB_TALL_GRASS,
     );
 
-  // Remendo so debaixo dos predios: e onde a copia achatada aparecia. Em
-  // arvores ele trocava a grama em volta por outro tile (manchas claras
-  // em volta das ledges da Route 1).
-  let patch: GroundPatchData | null = null;
+  // O chao debaixo do volume agora e trocado na textura do mapa inteiro
+  // (GroundSubstitution); o remendo por cima ficou sem uso.
+  const patch: GroundPatchData | null = null;
 
-  if (buildings.length > 0) {
-    const ground =
-      findGroundCell(width, height, mask, blockAt);
-
-    if (ground) {
-      const buildingMask = new Uint8Array(width * height);
-
-      for (let index = 0; index < buildingMask.length; index++) {
-        buildingMask[index] = buildingIds[index] > 0 ? 1 : 0;
-      }
-
-      patch = buildGroundPatch(width, height, buildingMask, ground);
-    }
-  }
-
-  return { mask, natural, buildings, details, patch };
+  return {
+    mask,
+    buildingIds,
+    groundSources,
+    natural: naturalGeometry,
+    buildings,
+    details,
+    patch,
+  };
 }
 
 /**
@@ -1542,7 +1823,7 @@ export function markRocksInWater(
   const wetAt = (x: number, y: number): boolean =>
     x < 0 || y < 0 || x >= width || y >= height || water[y * width + x] === 1;
 
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < 12; pass++) {
     const add: number[] = [];
 
     for (let y = 0; y < height; y++) {
@@ -1584,4 +1865,265 @@ export function markRocksInWater(
       water[index] = 1;
     }
   }
+}
+
+
+// Fracao da borda do tile com cor de chao para o bloco contar como
+// natureza (arvore solta, cerca, placa, caixa de correio): o desenho tem
+// grama em volta. Parede e telhado de predio sao opacos ate a borda.
+const NATURAL_BORDER_FRACTION = 0.2;
+
+// Natureza pelo bloco de borda (certa) ou so pela cor (pode ser quina de
+// telhado arredondado - o predio absorve se estiver dentro dele).
+const NATURE_CERTAIN = 2;
+const NATURE_BY_COLOR = 1;
+
+/**
+ * Blocos com volume que sao NATUREZA (1) e nao predio: metatiles do bloco
+ * de borda (a mata) ou desenho com fundo de chao encostando na borda.
+ */
+function markNaturalCells(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+  groundSources: Int32Array,
+  natureMetatiles: ReadonlySet<number>,
+): Uint8Array {
+  const natural = new Uint8Array(width * height);
+  const colorsBySource = new Map<number, Set<number>>();
+
+  const groundColors = (source: number): Set<number> => {
+    const cached = colorsBySource.get(source);
+
+    if (cached) {
+      return cached;
+    }
+
+    const colors = new Set<number>();
+    const pixels = blockAt(source % width, Math.floor(source / width))?.basePixels;
+
+    if (pixels) {
+      for (let offset = 0; offset < pixels.length; offset += 4) {
+        if (pixels[offset + 3] >= 128) {
+          colors.add((pixels[offset] << 16) | (pixels[offset + 1] << 8) | pixels[offset + 2]);
+        }
+      }
+    }
+
+    colorsBySource.set(source, colors);
+
+    return colors;
+  };
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+
+      if (!isVolumeCell(mask[index])) {
+        continue;
+      }
+
+      const block = blockAt(x, y);
+
+      if (!block) {
+        continue;
+      }
+
+      if (natureMetatiles.has(block.metatileId)) {
+        natural[index] = NATURE_CERTAIN;
+        continue;
+      }
+
+      // Tile da cidade: predio (o teste de cor confundia a calcada cinza
+      // de Celadon com as paredes).
+      if (block.secondary) {
+        continue;
+      }
+
+      const source = groundSources[index];
+      const pixels = block.basePixels;
+
+      if (source < 0 || !pixels) {
+        continue;
+      }
+
+      const colors = groundColors(source);
+      let border = 0;
+      let matching = 0;
+
+      for (let i = 0; i < 16; i++) {
+        for (const [px, py] of [[i, 0], [i, 15], [0, i], [15, i]]) {
+          const offset = (py * 16 + px) * 4;
+          border++;
+
+          // So conta fundo VERDE (grama): calcada cinza tem as mesmas
+          // cores das paredes de varios predios (Viridian, Celadon).
+          const red = pixels[offset];
+          const green = pixels[offset + 1];
+          const blue = pixels[offset + 2];
+
+          if (
+            pixels[offset + 3] >= 128 &&
+            green > red + 16 &&
+            green >= blue &&
+            colors.has((red << 16) | (green << 8) | blue)
+          ) {
+            matching++;
+          }
+        }
+      }
+
+      if (matching >= border * NATURAL_BORDER_FRACTION) {
+        natural[index] = NATURE_BY_COLOR;
+      }
+    }
+  }
+
+  return natural;
+}
+
+// Maior predio aceito (tiles). Penhasco com caverna tambem tem porta.
+const MAX_BUILDING_SPAN_X = 32;
+const MAX_BUILDING_SPAN_Y = 24;
+
+/**
+ * Predios a partir das PORTAS (warps do cabecalho do mapa): cada porta
+ * cresce sobre os blocos com volume que nao sao natureza. Arvores e
+ * cercas encostadas na casa ficam de fora, e predios colados (Celadon)
+ * deixam de virar um bloco gigante sem predio nenhum.
+ */
+function findBuildings(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  natural: Uint8Array,
+  warps: ReadonlyArray<{ x: number; y: number }>,
+): Int32Array {
+  const ids = new Int32Array(width * height);
+  const candidate = (x: number, y: number): boolean =>
+    x >= 0 &&
+    y >= 0 &&
+    x < width &&
+    y < height &&
+    isVolumeCell(mask[y * width + x]) &&
+    natural[y * width + x] !== NATURE_CERTAIN &&
+    // Natureza pela cor so fica de fora fora do tileset da cidade; o teste
+    // de cor erra em predios verdes (ginasio de Viridian), entao ele so
+    // separa objetos soltos que encostam no predio por um lado.
+    !(natural[y * width + x] === NATURE_BY_COLOR && isLoneObject(x, y));
+
+  // Objeto natural solto encostado no predio: tem chao andavel em pelo
+  // menos dois lados (arvore, caixa de correio ao lado da casa).
+  function isLoneObject(x: number, y: number): boolean {
+    let open = 0;
+
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height || mask[ny * width + nx] === 0) {
+        open++;
+      }
+    }
+
+    return open >= 2;
+  }
+
+  let nextId = 1;
+
+  for (const warp of warps) {
+    // Porta solida no proprio warp, ou warp passavel logo abaixo dela.
+    const seeds = [
+      [warp.x, warp.y],
+      [warp.x, warp.y - 1],
+    ].filter(([x, y]) => candidate(x, y));
+
+    const seed = seeds[0];
+
+    if (!seed || ids[seed[1] * width + seed[0]] !== 0) {
+      continue;
+    }
+
+    const id = nextId++;
+    const stack = [seed[1] * width + seed[0]];
+    const cells: number[] = [];
+    let minX = width;
+    let maxX = -1;
+    let minY = height;
+    let maxY = -1;
+
+    ids[stack[0]] = id;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      cells.push(cell);
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (!candidate(nx, ny)) {
+          continue;
+        }
+
+        const next = ny * width + nx;
+
+        if (ids[next] === 0) {
+          ids[next] = id;
+          stack.push(next);
+        }
+      }
+    }
+
+    if (
+      maxX - minX + 1 > MAX_BUILDING_SPAN_X ||
+      maxY - minY + 1 > MAX_BUILDING_SPAN_Y
+    ) {
+      for (const cell of cells) {
+        ids[cell] = 0;
+      }
+
+      continue;
+    }
+
+    // Quinas: bloco com volume dentro do retangulo do predio que so foi
+    // marcado como natureza pela cor (telhado arredondado do Centro
+    // Pokemon do Emerald, com grama no canto) entra no predio.
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const cell = y * width + x;
+
+        if (
+          ids[cell] === 0 &&
+          isVolumeCell(mask[cell]) &&
+          natural[cell] === NATURE_BY_COLOR
+        ) {
+          ids[cell] = id;
+        }
+      }
+    }
+
+    // Topo do telhado (so camada de cima) logo acima do predio.
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY - 1; y >= 0; y--) {
+        const cell = y * width + x;
+
+        if (mask[cell] !== FOLD_OVERHANG || ids[cell] !== 0) {
+          break;
+        }
+
+        ids[cell] = id;
+      }
+    }
+  }
+
+  return ids;
 }

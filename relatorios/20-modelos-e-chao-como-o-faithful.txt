@@ -1,0 +1,73 @@
+RELATORIO 20 - MODELOS E CHAO COMO O FAITHFUL (FR, PERFECT E EMERALD)
+Branch 4 - 12/10/2026
+
+PEDIDO
+  "prossiga refinando isso ate ficar identico ao faithful. em ambos os
+  games, perfect, fire red e emerald. alguns modelos ... casas, arvores,
+  ginasios estao mal feitos ... o faithful parece fazer uma substituicao
+  das areas que tem modelos 3d por tiles similares ... pegue tiles como o
+  de construcoes e etc. junte eles e tente formar o modelo".
+  Tudo continua automatico: nada e configurado por mapa.
+
+REFERENCIA
+  95 quadros do video do Faithful (1 por segundo) em folhas de contato.
+  O que se ve: chao limpo debaixo de tudo, arvores recortadas em pe com
+  grama entre elas, cercas recortadas, predios com teto plano e fachadas
+  altas (Celadon), agua rebaixada.
+
+1. CHAO TROCADO DEBAIXO DOS MODELOS (src/render/GroundSubstitution.ts)
+   O mapa ganhou duas texturas:
+   - CHAO: cada bloco coberto por modelo recebe o tile do chao andavel
+     mais proximo (busca em largura). Grama vizinha debaixo da arvore,
+     calcada debaixo da casa, piso debaixo do movel. Acabou o desenho
+     achatado aparecendo pelos lados do modelo.
+   - MODELOS: o desenho original. Em objetos naturais (arvores, cercas,
+     placas, ledges, postes) o fundo e recortado: a partir da borda do
+     tile, somem os pixels com as cores do chao que foi para debaixo.
+   A animacao de tiles continua na textura do chao.
+
+2. ARVORES
+   - Uma arvore = um cartao em pe com a altura dela. A altura sai do
+     proprio desenho: numa mata o padrao de metatiles se repete a cada N
+     linhas (2 na borda da Route 1, 3 nos pinheiros soltos); objeto solto
+     de ate 4 linhas vira um cartao so.
+   - Recortadas: entre as arvores aparece a grama, como no Faithful.
+   - Arvores do padding: o bloco de borda tambem e recortado, um cartao
+     por arvore (na ultima linha do padrao) e um chao com o tile de grama
+     do mapa por baixo.
+
+3. PREDIOS ("junte os tiles e forme o modelo")
+   - Nascem das PORTAS: cada warp cresce sobre os blocos com volume que
+     nao sao natureza. Antes era o grupo inteiro com limite de tamanho -
+     em Celadon a mata colada nos predios formava um grupo enorme e
+     NENHUM predio era reconhecido.
+   - Natureza: metatile do bloco de borda (a mata em volta) com certeza;
+     pela cor (fundo verde de grama encostando na borda do tile) so quando
+     o objeto esta solto ao lado do predio (caixa de correio, arvore).
+     Tiles do tileset da cidade (secundario) nunca contam como natureza
+     pela cor - a calcada cinza de Celadon parecia parede.
+   - Quinas arredondadas (Centro Pokemon do Emerald) e o topo do telhado
+     entram no predio.
+   - Telhado plano (o desenho do GBA ja traz o caimento pintado).
+   - Fachada medida pelas CORES: sobe a partir da linha da porta enquanto
+     a linha se parece com ela. Centro Pokemon para no telhado; predios de
+     Celadon e Rustboro ficam com 3-4 andares em pe. Cada trecho de predio
+     mede o seu (predios colados tem alturas diferentes).
+   - Laterais repetem a segunda coluna da fachada (janelas), nao a quina.
+   - Ginasio de Viridian (paredes verdes) reconhecido.
+
+4. AGUA
+   - Agua tambem pelo comportamento: bloco com o mesmo MB_* da agua do
+     mapa e agua mesmo sem elevacao 1 (mar da Perfect Fire Red).
+   - Bloco com comportamento de agua nunca sobe (pedras do mar ficavam
+     como blocos de mar levantados).
+
+CONFERENCIA
+  Offline: Route 1, Pallet, Viridian, Celadon, Littleroot, Oldale,
+  Rustboro, Cinnabar da Perfect. Navegador: FireRed (interior do Centro
+  Pokemon no resumo) e Perfect Fire Red em Cinnabar. Sem erros.
+
+PENDENCIAS
+  - Game Corner de Celadon: a parte creme com janelas fica deitada como
+    telhado (cor diferente da fachada vermelha de baixo).
+  - Ceu, reflexo na agua e penhascos em degraus do Faithful ainda nao.

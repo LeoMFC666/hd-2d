@@ -66,6 +66,14 @@ export interface PaddingMeshData {
 
   indices: Uint32Array;
   cellCount: number;
+
+  // Borda elevada (arvores em cartoes): chao separado debaixo deles, com
+  // UV em tiles (1 repeticao por tile) para a textura do tile de chao.
+  floor?: {
+    positions: Float32Array;
+    uvs: Float32Array;
+    indices: Uint32Array;
+  };
 }
 
 // Cartoes de arvore tem luz plena, como os de VoxelFolding.
@@ -177,6 +185,9 @@ export function buildPadding(
     colors: [] as number[],
     indices: [] as number[],
     cells: 0,
+    floorPositions: [] as number[],
+    floorUvs: [] as number[],
+    floorIndices: [] as number[],
   }));
 
   const isPadding = (gx: number, gz: number, index: number): boolean => {
@@ -264,24 +275,41 @@ export function buildPadding(
         // Borda solida (arvores): cartoes em pe, uma fileira por linha,
         // cada uma mostrando a propria linha e as de cima - o mesmo jeito
         // das arvores do mapa (VoxelFolding), como no Faithful. O chao
-        // debaixo fica com a propria borda (fica coberto pelos cartoes).
-        quad(
-          target,
-          [
-            [left, 0, south],
-            [right, 0, south],
-            [right, 0, north],
-            [left, 0, north],
-          ],
-          [
-            [uOf(left), vOf(south)],
-            [uOf(right), vOf(south)],
-            [uOf(right), vOf(north)],
-            [uOf(left), vOf(north)],
-          ],
-        );
+        // debaixo e o tile de chao do mapa (grama), em malha propria: o
+        // fundo do desenho das arvores e recortado nos cartoes.
+        {
+          const base = target.floorPositions.length / 3;
 
-        for (let level = 0; level < raisedHeight; level++) {
+          target.floorPositions.push(
+            left, 0, south,
+            right, 0, south,
+            right, 0, north,
+            left, 0, north,
+          );
+
+          target.floorUvs.push(
+            left, -south,
+            right, -south,
+            right, -north,
+            left, -north,
+          );
+
+          target.floorIndices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        }
+
+        // Uma arvore por bloco de borda: cartao so na ULTIMA linha do
+        // padrao (o tronco), com a altura do bloco. Cartao em toda linha
+        // repetia a copa, que aparecia pelos furos do recorte.
+        const patternRow =
+          (((north - map.z + 8) % map.borderHeight) + map.borderHeight) %
+          map.borderHeight;
+
+        const cardRows =
+          patternRow === map.borderHeight - 1
+            ? Math.max(raisedHeight, map.borderHeight)
+            : 0;
+
+        for (let level = 0; level < cardRows; level++) {
           // Linha do padrao mostrada neste andar do cartao.
           const rowSouth = south - level;
 
@@ -321,6 +349,14 @@ export function buildPadding(
       colors: new Float32Array(builder.colors),
       indices: new Uint32Array(builder.indices),
       cellCount: builder.cells,
+      floor:
+        builder.floorIndices.length > 0
+          ? {
+              positions: new Float32Array(builder.floorPositions),
+              uvs: new Float32Array(builder.floorUvs),
+              indices: new Uint32Array(builder.floorIndices),
+            }
+          : undefined,
     });
   });
 

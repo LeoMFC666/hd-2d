@@ -130,10 +130,19 @@ import {
 import {
   buildGroundGeometry,
   buildMapVolume,
+  findGroundCell,
   markRocksInWater,
   type FoldGeometryData,
+  type MapVolume,
   WATER_DEPTH,
 } from './VoxelFolding';
+
+import {
+  applyGroundSubstitution,
+  cutoutBackgrounds,
+  cutoutTile,
+  tileColors,
+} from './GroundSubstitution';
 
 // Elevacao da agua na grade de colisao da Gen 3.
 const WATER_ELEVATION =
@@ -348,6 +357,11 @@ export class PlayerRenderer {
 
   // Bloco de borda de cada mapa, em textura com repeticao.
   private readonly borderTextures =
+    new Map<string, THREE.DataTexture>();
+
+  // Tile de chao de cada mapa (16x16, repetido): chao do padding debaixo
+  // das arvores em cartao.
+  private readonly groundTileTextures =
     new Map<string, THREE.DataTexture>();
 
   // O padding de cada mapa sobe com a dobra? (ver isBorderRaised)
@@ -894,6 +908,8 @@ export class PlayerRenderer {
 
       this.borderTextures.get(key)?.dispose();
       this.borderTextures.delete(key);
+      this.groundTileTextures.get(key)?.dispose();
+      this.groundTileTextures.delete(key);
       this.paddingDirty = true;
     }
 
@@ -1210,6 +1226,8 @@ export class PlayerRenderer {
             map: texture,
             side: THREE.DoubleSide,
             vertexColors: true,
+            // Arvores recortadas: o fundo transparente nao desenha.
+            alphaTest: 0.5,
           }),
         );
 
@@ -1220,6 +1238,42 @@ export class PlayerRenderer {
 
       this.worldBorderMeshes.push(mesh);
       this.root.add(mesh);
+
+      // Chao debaixo das arvores da borda: o tile de chao do mapa (ou, sem
+      // ele, a propria borda sem recorte - nunca fica buraco).
+      if (data.floor) {
+        const floorGeometry =
+          new THREE.BufferGeometry();
+
+        floorGeometry.setAttribute(
+          'position',
+          new THREE.BufferAttribute(data.floor.positions, 3),
+        );
+
+        floorGeometry.setAttribute(
+          'uv',
+          new THREE.BufferAttribute(data.floor.uvs, 2),
+        );
+
+        floorGeometry.setIndex(
+          new THREE.BufferAttribute(data.floor.indices, 1),
+        );
+
+        const floor =
+          new THREE.Mesh(
+            floorGeometry,
+            new THREE.MeshBasicMaterial({
+              map: this.groundTileTextures.get(data.key) ?? texture,
+              side: THREE.DoubleSide,
+            }),
+          );
+
+        floor.position.y = -0.02;
+        floor.renderOrder = -11;
+
+        this.worldBorderMeshes.push(floor);
+        this.root.add(floor);
+      }
     }
   }
 
@@ -1249,10 +1303,16 @@ export class PlayerRenderer {
     key: string,
     map: MapDefinition,
     graphicsById: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+    groundTile?: Uint8ClampedArray,
   ): void {
     if (this.borderTextures.has(key)) {
       return;
     }
+
+    // Borda elevada (arvores): recorta o fundo de grama de cada tile, como
+    // nas arvores do mapa, e guarda o tile de chao para ir debaixo.
+    const cutout =
+      !!groundTile && (this.paddingRaised.get(key) ?? false);
 
     const borderMetatileIds =
       this.readBorderMetatileIds(
@@ -1309,6 +1369,51 @@ export class PlayerRenderer {
             }
           }
         }
+      }
+
+      if (painted && cutout && groundTile) {
+        const colors =
+          tileColors(groundTile);
+
+        for (let tileY = 0; tileY < map.borderHeight; tileY++) {
+          for (let tileX = 0; tileX < map.borderWidth; tileX++) {
+            cutoutTile(
+              pixels,
+              blockWidth,
+              tileX * GBA_METATILE_PIXELS,
+              tileY * GBA_METATILE_PIXELS,
+              colors,
+            );
+          }
+        }
+
+        // Tile de chao: mesma inversao vertical das texturas de mapa.
+        const flipped =
+          new Uint8ClampedArray(groundTile.length);
+
+        for (let row = 0; row < GBA_METATILE_PIXELS; row++) {
+          flipped.set(
+            groundTile.subarray(
+              row * GBA_METATILE_PIXELS * 4,
+              (row + 1) * GBA_METATILE_PIXELS * 4,
+            ),
+            (GBA_METATILE_PIXELS - 1 - row) * GBA_METATILE_PIXELS * 4,
+          );
+        }
+
+        const ground =
+          this.createMapTexture(
+            flipped,
+            GBA_METATILE_PIXELS,
+            GBA_METATILE_PIXELS,
+          );
+
+        ground.wrapS = THREE.RepeatWrapping;
+        ground.wrapT = THREE.RepeatWrapping;
+        ground.needsUpdate = true;
+
+        this.groundTileTextures.get(key)?.dispose();
+        this.groundTileTextures.set(key, ground);
       }
 
       if (painted) {
@@ -2105,6 +2210,10 @@ export class PlayerRenderer {
 
     this.root.remove(visual.voxelGroup);
 
+    for (const texture of (visual.voxelGroup.userData.textures ?? []) as THREE.Texture[]) {
+      texture.dispose();
+    }
+
     // As malhas da dobra compartilham atributos; dispose em cada
     // geometria e idempotente para os buffers ja liberados.
     visual.voxelGroup.traverse((object) => {
@@ -2122,13 +2231,16 @@ export class PlayerRenderer {
     visual.buildings = [];
   }
 
-  private buildVoxelGroup(
+  /**
+   * Volume do mapa (arvores, predios, ledges, grama, interiores), ver
+   * VoxelFolding.buildMapVolume. Calculado ANTES das texturas: o chao
+   * debaixo do volume e trocado (GroundSubstitution).
+   */
+  private computeVolume(
     map: MapDefinition,
     blocks: readonly { metatileId: number; collision: number; elevation: number }[],
-    baseTexture: THREE.DataTexture,
-    overlayTexture: THREE.DataTexture,
     graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
-  ): { group: THREE.Group; buildings: BuildingVisual[] } | undefined {
+  ): MapVolume {
     const interior =
       map.mapType === INDOOR_MAP_TYPE ||
       map.mapType === SECRET_BASE_MAP_TYPE;
@@ -2162,6 +2274,13 @@ export class PlayerRenderer {
       return found;
     };
 
+    // Metatiles do tileset primario: 640 no FRLG, 512 no RSE.
+    const gameCode =
+      String.fromCharCode(...this.romBytes.subarray(0xac, 0xaf));
+
+    const primaryCount =
+      gameCode === 'BPR' || gameCode === 'BPG' ? 640 : 512;
+
     let warps: Array<{ x: number; y: number }> = [];
 
     try {
@@ -2171,8 +2290,6 @@ export class PlayerRenderer {
       console.warn('[voxel] warps ilegiveis; sem predios neste mapa:', error);
     }
 
-    // Tudo o que sobe (arvores em cartoes, predios, ledges, grama alta,
-    // interiores): ver VoxelFolding.buildMapVolume.
     const volume =
       buildMapVolume(
         map.width,
@@ -2184,15 +2301,20 @@ export class PlayerRenderer {
             return undefined;
           }
 
+          const metatile = graphics.get(block.metatileId);
+
           return {
             ...block,
-            behavior: graphics.get(block.metatileId)?.behavior ?? 0,
+            behavior: metatile?.behavior ?? 0,
             hasForeground: hasForeground(block.metatileId),
+            basePixels: metatile?.basePixels,
+            secondary: block.metatileId >= primaryCount,
           };
         },
         warps,
         interior ? 'interior' : 'outdoor',
         VOXEL_MAX_WALL_ROWS,
+        new Set(this.readBorderMetatileIds(map)),
       );
 
     // A borda deste mapa sobe junto? Os metatiles da borda aparecem dentro
@@ -2221,6 +2343,14 @@ export class PlayerRenderer {
       }
     }
 
+    return volume;
+  }
+
+  private buildVoxelGroup(
+    volume: MapVolume,
+    baseTexture: THREE.DataTexture,
+    overlayTexture: THREE.DataTexture,
+  ): { group: THREE.Group; buildings: BuildingVisual[] } | undefined {
     const group =
       new THREE.Group();
 
@@ -2258,39 +2388,12 @@ export class PlayerRenderer {
       });
     }
 
-    // Remendo de chao debaixo dos predios (ver buildGroundPatch).
-    if (volume.patch && volume.patch.indices.length > 0) {
-      const patchGeometry =
-        new THREE.BufferGeometry();
-
-      patchGeometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(volume.patch.positions, 3),
-      );
-
-      patchGeometry.setAttribute(
-        'uv',
-        new THREE.BufferAttribute(volume.patch.uvs, 2),
-      );
-
-      patchGeometry.setIndex(
-        new THREE.BufferAttribute(volume.patch.indices, 1),
-      );
-
-      group.add(
-        new THREE.Mesh(
-          patchGeometry,
-          new THREE.MeshBasicMaterial({
-            map: baseTexture,
-            side: THREE.DoubleSide,
-          }),
-        ),
-      );
-    }
-
     if (group.children.length === 0) {
       return undefined;
     }
+
+    // Texturas dos modelos: liberadas junto com o grupo.
+    group.userData.textures = [baseTexture, overlayTexture];
 
     return { group, buildings };
   }
@@ -2428,11 +2531,6 @@ export class PlayerRenderer {
       return;
     }
 
-    this.buildBorderTexture(
-      this.createMapKey(map.mapGroup, map.mapNumber),
-      map,
-      renderData.graphics,
-    );
 
     const textureWidth =
       map.width *
@@ -2604,16 +2702,81 @@ export class PlayerRenderer {
       }
     }
 
+    // Volume e troca do chao debaixo dele (ver GroundSubstitution): o
+    // chao recebe o tile de chao mais proximo; os modelos ficam com o
+    // desenho original, com o fundo dos objetos naturais recortado.
+    const volume =
+      VOXEL_FOLDING
+        ? this.computeVolume(map, renderData.blocks, renderData.graphics)
+        : undefined;
+
+    let groundPixels = pixels;
+    let groundForeground = foregroundPixels;
+
+    // Tile de chao do mapa (o passavel mais comum longe do volume): vai no
+    // chao do padding, debaixo das arvores de borda recortadas.
+    let groundTile: Uint8ClampedArray | undefined;
+
+    if (volume) {
+      const cell =
+        findGroundCell(
+          map.width,
+          map.height,
+          volume.mask,
+          (x, y) => renderData?.blocks[y * map.width + x],
+        );
+
+      if (cell) {
+        const id = renderData.blocks[cell.y * map.width + cell.x]?.metatileId;
+        groundTile = id === undefined ? undefined : renderData.graphics.get(id)?.basePixels;
+      }
+    }
+
+    this.buildBorderTexture(
+      this.createMapKey(map.mapGroup, map.mapNumber),
+      map,
+      renderData.graphics,
+      groundTile,
+    );
+
+    if (volume) {
+
+      const sources =
+        volume.groundSources;
+
+      groundPixels = pixels.slice();
+      groundForeground = foregroundPixels.slice();
+
+      applyGroundSubstitution(
+        map.width,
+        map.height,
+        sources,
+        groundPixels,
+        groundForeground,
+      );
+
+      if (map.mapType !== INDOOR_MAP_TYPE && map.mapType !== SECRET_BASE_MAP_TYPE) {
+        cutoutBackgrounds(
+          map.width,
+          map.height,
+          sources,
+          (x, y) => volume.buildingIds[y * map.width + x] === 0,
+          pixels,
+          pixels,
+        );
+      }
+    }
+
     const baseTexture =
       this.createMapTexture(
-        pixels,
+        groundPixels,
         textureWidth,
         textureHeight,
       );
 
     const overlayTexture =
       this.createMapTexture(
-        foregroundPixels,
+        groundForeground,
         textureWidth,
         textureHeight,
       );
@@ -2625,9 +2788,34 @@ export class PlayerRenderer {
     const water =
       new Uint8Array(map.width * map.height);
 
+    // Comportamentos (MB_*) da agua deste mapa: bloco com o mesmo
+    // comportamento tambem e agua, mesmo sem a elevacao 1 (mar em volta
+    // das pedras na rota de Cinnabar da Perfect Fire Red).
+    const waterBehaviors =
+      new Set<number>();
+
     for (let index = 0; index < water.length; index++) {
-      water[index] =
-        renderData.blocks[index]?.elevation === WATER_ELEVATION ? 1 : 0;
+      const block = renderData.blocks[index];
+
+      if (block?.elevation === WATER_ELEVATION) {
+        water[index] = 1;
+
+        const behavior = renderData.graphics.get(block.metatileId)?.behavior;
+
+        if (behavior !== undefined && behavior !== 0) {
+          waterBehaviors.add(behavior);
+        }
+      }
+    }
+
+    for (let index = 0; index < water.length; index++) {
+      const block = renderData.blocks[index];
+      const behavior =
+        block ? renderData.graphics.get(block.metatileId)?.behavior : undefined;
+
+      if (behavior !== undefined && waterBehaviors.has(behavior)) {
+        water[index] = 1;
+      }
     }
 
     // Pedras no mar (impassaveis, no meio da agua) ficam na altura da
@@ -2841,19 +3029,17 @@ export class PlayerRenderer {
         renderData.blocks[index]?.metatileId ?? 0;
     }
 
-    const volume =
-      VOXEL_FOLDING
+    const voxel =
+      volume
         ? this.buildVoxelGroup(
-            map,
-            renderData.blocks,
-            baseTexture,
-            overlayTexture,
-            renderData.graphics,
+            volume,
+            this.createMapTexture(pixels, textureWidth, textureHeight),
+            this.createMapTexture(foregroundPixels, textureWidth, textureHeight),
           )
         : undefined;
 
     const voxelGroup =
-      volume?.group;
+      voxel?.group;
 
     if (voxelGroup) {
       voxelGroup.position.set(
@@ -2882,7 +3068,7 @@ export class PlayerRenderer {
           map.height,
         voxelGroup,
         buildings:
-          volume?.buildings ?? [],
+          voxel?.buildings ?? [],
         mapDataAddress:
           map.mapDataAddress,
       };
@@ -3434,11 +3620,15 @@ export class PlayerRenderer {
 
     this.disposeWorldBorder();
 
-    for (const texture of this.borderTextures.values()) {
+    for (const texture of [
+      ...this.borderTextures.values(),
+      ...this.groundTileTextures.values(),
+    ]) {
       texture.dispose();
     }
 
     this.borderTextures.clear();
+    this.groundTileTextures.clear();
     this.paddingRaised.clear();
     this.paddingLowered.clear();
 
