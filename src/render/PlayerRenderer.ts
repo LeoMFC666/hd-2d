@@ -3378,14 +3378,16 @@ export class PlayerRenderer {
 
       voxelGroup.userData.doorPlanes = doorPlanes;
 
-      // Mesma escala vertical dos sprites em pe (1/cos da inclinacao da
-      // camera): o predio fica com a altura do GBA em relacao ao jogador,
-      // em vez de o jogador parecer maior que ele.
+      // A entrada (porta e cobertura) usa a escala vertical dos sprites
+      // em pe (1/cos da inclinacao da camera), na altura do jogador; o
+      // resto do predio fica como esta.
       voxelGroup.userData.buildingModels =
-        substituted.buildings.map(building => building.model);
+        substituted.buildings
+          .map(building => building.model.userData.entrance as THREE.Object3D | undefined)
+          .filter(entrance => !!entrance);
 
-      for (const building of substituted.buildings) {
-        building.model.scale.y = this.getUprightSpriteScale();
+      for (const entrance of voxelGroup.userData.buildingModels as THREE.Object3D[]) {
+        entrance.scale.y = this.getUprightSpriteScale();
       }
 
       this.root.add(

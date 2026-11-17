@@ -93,6 +93,13 @@ export function buildGymModel(art: GymArt): THREE.Group {
   group.position.z = FACADE_SHIFT;
   root.add(group);
 
+  // Entrada (porta, cobertura com a Poke Bola, porta animada): grupo
+  // proprio, apoiado no chao, que recebe a escala vertical dos sprites.
+  const entrance = new THREE.Group();
+  entrance.name = 'entrance';
+  group.add(entrance);
+  root.userData.entrance = entrance;
+
   const width = art.width ?? 7;
   const door = art.door ?? 3;
   const wallHeight = 2;
@@ -146,7 +153,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
       plain(wall, 0.6)],
   );
   porch.position.set((porchX0 + porchX1) / 2, 0.5, roofFront + porchDepth / 2);
-  group.add(porch);
+  entrance.add(porch);
 
   const canopyOverhang = 0.08;
   const cx0 = porchX0 - canopyOverhang;
@@ -168,7 +175,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
     textured(crop(art, Math.round(porchX0 * PX), 3 * PX, Math.round(porchWidth * PX), PX)),
   );
   canopy.material.side = THREE.DoubleSide;
-  group.add(canopy);
+  entrance.add(canopy);
 
   // Laterais triangulares da cobertura.
   const canopySides = new THREE.BufferGeometry();
@@ -176,7 +183,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
     cx0, cyFront, cz1, cx0, cyBack, cz0, cx0, cyFront, cz0,
     cx1, cyFront, cz0, cx1, cyBack, cz0, cx1, cyFront, cz1,
   ], 3));
-  group.add(new THREE.Mesh(canopySides, new THREE.MeshBasicMaterial({ color: pixel(art, 3 * PX + 8, 3 * PX + 2).multiplyScalar(0.6), side: THREE.DoubleSide })));
+  entrance.add(new THREE.Mesh(canopySides, new THREE.MeshBasicMaterial({ color: pixel(art, 3 * PX + 8, 3 * PX + 2).multiplyScalar(0.6), side: THREE.DoubleSide })));
 
   // Telhado: duas aguas rasas com a arte das linhas 0-2 (beirada a beirada),
   // um pouco maior que o corpo (beiral).
@@ -234,7 +241,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
   }
 
   doorPlane.userData.closedArt = closed;
-  group.add(doorPlane);
+  entrance.add(doorPlane);
 
   return root;
 }
