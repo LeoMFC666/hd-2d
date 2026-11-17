@@ -287,12 +287,26 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   facade.position.set(width / 2, artWall / 2, front + 0.001);
   group.add(facade);
 
-  // Acima dela, ate o beiral: parede lisa (uma coluna de parede da
-  // fachada, esticada - sem pedaco de placa).
+  // Acima dela, ate o beiral: a linha de cima da propria fachada (ja sem
+  // a ponta da placa), esticada na vertical - continua a parede com o
+  // contorno escuro das quinas, em vez de uma faixa branca solta.
   if (wallHeight > artWall) {
+    const bandRow = facadeImage.height - 2; // 2a linha de cima (textura invertida)
+    const bandData = facadeImage.data.slice(
+      bandRow * facadeImage.width * 4,
+      (bandRow + 1) * facadeImage.width * 4,
+    );
+    const bandTexture = new THREE.DataTexture(bandData, facadeImage.width, 1, THREE.RGBAFormat);
+
+    bandTexture.magFilter = THREE.NearestFilter;
+    bandTexture.minFilter = THREE.NearestFilter;
+    bandTexture.colorSpace = THREE.SRGBColorSpace;
+    bandTexture.needsUpdate = true;
+
     const band = new THREE.Mesh(
       new THREE.PlaneGeometry(width, wallHeight - artWall),
-      textured(crop(art, 4, facadeTop + SIGN_TIP_ROWS, 1, 2), 0.96),
+      // Mais escura: fica na sombra do beiral, sem virar uma linha branca.
+      textured(bandTexture, 0.78),
     );
     band.position.set(width / 2, (artWall + wallHeight) / 2, front + 0.001);
     group.add(band);
