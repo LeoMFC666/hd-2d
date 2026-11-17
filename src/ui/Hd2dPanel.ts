@@ -18,9 +18,10 @@ interface Control {
   format?: (value: number) => string;
 }
 
-const GROUPS: Array<{ title: string; controls: Control[] }> = [
+const GROUPS: Array<{ title: string; splat?: boolean; controls: Control[] }> = [
   {
     title: 'Splat e paleta',
+    splat: true,
     controls: [
       { key: 'splatRadius', label: 'Raio do splat', format: v => (v === 0 ? 'pixel' : v.toFixed(2)) },
       { key: 'splatJitter', label: 'Variação do splat' },
@@ -62,6 +63,10 @@ export class Hd2dPanel {
 
   private readonly inputs = new Map<NumericKey, { input: HTMLInputElement; output: HTMLOutputElement }>();
 
+  private splatToggle: HTMLInputElement | null = null;
+
+  private splatFieldset: HTMLFieldSetElement | null = null;
+
   constructor(toggle: HTMLButtonElement, panel: HTMLElement, settings: Hd2dSettings) {
     this.settings = settings;
     this.toggle = toggle;
@@ -89,6 +94,30 @@ export class Hd2dPanel {
       legend.textContent = group.title;
       fieldset.append(legend);
 
+      // Liga/desliga o splat (com a paleta e o pixel grande).
+      if (group.splat) {
+        const row = document.createElement('div');
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input');
+
+        row.className = 'hd2d-row hd2d-check';
+        checkbox.type = 'checkbox';
+        checkbox.id = 'hd2d-splat';
+        label.htmlFor = checkbox.id;
+        label.textContent = 'Splat ligado';
+
+        checkbox.addEventListener('change', () => {
+          this.settings.splat = checkbox.checked;
+          this.commit();
+        });
+
+        row.append(checkbox, label);
+        fieldset.append(row);
+
+        this.splatToggle = checkbox;
+        this.splatFieldset = fieldset;
+      }
+
       for (const control of group.controls) {
         const [min, max, step] = HD2D_LIMITS[control.key];
         const id = `hd2d-${control.key}`;
@@ -108,6 +137,10 @@ export class Hd2dPanel {
         input.step = String(step);
 
         output.htmlFor.add(id);
+
+        if (group.splat) {
+          input.dataset.splat = 'true';
+        }
 
         input.addEventListener('input', () => {
           this.settings[control.key] = Number(input.value);
@@ -130,7 +163,7 @@ export class Hd2dPanel {
     reset.className = 'hd2d-reset';
     reset.textContent = 'Restaurar padrões';
     reset.addEventListener('click', () => {
-      Object.assign(this.settings, HD2D_DEFAULTS, { enabled: this.settings.enabled });
+      Object.assign(this.settings, HD2D_DEFAULTS, { enabled: this.settings.enabled, splat: this.settings.splat });
       this.commit();
     });
 
@@ -161,6 +194,17 @@ export class Hd2dPanel {
         entry.output.textContent = (control.format ?? defaultFormat)(this.settings[control.key]);
       }
     }
+
+    if (this.splatToggle) {
+      this.splatToggle.checked = this.settings.splat;
+    }
+
+    // Ajustes do splat ficam inativos com ele desligado.
+    this.splatFieldset
+      ?.querySelectorAll<HTMLInputElement>('input[data-splat]')
+      .forEach(input => {
+        input.disabled = !this.settings.splat;
+      });
 
     this.syncToggle();
   }

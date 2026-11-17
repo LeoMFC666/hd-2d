@@ -10,6 +10,11 @@ export interface Hd2dSettings {
   // Liga o pipeline HD-2D. Desligado volta ao render direto de antes.
   enabled: boolean;
 
+  // Liga o splat e o que vem com ele: imagem em celulas (pixel grande),
+  // splats gaussianos duros e paleta pequena. Desligado, a luz, a sombra,
+  // o DOF, o bloom e a vinheta continuam, na resolucao da tela.
+  splat: boolean;
+
   // Pixels da tela por "pixel" da cena. 0 = automatico (cerca de 1 pixel
   // do GBA por celula perto do jogador, como o pixel art pede).
   pixelScale: number;
@@ -49,6 +54,7 @@ export interface Hd2dSettings {
 export const HD2D_DEFAULTS: Readonly<Hd2dSettings> = {
   // Desligado por enquanto: o foco agora sao os modelos das construcoes.
   enabled: false,
+  splat: true,
   pixelScale: 0,
   splatRadius: 0.82,
   splatJitter: 0.3,
@@ -66,7 +72,7 @@ export const HD2D_DEFAULTS: Readonly<Hd2dSettings> = {
   haze: 0.35,
 };
 
-export const HD2D_LIMITS: Record<Exclude<keyof Hd2dSettings, 'enabled'>, [number, number, number]> = {
+export const HD2D_LIMITS: Record<Exclude<keyof Hd2dSettings, 'enabled' | 'splat'>, [number, number, number]> = {
   // [minimo, maximo, passo]
   pixelScale: [0, 6, 0.5],
   splatRadius: [0, 1.6, 0.02],
@@ -114,10 +120,14 @@ export function loadHd2dSettings(): Hd2dSettings {
       settings.enabled = params.get('hd2d') !== '0';
     }
 
+    if (params.has('hd2d.splat')) {
+      settings.splat = params.get('hd2d.splat') !== '0';
+    }
+
     const fromUrl: Record<string, unknown> = {};
 
     for (const [name, value] of params) {
-      if (name.startsWith('hd2d.')) {
+      if (name.startsWith('hd2d.') && name !== 'hd2d.splat') {
         fromUrl[name.slice(5)] = Number(value);
       }
     }
@@ -139,6 +149,10 @@ export function saveHd2dSettings(settings: Hd2dSettings): void {
 function applyPartial(target: Hd2dSettings, source: Partial<Hd2dSettings>): void {
   if (typeof source.enabled === 'boolean') {
     target.enabled = source.enabled;
+  }
+
+  if (typeof source.splat === 'boolean') {
+    target.splat = source.splat;
   }
 
   for (const key of Object.keys(HD2D_LIMITS) as Array<keyof typeof HD2D_LIMITS>) {

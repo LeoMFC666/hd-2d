@@ -275,6 +275,26 @@ input {
   outline-offset: 2px;
 }
 
+.hd2d-check {
+  grid-template-columns: auto 1fr;
+  justify-items: start;
+}
+
+.hd2d-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--cobalt-bright);
+}
+
+.hd2d-check input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.hd2d-row input[type='range']:disabled {
+  opacity: 0.4;
+}
+
 .hd2d-row output {
   text-align: right;
   color: var(--muted);

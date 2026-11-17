@@ -343,7 +343,9 @@ export class Hd2dPipeline {
     const visibleHeight = 2 * focusDistance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
 
     const cellScale =
-      settings.pixelScale > 0
+      !settings.splat
+        ? 1
+        : settings.pixelScale > 0
         ? settings.pixelScale
         : Math.max(1, this.output.y / (visibleHeight / AUTO_CELL));
 
@@ -468,20 +470,22 @@ export class Hd2dPipeline {
 
     this.runPass(this.compositeMaterial, this.gradedTarget);
 
-    this.updatePalette(frame, now, width, height);
+    if (settings.splat) {
+      this.updatePalette(frame, now, width, height);
+    }
 
     // ---- splat + paleta, na tela
     const splat = this.splatMaterial.uniforms;
 
     splat.tGraded.value = this.gradedTarget!.texture;
     splat.tDepth.value = sceneTarget.depthTexture;
-    splat.uPaletteSize.value = settings.paletteSize >= 2 ? this.palette.count : 0;
+    splat.uPaletteSize.value = settings.splat && settings.paletteSize >= 2 ? this.palette.count : 0;
     splat.uPaletteDither.value = settings.paletteDither;
     splat.uCellSize.value.set(this.output.x / width, this.output.y / height);
     splat.uOffset.value.set(along - snappedAlong, upward - snappedUpward);
     splat.uOrigin.value.set(snappedAlong, snappedUpward);
     splat.uGrid.value.set(width, height);
-    splat.uRadius.value = settings.splatRadius;
+    splat.uRadius.value = settings.splat ? settings.splatRadius : 0;
     splat.uJitter.value = settings.splatJitter;
     splat.uRelief.value = settings.splatRelief;
 
