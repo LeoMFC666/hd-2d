@@ -46,6 +46,13 @@ const SIGN_X0 = 16;
 
 const SIGN_X1 = 48;
 
+// Esticamento vertical da fachada (e da porta) e da placa. Com a fachada da
+// arte de ~1 tile, 1.75 da ~1.85 de parede: menor que o Centro Pokemon
+// (2 + telhado), bem maior que o jogador.
+const HEIGHT_SCALE = 1.75;
+
+const SIGN_SCALE = 1.3;
+
 export interface PokeMartArt {
   // Arte do bloco 4x4 (64x64 px) ja sem o chao, RGBA, de cima para baixo.
   rgba: Uint8Array;
@@ -206,7 +213,12 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   // Posicao: a parede fica onde a fachada termina na arte do GBA (em
   // tiles do bloco), entao a base encosta na calcada da frente.
   const front = (facadeBottom + 1) / PX;
-  const wallHeight = (facadeBottom + 1 - facadeTop) / PX;
+  // A fachada da arte tem so ~1 tile: em 3D o jogador ficaria quase do
+  // tamanho do predio. Regra: o jogador nunca pode ser muito maior que a
+  // porta nem parecer ter 75% do tamanho da construcao. A fachada estica
+  // na vertical (HEIGHT_SCALE) - o Mart fica menor que o Centro Pokemon
+  // (parede 2 + telhado), mas bem maior que o jogador.
+  const wallHeight = ((facadeBottom + 1 - facadeTop) / PX) * HEIGHT_SCALE;
   const back = roofTop / PX;
   const depth = Math.max(0.5, facadeTop / PX - back);
 
@@ -353,7 +365,7 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   // No recorte da placa sobra telhado em volta: as cores do telhado
   // ligadas a borda do recorte (preenchimento a partir da borda) ficam
   // transparentes; o azul da Poke Bola, cercado pelo branco, fica.
-  const signHeight = (facadeTop - signFirstRow) / PX;
+  const signHeight = ((facadeTop - signFirstRow) / PX) * SIGN_SCALE;
   const signTexture = crop(art, SIGN_X0, signFirstRow, SIGN_X1 - SIGN_X0, facadeTop - signFirstRow);
 
   clearRoofAroundSign(signTexture, roofColors(art, roofTop, signFirstRow));
