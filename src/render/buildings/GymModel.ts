@@ -137,13 +137,13 @@ export function buildGymModel(art: GymArt): THREE.Group {
   facade.position.set(width / 2, wallHeight / 2, roofFront + 0.001);
   group.add(facade);
 
-  // Entrada: a porta (linha 4) sai um pouco da parede numa caixa de 1
-  // tile de altura. O painel da Poke Bola (linha 3) fica reto, rente a
-  // fachada (faz parte da arte dela).
+  // Entrada: a porta (linha 4) sai da parede numa caixa de 1 tile de
+  // altura. O painel da Poke Bola (linha 3) e a cobertura dela: uma laje
+  // DEITADA (horizontal) em cima da porta, saindo da parede.
   const porchX0 = door - 0.45;
   const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
-  const porchDepth = 0.12;
+  const porchDepth = 0.3;
   const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
   const porch = new THREE.Mesh(
     new THREE.BoxGeometry(porchWidth, 1, porchDepth),
@@ -153,6 +153,27 @@ export function buildGymModel(art: GymArt): THREE.Group {
   );
   porch.position.set((porchX0 + porchX1) / 2, 0.5, roofFront + porchDepth / 2);
   entrance.add(porch);
+
+  const canopyDepth = 0.85;
+  const canopyThickness = 0.08;
+  const canopyOverhang = 0.06;
+  const canopyArt = crop(art, Math.round(porchX0 * PX), 3 * PX, Math.round(porchWidth * PX), PX);
+  const canopyEdge = plain(pixel(art, 3 * PX + 8, 3 * PX + 2), 0.75);
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(porchWidth + canopyOverhang * 2, canopyThickness, canopyDepth),
+    [canopyEdge, canopyEdge, textured(canopyArt), canopyEdge, canopyEdge, canopyEdge],
+  );
+  canopy.position.set((porchX0 + porchX1) / 2, 1 + canopyThickness / 2, roofFront + canopyDepth / 2);
+  entrance.add(canopy);
+
+  // Na parede, onde a arte tinha a Poke Bola (agora deitada na laje): parede
+  // lisa com as faixas da fachada.
+  const behind = new THREE.Mesh(
+    new THREE.PlaneGeometry(porchWidth, 1),
+    textured(crop(art, 6, 3 * PX, 1, PX), 0.95),
+  );
+  behind.position.set((porchX0 + porchX1) / 2, 1.5, roofFront + 0.002);
+  entrance.add(behind);
 
   // Telhado: duas aguas rasas com a arte das linhas 0-2 (beirada a beirada),
   // um pouco maior que o corpo (beiral).
