@@ -139,7 +139,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
 
   // Entrada: a porta (linha 4) sai da parede numa caixa de 1 tile de
   // altura. O painel da Poke Bola (linha 3) e a cobertura dela: uma laje
-  // DEITADA (horizontal) em cima da porta, saindo da parede.
+  // DEITADA (horizontal) no topo da fachada, saindo da parede.
   const porchX0 = door - 0.45;
   const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
@@ -163,7 +163,8 @@ export function buildGymModel(art: GymArt): THREE.Group {
     new THREE.BoxGeometry(porchWidth + canopyOverhang * 2, canopyThickness, canopyDepth),
     [canopyEdge, canopyEdge, textured(canopyArt), canopyEdge, canopyEdge, canopyEdge],
   );
-  canopy.position.set((porchX0 + porchX1) / 2, 1 + canopyThickness / 2, roofFront + canopyDepth / 2);
+  // No topo da fachada, logo abaixo do beiral: onde o painel ficava na arte.
+  canopy.position.set((porchX0 + porchX1) / 2, wallHeight - canopyThickness / 2, roofFront + canopyDepth / 2);
   entrance.add(canopy);
 
   // Na parede, onde a arte tinha a Poke Bola (agora deitada na laje): parede
