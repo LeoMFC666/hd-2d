@@ -159,7 +159,7 @@ export function substituteBuildings<T extends Block>(
   }
 
   /**
-   * Prepara uma construcao: devolve a arte do predio SEM o chao e troca os
+   * (Centro Pokemon.) Prepara uma construcao: devolve a arte do predio SEM o chao e troca os
    * tiles dela pelo chao do lugar.
    *
    * O chao do lugar e a camada de BAIXO dos proprios tiles (grama em
@@ -327,6 +327,48 @@ export function substituteBuildings<T extends Block>(
     return art;
   };
 
+  // Chao do ginasio: a camada de BAIXO dos proprios tiles dele (grama em
+  // Pewter e Fuchsia; calcada em Saffron). Cada tile vira um metatile
+  // sintetico so com essa camada.
+  function groundFromOwnBottom(x0: number, y0: number, w: number, h: number): void {
+    const ground = surroundingGround(width, height, x0, y0, w, h, blocks);
+
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
+        const original = blocks[y * width + x];
+        const source = original ? graphics.get(original.metatileId) : undefined;
+
+        if (!original || !source) {
+          if (original && ground) {
+            result[y * width + x] = { ...original, metatileId: ground.metatileId, collision: 0 } as T;
+          }
+
+          continue;
+        }
+
+        const id = GROUND_ONLY_BASE + original.metatileId;
+
+        if (!resultGraphics.has(id)) {
+          const empty = new Uint8ClampedArray(source.topPixels.length);
+
+          resultGraphics.set(id, {
+            ...source,
+            metatileId: id,
+            layerType: 0,
+            behavior: 0,
+            pixels: source.bottomPixels,
+            basePixels: source.bottomPixels,
+            foregroundPixels: empty,
+            topPixels: empty,
+            topTileIds: [],
+          });
+        }
+
+        result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
+      }
+    }
+  }
+
   function graphicsAt(x: number, y: number): Gen3MetatileGraphics | null | undefined {
     const block = blocks[y * width + x];
 
@@ -336,7 +378,11 @@ export function substituteBuildings<T extends Block>(
   const metatileAt = (x: number, y: number): number => blocks[y * width + x]?.metatileId ?? -1;
 
   for (const gym of findGyms(width, height, metatileAt)) {
-    const art = prepare(gym.x, gym.y, gym.width, GYM_HEIGHT);
+    // Ginasio: do jeito anterior (independente do Centro Pokemon) - arte
+    // inteira e, no chao, a camada de baixo de cada tile dele.
+    const art = blockArt(width, gym.x, gym.y, gym.width, GYM_HEIGHT, blocks, graphics);
+
+    groundFromOwnBottom(gym.x, gym.y, gym.width, GYM_HEIGHT);
 
     const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door });
 
