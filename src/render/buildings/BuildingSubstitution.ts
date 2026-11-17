@@ -4,6 +4,13 @@ import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
 import { buildGymModel, findGyms } from './GymModel';
 
+import {
+  buildPokemonCenterModel,
+  findPokemonCenters,
+  POKEMON_CENTER_HEIGHT,
+  POKEMON_CENTER_WIDTH,
+} from './PokemonCenterModel';
+
 /**
  * Troca construcoes conhecidas por modelos 3D.
  *
@@ -22,7 +29,7 @@ interface Block {
 export interface PlacedBuilding {
   // gym = tipo Pewter (completo); gym-small = tipo Viridian (sem o trecho
   // da janela da direita).
-  kind: 'gym' | 'gym-small';
+  kind: 'gym' | 'gym-small' | 'pokemon-center';
   // Canto noroeste do bloco, em metatiles do mapa.
   x: number;
   y: number;
@@ -133,25 +140,22 @@ export function substituteBuildings<T extends Block>(
   const resultGraphics = new Map(graphics);
   const buildings: PlacedBuilding[] = [];
 
-  // Os metatiles do ginasio sao do tileset primario do FRLG.
+  // Os metatiles do ginasio e do Centro Pokemon sao do tileset primario do
+  // FRLG.
   if (family !== 'FRLG') {
     return { blocks: result, graphics: resultGraphics, buildings };
   }
 
-  const gyms = findGyms(width, height, (x, y) => blocks[y * width + x]?.metatileId ?? -1);
+  // Chao no lugar de uma construcao: a camada de BAIXO dos proprios tiles
+  // dela. O desenho do predio fica na camada de cima; a de baixo e o chao
+  // do lugar (grama em Pewter e Fuchsia; calcada em Saffron, que troca
+  // alguns tiles por variantes da cidade). Cada tile vira um metatile
+  // sintetico so com essa camada.
+  const clearGround = (x0: number, y0: number, w: number, h: number): void => {
+    const ground = surroundingGround(width, height, x0, y0, w, h, blocks);
 
-  for (const gym of gyms) {
-    const GYM_WIDTH = gym.width;
-    const art = blockArt(width, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks, graphics);
-    const ground = surroundingGround(width, height, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks);
-
-    // Chao no lugar do ginasio: a camada de BAIXO dos proprios tiles dele.
-    // O desenho do predio fica na camada de cima; a de baixo e o chao do
-    // lugar (grama em Pewter e Fuchsia; calcada em Saffron, que troca
-    // alguns tiles por variantes da cidade). Cada tile vira um metatile
-    // sintetico so com essa camada.
-    for (let y = gym.y; y < gym.y + GYM_HEIGHT; y++) {
-      for (let x = gym.x; x < gym.x + GYM_WIDTH; x++) {
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
         const original = blocks[y * width + x];
         const source = original ? graphics.get(original.metatileId) : undefined;
 
@@ -184,11 +188,32 @@ export function substituteBuildings<T extends Block>(
         result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
       }
     }
+  };
+
+  const metatileAt = (x: number, y: number): number => blocks[y * width + x]?.metatileId ?? -1;
+
+  for (const gym of findGyms(width, height, metatileAt)) {
+    const art = blockArt(width, gym.x, gym.y, gym.width, GYM_HEIGHT, blocks, graphics);
+
+    clearGround(gym.x, gym.y, gym.width, GYM_HEIGHT);
 
     const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door });
 
     model.position.set(gym.x, 0, gym.y);
     buildings.push({ kind: gym.kind === 'viridian' ? 'gym-small' : 'gym', x: gym.x, y: gym.y, model });
+  }
+
+  for (const center of findPokemonCenters(width, height, metatileAt)) {
+    const art = blockArt(
+      width, center.x, center.y, POKEMON_CENTER_WIDTH, POKEMON_CENTER_HEIGHT, blocks, graphics,
+    );
+
+    clearGround(center.x, center.y, POKEMON_CENTER_WIDTH, POKEMON_CENTER_HEIGHT);
+
+    const model = buildPokemonCenterModel({ rgba: art });
+
+    model.position.set(center.x, 0, center.y);
+    buildings.push({ kind: 'pokemon-center', x: center.x, y: center.y, model });
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };
