@@ -101,14 +101,38 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const back = 0.35; // a linha 0 comeca com calcada
   const door = 2;
 
+  // A arte do Centro Pokemon termina alguns pixels ACIMA do fim da linha
+  // da porta (o resto e chao, que fica transparente). Sem compensar, a
+  // fachada flutua e parece fora do lugar. `lift` = linhas vazias no pe da
+  // porta; os recortes da fachada sobem esse tanto para a base da arte
+  // encostar no chao.
+  let lift = 0;
+
+  for (let y = 5 * PX - 1; y >= 4 * PX; y--) {
+    let opaque = false;
+
+    for (let x = door * PX; x < (door + 1) * PX && !opaque; x++) {
+      opaque = art.rgba[(y * ART_WIDTH + x) * 4 + 3] !== 0;
+    }
+
+    if (opaque) {
+      break;
+    }
+
+    lift++;
+  }
+
+  const facadeTop = 3 * PX - lift;
+  const doorRowTop = 4 * PX - lift;
+
   // Cores tiradas da arte: parede branca, vermelho do telhado.
-  const wall = pixel(art, 5, 4 * PX + 3);
+  const wall = pixel(art, 5, doorRowTop + 3);
   const roofRed = pixel(art, 2 * PX + 8, 1 * PX + 8);
 
   // Corpo: laterais e fundo com as faixas da fachada (uma coluna de parede
   // lisa, esticada).
   const depth = front - back;
-  const side = crop(art, 4, 3 * PX, 1, 2 * PX);
+  const side = crop(art, 4, facadeTop, 1, 2 * PX);
 
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(width - 0.04, wallHeight, depth),
@@ -127,7 +151,7 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   // Fachada: linhas 3-4 em pe.
   const facade = new THREE.Mesh(
     new THREE.PlaneGeometry(width, wallHeight),
-    textured(crop(art, 0, 3 * PX, width * PX, 2 * PX), 0.96),
+    textured(crop(art, 0, facadeTop, width * PX, 2 * PX), 0.96),
   );
   facade.position.set(width / 2, wallHeight / 2, front + 0.001);
   group.add(facade);
@@ -137,11 +161,11 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const porchX1 = door + 1.42;
   const porchWidth = porchX1 - porchX0;
   const porchDepth = 0.3;
-  const porchSide = textured(crop(art, 4, 4 * PX, 1, PX), 0.75);
+  const porchSide = textured(crop(art, 4, doorRowTop, 1, PX), 0.75);
   const porch = new THREE.Mesh(
     new THREE.BoxGeometry(porchWidth, 1, porchDepth),
     [porchSide, porchSide, plain(wall, 0.92), plain(wall, 0.5),
-      textured(crop(art, Math.round(porchX0 * PX), 4 * PX, Math.round(porchWidth * PX), PX)),
+      textured(crop(art, Math.round(porchX0 * PX), doorRowTop, Math.round(porchWidth * PX), PX)),
       plain(wall, 0.6)],
   );
   porch.position.set((porchX0 + porchX1) / 2, 0.5, front + porchDepth / 2);
@@ -152,8 +176,8 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const canopyDepth = 0.85;
   const canopyThickness = 0.08;
   const canopyOverhang = 0.06;
-  const canopyArt = crop(art, Math.round(porchX0 * PX), 3 * PX, Math.round(porchWidth * PX), PX);
-  const canopyEdge = plain(pixel(art, door * PX + 8, 3 * PX + 2), 0.75);
+  const canopyArt = crop(art, Math.round(porchX0 * PX), facadeTop, Math.round(porchWidth * PX), PX);
+  const canopyEdge = plain(pixel(art, door * PX + 8, facadeTop + 2), 0.75);
   const canopy = new THREE.Mesh(
     new THREE.BoxGeometry(porchWidth + canopyOverhang * 2, canopyThickness, canopyDepth),
     [canopyEdge, canopyEdge, textured(canopyArt), canopyEdge, canopyEdge, canopyEdge],
@@ -176,7 +200,7 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   // Parede lisa onde a arte tinha a placa (agora na cobertura).
   const behind = new THREE.Mesh(
     new THREE.PlaneGeometry(porchWidth, 1),
-    textured(crop(art, 4, 3 * PX, 1, PX), 0.96),
+    textured(crop(art, 4, facadeTop, 1, PX), 0.96),
   );
   behind.position.set((porchX0 + porchX1) / 2, 1.5, front + 0.002);
   entrance.add(behind);
@@ -197,7 +221,7 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const rx0 = x0 + inset;
   const rx1 = x1 - inset;
 
-  const roofTexture = crop(art, 0, Math.round(back * PX), width * PX, Math.round((front - back) * PX));
+  const roofTexture = crop(art, 0, Math.round(back * PX), width * PX, Math.round((front - back) * PX) - lift);
   const uv = (x: number, z: number): [number, number] => [(x - x0) / (x1 - x0), 1 - (z - z0) / (z1 - z0)];
 
   const corners = {
@@ -253,7 +277,7 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const closed = new Uint8Array(PX * PX * 4);
 
   for (let row = 0; row < PX; row++) {
-    const source = ((4 * PX + row) * ART_WIDTH + door * PX) * 4;
+    const source = ((doorRowTop + row) * ART_WIDTH + door * PX) * 4;
     closed.set(art.rgba.subarray(source, source + PX * 4), row * PX * 4);
   }
 
