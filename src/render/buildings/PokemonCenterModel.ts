@@ -34,9 +34,10 @@ export const POKEMON_CENTER_HEIGHT = 5;
 
 const PX = 16;
 
-// Mesmo encaixe do ginasio: a parede da fachada no inicio da linha da
-// porta; do tile da frente da porta, um passo entra.
-const FACADE_SHIFT = 1;
+// Parede da fachada onde a arte da fachada termina no GBA: no fim da linha
+// da porta, menos as linhas vazias do pe da porta (ver `lift`). Assim a
+// base do predio encosta na calcada da frente, como no jogo.
+const FACADE_SHIFT = 2;
 
 export interface PokemonCenterArt {
   // Arte do bloco 5x5 (80x80 px), RGBA, linhas de cima para baixo.
@@ -85,7 +86,8 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   const root = new THREE.Group();
   root.name = 'pokemon-center';
 
-  // Medidas na ARTE (linha 3 = inicio da fachada); no mundo, 1 tile ao sul.
+  // Medidas na ARTE (linha 3 = inicio da fachada); no mundo, deslocado
+  // para o sul (FACADE_SHIFT, ajustado por `lift` mais abaixo).
   const group = new THREE.Group();
   group.position.z = FACADE_SHIFT;
   root.add(group);
@@ -123,6 +125,8 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
   }
 
   const facadeTop = 3 * PX - lift;
+
+  group.position.z = FACADE_SHIFT - lift / PX;
   const doorRowTop = 4 * PX - lift;
 
   // Cores tiradas da arte: parede branca, vermelho do telhado.
