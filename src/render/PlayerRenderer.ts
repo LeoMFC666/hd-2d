@@ -222,6 +222,10 @@ import {
 } from './buildings/BuildingSubstitution';
 
 import {
+  DoorAnimator,
+} from './buildings/DoorAnimator';
+
+import {
   Hd2dPipeline,
   type Hd2dEnvironment,
 } from './hd2d/Hd2dPipeline';
@@ -542,6 +546,10 @@ export class PlayerRenderer {
   private readonly hd2dFocus =
     new THREE.Vector3();
 
+  // Abre e fecha a porta dos modelos 3D (ginasio...) com a animacao do GBA.
+  private readonly doorAnimator:
+    DoorAnimator;
+
   private resizeHandler:
     () => void;
 
@@ -679,6 +687,11 @@ export class PlayerRenderer {
     this.container.appendChild(
       this.renderer.domElement,
     );
+
+    this.doorAnimator =
+      new DoorAnimator(
+        stateAdapter.getMemoryReader(),
+      );
 
     // O sol do HD-2D (com shadow map) vive no pipeline.
     this.hd2d =
@@ -3324,17 +3337,46 @@ export class PlayerRenderer {
       );
 
       // Modelos das construcoes, no espaco do mapa (descartados junto).
+      // Desenhados como as estruturas da dobra: depois dos sprites e
+      // marcando o stencil, para o raio-x mostrar so a parte do jogador
+      // tapada pelo predio.
+      const doorPlanes: THREE.Mesh[] = [];
+
       for (const building of substituted.buildings) {
         voxelGroup.add(building.model);
 
         building.model.traverse(object => {
-          const material = (object as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+          const mesh = object as THREE.Mesh;
 
-          if (material?.map) {
-            (voxelGroup.userData.textures ??= []).push(material.map);
+          if (!mesh.isMesh) {
+            return;
+          }
+
+          if (mesh.userData.door) {
+            doorPlanes.push(mesh);
+            mesh.renderOrder = ORDER_STRUCTURES;
+
+            return;
+          }
+
+          mesh.renderOrder = ORDER_STRUCTURES;
+
+          for (const material of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshBasicMaterial[]) {
+            material.stencilWrite = true;
+            material.stencilRef = STRUCTURE_STENCIL;
+            material.stencilFunc = THREE.AlwaysStencilFunc;
+            material.stencilFail = THREE.KeepStencilOp;
+            material.stencilZFail = THREE.KeepStencilOp;
+            material.stencilZPass = THREE.ReplaceStencilOp;
+
+            if (material.map) {
+              (voxelGroup.userData.textures ??= []).push(material.map);
+            }
           }
         });
       }
+
+      voxelGroup.userData.doorPlanes = doorPlanes;
 
       this.root.add(
         voxelGroup,
@@ -3965,6 +4007,22 @@ export class PlayerRenderer {
         this.updateEntities(
           state,
         );
+
+        const doorPlanes: THREE.Mesh[] = [];
+
+        for (const visual of this.mapVisuals.values()) {
+          const planes = visual.voxelGroup?.userData.doorPlanes as THREE.Mesh[] | undefined;
+
+          if (planes && visual.voxelGroup?.visible !== false) {
+            doorPlanes.push(...planes);
+          }
+        }
+
+        this.doorAnimator.update(
+          doorPlanes,
+          this.hd2dFocus.set(playerPosition.x, 0, playerPosition.z),
+          frameNow,
+        );
       }
 
       this.hd2d.render(
@@ -4155,6 +4213,8 @@ export class PlayerRenderer {
     }
 
     this.hd2d.dispose();
+
+    this.doorAnimator.dispose();
 
     this.renderer.dispose();
 

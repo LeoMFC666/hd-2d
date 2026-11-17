@@ -29,6 +29,9 @@ export const FRLG_GYM_TEMPLATE: readonly (readonly number[])[] = [
 
 const PX = 16;
 
+// Parede da fachada na borda sul da linha da porta (ver buildGymModel).
+const FACADE_SHIFT = 2;
+
 export interface GymArt {
   // Arte do ginasio inteiro (largura x 5 metatiles), RGBA, linhas de cima
   // para baixo.
@@ -78,8 +81,16 @@ function textured(map: THREE.Texture, shade = 1): THREE.MeshBasicMaterial {
  * leste, z para o sul, 1 unidade = 1 metatile).
  */
 export function buildGymModel(art: GymArt): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'gym';
+
+  // As medidas abaixo seguem a ARTE (linha 3 = inicio da fachada). No
+  // mundo, a parede fica na borda sul da linha da porta (linha 4), como
+  // as estruturas da dobra: o jogador para no tile da frente e entra na
+  // porta andando para dentro da parede. Dai o deslocamento de 2 tiles.
   const group = new THREE.Group();
-  group.name = 'gym';
+  group.position.z = FACADE_SHIFT;
+  root.add(group);
 
   const width = art.width ?? 7;
   const door = art.door ?? 3;
@@ -125,7 +136,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
   const porchX0 = door - 0.45;
   const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
-  const porchDepth = 0.7;
+  const porchDepth = 0.3;
   const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
   const porch = new THREE.Mesh(
     new THREE.BoxGeometry(porchWidth, 1, porchDepth),
@@ -202,7 +213,29 @@ export function buildGymModel(art: GymArt): THREE.Group {
   ], 3));
   group.add(new THREE.Mesh(gable, new THREE.MeshBasicMaterial({ color: roofEdge.clone().multiplyScalar(0.75), side: THREE.DoubleSide })));
 
-  return group;
+  // Porta animada: plano na frente da entrada, escondido; o DoorAnimator
+  // mostra nele o quadro da animacao de porta lido da VRAM.
+  const doorPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5 }),
+  );
+  doorPlane.position.set(door + 0.5, 0.5, roofFront + porchDepth + 0.003);
+  doorPlane.visible = false;
+  doorPlane.userData.door = true;
+
+  // Porta fechada (arte do tileset), para achar a paleta da animacao.
+  const closed = new Uint8Array(PX * PX * 4);
+  const artWidth = width * PX;
+
+  for (let row = 0; row < PX; row++) {
+    const source = ((4 * PX + row) * artWidth + door * PX) * 4;
+    closed.set(art.rgba.subarray(source, source + PX * 4), row * PX * 4);
+  }
+
+  doorPlane.userData.closedArt = closed;
+  group.add(doorPlane);
+
+  return root;
 }
 
 export const GYM_DOOR = 0x15b;
