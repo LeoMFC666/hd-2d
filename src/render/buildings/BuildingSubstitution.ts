@@ -33,6 +33,10 @@ const PX = 16;
 
 const GYM_HEIGHT = 5;
 
+// Ids sinteticos para "so a camada de baixo deste metatile" (os reais vao
+// ate 0x3FF).
+const GROUND_ONLY_BASE = 0x4000;
+
 /** Arte do bloco (largura x altura em metatiles), linhas de cima para baixo. */
 function blockArt(
   width: number,
@@ -120,13 +124,18 @@ export function substituteBuildings<T extends Block>(
   height: number,
   blocks: readonly (T | undefined)[],
   graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
-): { blocks: (T | undefined)[]; buildings: PlacedBuilding[] } {
+): {
+  blocks: (T | undefined)[];
+  graphics: Map<number, Gen3MetatileGraphics | null>;
+  buildings: PlacedBuilding[];
+} {
   const result = blocks.slice();
+  const resultGraphics = new Map(graphics);
   const buildings: PlacedBuilding[] = [];
 
   // Os metatiles do ginasio sao do tileset primario do FRLG.
   if (family !== 'FRLG') {
-    return { blocks: result, buildings };
+    return { blocks: result, graphics: resultGraphics, buildings };
   }
 
   const gyms = findGyms(width, height, (x, y) => blocks[y * width + x]?.metatileId ?? -1);
@@ -136,25 +145,43 @@ export function substituteBuildings<T extends Block>(
     const art = blockArt(width, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks, graphics);
     const ground = surroundingGround(width, height, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks);
 
+    // Chao no lugar do ginasio: a camada de BAIXO dos proprios tiles dele.
+    // O desenho do predio fica na camada de cima; a de baixo e o chao do
+    // lugar (grama em Pewter e Fuchsia; calcada em Saffron, que troca
+    // alguns tiles por variantes da cidade). Cada tile vira um metatile
+    // sintetico so com essa camada.
     for (let y = gym.y; y < gym.y + GYM_HEIGHT; y++) {
       for (let x = gym.x; x < gym.x + GYM_WIDTH; x++) {
         const original = blocks[y * width + x];
+        const source = original ? graphics.get(original.metatileId) : undefined;
 
-        // Linha 0 (beirada): o tile de cima tem calcada na parte de cima;
-        // vira o que esta logo acima dela. As outras linhas repetem o chao
-        // logo ABAIXO do ginasio na mesma coluna (a linha da porta fica na
-        // frente da parede e aparece: tem que continuar o chao da frente,
-        // nao um tile de borda qualquer). Sem chao passavel ali, o mais
-        // comum em volta.
-        const above = y === gym.y && y > 0 ? blocks[(y - 1) * width + x] : undefined;
-        const belowRow = gym.y + GYM_HEIGHT;
-        const below = belowRow < height ? blocks[belowRow * width + x] : undefined;
-        const replacement =
-          y === gym.y ? above ?? ground : below && below.collision === 0 ? below : ground;
+        if (!original || !source) {
+          if (original && ground) {
+            result[y * width + x] = { ...original, metatileId: ground.metatileId, collision: 0 } as T;
+          }
 
-        if (original && replacement) {
-          result[y * width + x] = { ...original, metatileId: replacement.metatileId, collision: 0 } as T;
+          continue;
         }
+
+        const id = GROUND_ONLY_BASE + original.metatileId;
+
+        if (!resultGraphics.has(id)) {
+          const empty = new Uint8ClampedArray(source.topPixels.length);
+
+          resultGraphics.set(id, {
+            ...source,
+            metatileId: id,
+            layerType: 0,
+            behavior: 0,
+            pixels: source.bottomPixels,
+            basePixels: source.bottomPixels,
+            foregroundPixels: empty,
+            topPixels: empty,
+            topTileIds: [],
+          });
+        }
+
+        result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
       }
     }
 
@@ -164,5 +191,5 @@ export function substituteBuildings<T extends Block>(
     buildings.push({ kind: gym.kind === 'viridian' ? 'gym-small' : 'gym', x: gym.x, y: gym.y, model });
   }
 
-  return { blocks: result, buildings };
+  return { blocks: result, graphics: resultGraphics, buildings };
 }

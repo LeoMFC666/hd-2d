@@ -2941,6 +2941,7 @@ export class PlayerRenderer {
       {
         ...renderData,
         blocks: substituted.blocks as typeof renderData.blocks,
+        graphics: substituted.graphics,
       };
 
     // Volume (ver VoxelFolding): o que cada bloco vira - estrutura 3D,
