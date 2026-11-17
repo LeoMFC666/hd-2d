@@ -46,10 +46,9 @@ const SIGN_X0 = 16;
 
 const SIGN_X1 = 48;
 
-// Esticamento vertical da fachada (e da porta) e da placa. Com a fachada da
-// arte de ~1 tile, 1.75 da ~1.85 de parede: menor que o Centro Pokemon
-// (2 + telhado), bem maior que o jogador.
-const HEIGHT_SCALE = 1.75;
+// Altura da parede: menor que a do Centro Pokemon (2), bem maior que o
+// jogador. A porta fica com 1 tile, como nas outras construcoes.
+const WALL_HEIGHT = 1.5;
 
 const SIGN_SCALE = 1.3;
 
@@ -213,12 +212,15 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   // Posicao: a parede fica onde a fachada termina na arte do GBA (em
   // tiles do bloco), entao a base encosta na calcada da frente.
   const front = (facadeBottom + 1) / PX;
-  // A fachada da arte tem so ~1 tile: em 3D o jogador ficaria quase do
-  // tamanho do predio. Regra: o jogador nunca pode ser muito maior que a
-  // porta nem parecer ter 75% do tamanho da construcao. A fachada estica
-  // na vertical (HEIGHT_SCALE) - o Mart fica menor que o Centro Pokemon
-  // (parede 2 + telhado), mas bem maior que o jogador.
-  const wallHeight = ((facadeBottom + 1 - facadeTop) / PX) * HEIGHT_SCALE;
+  // A fachada da arte tem so ~1 tile (porta + placa MART). Regras:
+  //  - a PORTA tem a mesma altura das do Centro Pokemon e dos ginasios
+  //    (1 tile): a fachada da arte fica em tamanho natural, sem esticar;
+  //  - o predio e obrigatoriamente MENOR que o Centro Pokemon (parede 2),
+  //    mas o jogador nunca pode parecer ter 70-75% do tamanho dele.
+  // Por isso a parede tem WALL_HEIGHT (1.5): a fachada da arte embaixo e
+  // uma faixa de parede lisa por cima, ate o beiral.
+  const artWall = (facadeBottom + 1 - facadeTop) / PX;
+  const wallHeight = Math.max(artWall, WALL_HEIGHT);
   const back = roofTop / PX;
   const depth = Math.max(0.5, facadeTop / PX - back);
 
@@ -250,13 +252,25 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   body.position.set(width / 2, wallHeight / 2, front - depth / 2);
   group.add(body);
 
-  // Fachada: a faixa da arte entre o fim do telhado e o pe.
+  // Fachada: a faixa da arte entre o fim do telhado e o pe, em tamanho
+  // natural (porta de 1 tile).
   const facade = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, wallHeight),
+    new THREE.PlaneGeometry(width, artWall),
     textured(crop(art, 0, facadeTop, ART_WIDTH, facadeBottom + 1 - facadeTop), 0.96),
   );
-  facade.position.set(width / 2, wallHeight / 2, front + 0.001);
+  facade.position.set(width / 2, artWall / 2, front + 0.001);
   group.add(facade);
+
+  // Acima dela, ate o beiral: parede lisa (as 3 primeiras linhas da
+  // fachada esticadas - mantem o contorno das quinas).
+  if (wallHeight > artWall) {
+    const band = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, wallHeight - artWall),
+      textured(crop(art, 0, facadeTop, ART_WIDTH, 3), 0.96),
+    );
+    band.position.set(width / 2, (artWall + wallHeight) / 2, front + 0.001);
+    group.add(band);
+  }
 
   // Telhado de quatro aguas com a arte de cima (do comeco do telhado ate o
   // fim do beiral), projetada de cima.
@@ -380,10 +394,10 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
 
   // Porta: plano da animacao (DoorAnimator) rente a fachada.
   const doorPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, wallHeight),
+    new THREE.PlaneGeometry(1, artWall),
     new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5 }),
   );
-  doorPlane.position.set(DOOR + 0.5, wallHeight / 2, front + 0.004);
+  doorPlane.position.set(DOOR + 0.5, artWall / 2, front + 0.004);
   doorPlane.visible = false;
   doorPlane.userData.door = true;
 
