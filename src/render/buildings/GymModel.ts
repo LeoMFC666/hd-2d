@@ -30,13 +30,18 @@ export const FRLG_GYM_TEMPLATE: readonly (readonly number[])[] = [
 const PX = 16;
 
 export interface GymArt {
-  // Arte do ginasio inteiro (7x5 metatiles = 112x80 px), RGBA, linhas de
-  // cima para baixo.
+  // Arte do ginasio inteiro (largura x 5 metatiles), RGBA, linhas de cima
+  // para baixo.
   rgba: Uint8Array;
+
+  // Largura em metatiles (7 em Pewter; Celadon e outras variam) e coluna
+  // da porta (0x15B) dentro do bloco.
+  width?: number;
+  door?: number;
 }
 
 function crop(art: GymArt, x: number, y: number, w: number, h: number): THREE.DataTexture {
-  const fullWidth = 7 * PX;
+  const fullWidth = (art.width ?? 7) * PX;
   const data = new Uint8Array(w * h * 4);
 
   // DataTexture: linhas de baixo para cima.
@@ -55,7 +60,7 @@ function crop(art: GymArt, x: number, y: number, w: number, h: number): THREE.Da
 }
 
 function pixel(art: GymArt, x: number, y: number): THREE.Color {
-  const o = (y * 7 * PX + x) * 4;
+  const o = (y * (art.width ?? 7) * PX + x) * 4;
 
   return new THREE.Color().setRGB(art.rgba[o] / 255, art.rgba[o + 1] / 255, art.rgba[o + 2] / 255, THREE.SRGBColorSpace);
 }
@@ -76,7 +81,8 @@ export function buildGymModel(art: GymArt): THREE.Group {
   const group = new THREE.Group();
   group.name = 'gym';
 
-  const width = 7;
+  const width = art.width ?? 7;
+  const door = art.door ?? 3;
   const wallHeight = 2;
   const roofFront = 3; // fachada na linha 3
   const roofBack = 0.3; // a linha 0 comeca com calcada
@@ -116,8 +122,8 @@ export function buildGymModel(art: GymArt): THREE.Group {
   // altura; a Poke Bola (linha 3) e a COBERTURA dela - um telhado deitado,
   // inclinado da parede ate a frente da entrada, cobrindo esse trecho da
   // fachada.
-  const porchX0 = 2.55;
-  const porchX1 = 4.45;
+  const porchX0 = door - 0.45;
+  const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
   const porchDepth = 0.7;
   const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
@@ -199,24 +205,64 @@ export function buildGymModel(art: GymArt): THREE.Group {
   return group;
 }
 
-/** Acha o ginasio num mapa (posicoes do canto noroeste dos blocos 7x5). */
-export function findGyms(width: number, height: number, metatileAt: (x: number, y: number) => number): Array<{ x: number; y: number }> {
-  const found: Array<{ x: number; y: number }> = [];
+export const GYM_DOOR = 0x15b;
 
-  for (let y = 0; y + 5 <= height; y++) {
-    for (let x = 0; x + 7 <= width; x++) {
-      // A beirada (linha 0) pode estar coberta; confere da linha 1 em diante.
-      let match = true;
+export interface FoundGym {
+  // Canto noroeste (linha da beirada) e tamanho em metatiles.
+  x: number;
+  y: number;
+  width: number;
+  door: number;
+}
 
-      for (let row = 1; row < 5 && match; row++) {
-        for (let col = 0; col < 7 && match; col++) {
-          match = metatileAt(x + col, y + row) === FRLG_GYM_TEMPLATE[row][col];
+/**
+ * Acha os ginasios TIPO PEWTER (completos) num mapa do FRLG.
+ *
+ * O telhado e sempre 141 142... 143 / 149 14A... 14B (tileset primario),
+ * com largura variavel (Celadon e mais largo). A fachada pode trocar tiles
+ * por variantes da cidade (Saffron), entao vale o telhado + a porta 0x15B
+ * na ultima linha + o trecho da janela da direita (0x155) na fachada de
+ * cima. O tipo Viridian (menor, sem 0x155) fica de fora por enquanto.
+ */
+export function findGyms(width: number, height: number, metatileAt: (x: number, y: number) => number): FoundGym[] {
+  const found: FoundGym[] = [];
+
+  for (let y = 1; y + 4 <= height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (metatileAt(x, y) !== 0x141 || metatileAt(x, y + 1) !== 0x149) {
+        continue;
+      }
+
+      let end = x + 1;
+
+      while (end < width && metatileAt(end, y) === 0x142 && metatileAt(end, y + 1) === 0x14a) {
+        end++;
+      }
+
+      const gymWidth = end - x + (end < width && metatileAt(end, y) === 0x143 ? 1 : 0);
+
+      if (gymWidth < 5) {
+        continue;
+      }
+
+      let door = -1;
+      let rightWindow = false;
+
+      for (let col = 0; col < gymWidth; col++) {
+        if (metatileAt(x + col, y + 3) === GYM_DOOR) {
+          door = col;
+        }
+
+        if (metatileAt(x + col, y + 2) === 0x155) {
+          rightWindow = true;
         }
       }
 
-      if (match) {
-        found.push({ x, y });
+      if (door < 0 || !rightWindow) {
+        continue;
       }
+
+      found.push({ x, y: y - 1, width: gymWidth, door });
     }
   }
 

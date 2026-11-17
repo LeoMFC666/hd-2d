@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
-import { buildGymModel, findGyms, FRLG_GYM_TEMPLATE } from './GymModel';
+import { buildGymModel, findGyms } from './GymModel';
 
 /**
  * Troca construcoes conhecidas por modelos 3D.
@@ -29,9 +29,7 @@ export interface PlacedBuilding {
 
 const PX = 16;
 
-const GYM_WIDTH = FRLG_GYM_TEMPLATE[0].length;
-
-const GYM_HEIGHT = FRLG_GYM_TEMPLATE.length;
+const GYM_HEIGHT = 5;
 
 /** Arte do bloco (largura x altura em metatiles), linhas de cima para baixo. */
 function blockArt(
@@ -132,6 +130,7 @@ export function substituteBuildings<T extends Block>(
   const gyms = findGyms(width, height, (x, y) => blocks[y * width + x]?.metatileId ?? -1);
 
   for (const gym of gyms) {
+    const GYM_WIDTH = gym.width;
     const art = blockArt(width, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks, graphics);
     const ground = surroundingGround(width, height, gym.x, gym.y, GYM_WIDTH, GYM_HEIGHT, blocks);
 
@@ -150,7 +149,7 @@ export function substituteBuildings<T extends Block>(
       }
     }
 
-    const model = buildGymModel({ rgba: art });
+    const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door });
 
     model.position.set(gym.x, 0, gym.y);
     buildings.push({ kind: 'gym', x: gym.x, y: gym.y, model });
