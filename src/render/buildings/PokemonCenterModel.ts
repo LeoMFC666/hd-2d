@@ -145,7 +145,9 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
       textured(side, 0.72), // oeste
       plain(roofRed, 0.8), // topo (escondido pelo telhado)
       plain(wall, 0.5),
-      plain(wall, 0.9), // frente (coberta pela fachada)
+      // Frente invisivel: nas quinas chanfradas da fachada a arte e
+      // transparente e mostrava o branco do corpo; agora mostra o chao.
+      new THREE.MeshBasicMaterial({ visible: false }),
       textured(side, 0.6), // fundo
     ],
   );

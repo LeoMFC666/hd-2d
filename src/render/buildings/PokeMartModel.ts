@@ -50,7 +50,12 @@ const SIGN_X1 = 48;
 // jogador. A porta fica com 1 tile, como nas outras construcoes.
 const WALL_HEIGHT = 1.5;
 
-const SIGN_SCALE = 1.3;
+// Linhas do topo da fachada onde ainda aparece a ponta da placa.
+const SIGN_TIP_ROWS = 3;
+
+// Placa no mesmo tamanho de pixel da placa do Centro Pokemon (a do Centro
+// tem 16 px de arte em 0.85 de laje): 18 px de arte -> ~0.96.
+const SIGN_SCALE = 0.85;
 
 export interface PokeMartArt {
   // Arte do bloco 4x4 (64x64 px) ja sem o chao, RGBA, de cima para baixo.
@@ -245,7 +250,9 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
       textured(side, 0.72),
       plain(roofBlue, 0.8),
       plain(wall, 0.5),
-      plain(wall, 0.9),
+      // Frente do corpo invisivel: nas quinas chanfradas da fachada a arte
+      // e transparente e mostrava o branco do corpo; agora mostra o chao.
+      new THREE.MeshBasicMaterial({ visible: false }),
       textured(side, 0.6),
     ],
   );
@@ -253,20 +260,39 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   group.add(body);
 
   // Fachada: a faixa da arte entre o fim do telhado e o pe, em tamanho
-  // natural (porta de 1 tile).
+  // natural (porta de 1 tile). A ponta de baixo da placa da Poke Bola entra
+  // nas primeiras linhas da fachada; ali vira parede (a placa ja esta
+  // inteira no quadro em pe) - senao aparecem duas placas.
+  const facadeTexture = crop(art, 0, facadeTop, ART_WIDTH, facadeBottom + 1 - facadeTop);
+  const facadeImage = facadeTexture.image as { data: Uint8Array; width: number; height: number };
+
+  for (let row = 0; row < SIGN_TIP_ROWS && row < facadeImage.height; row++) {
+    const y = facadeImage.height - 1 - row; // textura de baixo para cima
+    const wallSource = (y * facadeImage.width + SIGN_X0 - 4) * 4;
+
+    for (let x = SIGN_X0; x < SIGN_X1; x++) {
+      facadeImage.data.set(
+        facadeImage.data.subarray(wallSource, wallSource + 4),
+        (y * facadeImage.width + x) * 4,
+      );
+    }
+  }
+
+  facadeTexture.needsUpdate = true;
+
   const facade = new THREE.Mesh(
     new THREE.PlaneGeometry(width, artWall),
-    textured(crop(art, 0, facadeTop, ART_WIDTH, facadeBottom + 1 - facadeTop), 0.96),
+    textured(facadeTexture, 0.96),
   );
   facade.position.set(width / 2, artWall / 2, front + 0.001);
   group.add(facade);
 
-  // Acima dela, ate o beiral: parede lisa (as 3 primeiras linhas da
-  // fachada esticadas - mantem o contorno das quinas).
+  // Acima dela, ate o beiral: parede lisa (uma coluna de parede da
+  // fachada, esticada - sem pedaco de placa).
   if (wallHeight > artWall) {
     const band = new THREE.Mesh(
       new THREE.PlaneGeometry(width, wallHeight - artWall),
-      textured(crop(art, 0, facadeTop, ART_WIDTH, 3), 0.96),
+      textured(crop(art, 4, facadeTop + SIGN_TIP_ROWS, 1, 2), 0.96),
     );
     band.position.set(width / 2, (artWall + wallHeight) / 2, front + 0.001);
     group.add(band);
