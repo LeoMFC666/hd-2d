@@ -20,7 +20,9 @@ interface Block {
 }
 
 export interface PlacedBuilding {
-  kind: 'gym';
+  // gym = tipo Pewter (completo); gym-small = tipo Viridian (sem o trecho
+  // da janela da direita).
+  kind: 'gym' | 'gym-small';
   // Canto noroeste do bloco, em metatiles do mapa.
   x: number;
   y: number;
@@ -139,9 +141,16 @@ export function substituteBuildings<T extends Block>(
         const original = blocks[y * width + x];
 
         // Linha 0 (beirada): o tile de cima tem calcada na parte de cima;
-        // vira o que esta logo acima dela. O resto vira o chao em volta.
+        // vira o que esta logo acima dela. As outras linhas repetem o chao
+        // logo ABAIXO do ginasio na mesma coluna (a linha da porta fica na
+        // frente da parede e aparece: tem que continuar o chao da frente,
+        // nao um tile de borda qualquer). Sem chao passavel ali, o mais
+        // comum em volta.
         const above = y === gym.y && y > 0 ? blocks[(y - 1) * width + x] : undefined;
-        const replacement = above ?? ground;
+        const belowRow = gym.y + GYM_HEIGHT;
+        const below = belowRow < height ? blocks[belowRow * width + x] : undefined;
+        const replacement =
+          y === gym.y ? above ?? ground : below && below.collision === 0 ? below : ground;
 
         if (original && replacement) {
           result[y * width + x] = { ...original, metatileId: replacement.metatileId, collision: 0 } as T;
@@ -152,7 +161,7 @@ export function substituteBuildings<T extends Block>(
     const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door });
 
     model.position.set(gym.x, 0, gym.y);
-    buildings.push({ kind: 'gym', x: gym.x, y: gym.y, model });
+    buildings.push({ kind: gym.kind === 'viridian' ? 'gym-small' : 'gym', x: gym.x, y: gym.y, model });
   }
 
   return { blocks: result, buildings };

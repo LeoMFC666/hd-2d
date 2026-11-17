@@ -257,6 +257,11 @@ export function buildGymModel(art: GymArt): THREE.Group {
 export const GYM_DOOR = 0x15b;
 
 export interface FoundGym {
+  // pewter: completo (Pewter, Cerulean, Vermilion, Celadon, Fuchsia,
+  // Saffron). viridian: menor, sem o trecho da janela da direita 0x155
+  // (Viridian, Cinnabar).
+  kind: 'pewter' | 'viridian';
+
   // Canto noroeste (linha da beirada) e tamanho em metatiles.
   x: number;
   y: number;
@@ -271,7 +276,12 @@ export interface FoundGym {
  * com largura variavel (Celadon e mais largo). A fachada pode trocar tiles
  * por variantes da cidade (Saffron), entao vale o telhado + a porta 0x15B
  * na ultima linha + o trecho da janela da direita (0x155) na fachada de
- * cima. O tipo Viridian (menor, sem 0x155) fica de fora por enquanto.
+ * cima.
+ *
+ * Tipo Viridian (Viridian, Cinnabar): o mesmo predio sem o trecho 0x155 -
+ * 6 de largura, a janela da direita colada na porta, a borda direita podendo
+ * ser tile da cidade (Cinnabar troca 15E por 2BF). Usa o mesmo modelo, que
+ * sai da arte e da largura do proprio ginasio.
  */
 export function findGyms(width: number, height: number, metatileAt: (x: number, y: number) => number): FoundGym[] {
   const found: FoundGym[] = [];
@@ -307,11 +317,11 @@ export function findGyms(width: number, height: number, metatileAt: (x: number, 
         }
       }
 
-      if (door < 0 || !rightWindow) {
+      if (door < 0) {
         continue;
       }
 
-      found.push({ x, y: y - 1, width: gymWidth, door });
+      found.push({ kind: rightWindow ? 'pewter' : 'viridian', x, y: y - 1, width: gymWidth, door });
     }
   }
 
