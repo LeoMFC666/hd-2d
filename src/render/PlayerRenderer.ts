@@ -3386,9 +3386,7 @@ export class PlayerRenderer {
           .map(building => building.model.userData.entrance as THREE.Object3D | undefined)
           .filter(entrance => !!entrance);
 
-      for (const entrance of voxelGroup.userData.buildingModels as THREE.Object3D[]) {
-        entrance.scale.y = this.getUprightSpriteScale();
-      }
+
 
       this.root.add(
         voxelGroup,
@@ -3733,11 +3731,7 @@ export class PlayerRenderer {
       mesh.scale.y = upright;
     }
 
-    for (const visual of this.mapVisuals.values()) {
-      for (const model of (visual.voxelGroup?.userData.buildingModels ?? []) as THREE.Object3D[]) {
-        model.scale.y = upright;
-      }
-    }
+
   }
 
   /**

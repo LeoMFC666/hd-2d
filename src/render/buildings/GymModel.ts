@@ -137,14 +137,13 @@ export function buildGymModel(art: GymArt): THREE.Group {
   facade.position.set(width / 2, wallHeight / 2, roofFront + 0.001);
   group.add(facade);
 
-  // Entrada: a porta (linha 4) sai da parede numa caixa de 1 tile de
-  // altura; a Poke Bola (linha 3) e a COBERTURA dela - um telhado deitado,
-  // inclinado da parede ate a frente da entrada, cobrindo esse trecho da
-  // fachada.
+  // Entrada: a porta (linha 4) sai um pouco da parede numa caixa de 1
+  // tile de altura. O painel da Poke Bola (linha 3) fica reto, rente a
+  // fachada (faz parte da arte dela).
   const porchX0 = door - 0.45;
   const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
-  const porchDepth = 0.3;
+  const porchDepth = 0.12;
   const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
   const porch = new THREE.Mesh(
     new THREE.BoxGeometry(porchWidth, 1, porchDepth),
@@ -154,36 +153,6 @@ export function buildGymModel(art: GymArt): THREE.Group {
   );
   porch.position.set((porchX0 + porchX1) / 2, 0.5, roofFront + porchDepth / 2);
   entrance.add(porch);
-
-  const canopyOverhang = 0.08;
-  const cx0 = porchX0 - canopyOverhang;
-  const cx1 = porchX1 + canopyOverhang;
-  const cz0 = roofFront;
-  const cz1 = roofFront + porchDepth + canopyOverhang;
-  const cyBack = wallHeight - 0.05;
-  const cyFront = 1;
-  const canopyGeometry = new THREE.BufferGeometry();
-
-  canopyGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
-    cx0, cyFront, cz1, cx1, cyFront, cz1, cx1, cyBack, cz0, cx0, cyBack, cz0,
-  ], 3));
-  canopyGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-  canopyGeometry.setIndex([0, 1, 2, 0, 2, 3]);
-
-  const canopy = new THREE.Mesh(
-    canopyGeometry,
-    textured(crop(art, Math.round(porchX0 * PX), 3 * PX, Math.round(porchWidth * PX), PX)),
-  );
-  canopy.material.side = THREE.DoubleSide;
-  entrance.add(canopy);
-
-  // Laterais triangulares da cobertura.
-  const canopySides = new THREE.BufferGeometry();
-  canopySides.setAttribute('position', new THREE.Float32BufferAttribute([
-    cx0, cyFront, cz1, cx0, cyBack, cz0, cx0, cyFront, cz0,
-    cx1, cyFront, cz0, cx1, cyBack, cz0, cx1, cyFront, cz1,
-  ], 3));
-  entrance.add(new THREE.Mesh(canopySides, new THREE.MeshBasicMaterial({ color: pixel(art, 3 * PX + 8, 3 * PX + 2).multiplyScalar(0.6), side: THREE.DoubleSide })));
 
   // Telhado: duas aguas rasas com a arte das linhas 0-2 (beirada a beirada),
   // um pouco maior que o corpo (beiral).
