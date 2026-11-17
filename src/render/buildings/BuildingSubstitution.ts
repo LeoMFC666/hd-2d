@@ -11,6 +11,13 @@ import {
   POKEMON_CENTER_WIDTH,
 } from './PokemonCenterModel';
 
+import {
+  buildPokeMartModel,
+  findPokeMarts,
+  POKE_MART_HEIGHT,
+  POKE_MART_WIDTH,
+} from './PokeMartModel';
+
 /**
  * Troca construcoes conhecidas por modelos 3D.
  *
@@ -29,7 +36,7 @@ interface Block {
 export interface PlacedBuilding {
   // gym = tipo Pewter (completo); gym-small = tipo Viridian (sem o trecho
   // da janela da direita).
-  kind: 'gym' | 'gym-small' | 'pokemon-center';
+  kind: 'gym' | 'gym-small' | 'pokemon-center' | 'poke-mart';
   // Canto noroeste do bloco, em metatiles do mapa.
   x: number;
   y: number;
@@ -397,6 +404,16 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(center.x, 0, center.y);
     buildings.push({ kind: 'pokemon-center', x: center.x, y: center.y, model });
+  }
+
+  // Poke Mart: mesmo preparo do Centro Pokemon (chao por repeticao, arte
+  // sem o chao); posicao e alturas saem da arte no proprio modelo.
+  for (const mart of findPokeMarts(width, height, metatileAt)) {
+    const art = prepare(mart.x, mart.y, POKE_MART_WIDTH, POKE_MART_HEIGHT);
+    const model = buildPokeMartModel({ rgba: art });
+
+    model.position.set(mart.x, 0, mart.y);
+    buildings.push({ kind: 'poke-mart', x: mart.x, y: mart.y, model });
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };
