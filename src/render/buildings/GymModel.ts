@@ -146,7 +146,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
   const porchDepth = 0.3;
   const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
   const porch = new THREE.Mesh(
-    new THREE.BoxGeometry(porchWidth, 1, porchDepth),
+    new THREE.BoxGeometry(porchWidth, 1.5, porchDepth),
     [porchSide, porchSide, plain(wall, 0.9), plain(wall, 0.5),
       textured(crop(art, Math.round(porchX0 * PX), 4 * PX, Math.round(porchWidth * PX), PX)),
       plain(wall, 0.6)],
@@ -163,9 +163,26 @@ export function buildGymModel(art: GymArt): THREE.Group {
     new THREE.BoxGeometry(porchWidth + canopyOverhang * 2, canopyThickness, canopyDepth),
     [canopyEdge, canopyEdge, textured(canopyArt), canopyEdge, canopyEdge, canopyEdge],
   );
-  // No topo da fachada, logo abaixo do beiral: onde o painel ficava na arte.
-  canopy.position.set((porchX0 + porchX1) / 2, wallHeight - canopyThickness / 2, roofFront + canopyDepth / 2);
-  entrance.add(canopy);
+  // Dobradica na borda de tras da laje, encostada na parede na altura do
+  // teto (wallHeight): a laje sai do beiral e desce ate a frente.
+  const canopyHingeHeight = wallHeight;
+
+  // Altura da ponta da frente da laje (a que estava antes: 0.5 abaixo do
+  // topo da parede). O angulo e calculado para a laje ligar o teto a ela.
+  const canopyFrontHeight = wallHeight - 0.5;
+
+  const canopyAngle = Math.asin(
+    THREE.MathUtils.clamp((canopyHingeHeight - canopyFrontHeight) / canopyDepth, -1, 1),
+  );
+
+  const canopyHinge = new THREE.Group();
+  canopyHinge.position.set((porchX0 + porchX1) / 2, canopyHingeHeight, roofFront);
+  canopyHinge.rotation.x = canopyAngle; // positivo: a ponta da frente desce
+  entrance.add(canopyHinge);
+
+  // A laje sai da dobradica para a frente.
+  canopy.position.set(0, -canopyThickness / 2, canopyDepth / 2);
+  canopyHinge.add(canopy);
 
   // Na parede, onde a arte tinha a Poke Bola (agora deitada na laje): parede
   // lisa com as faixas da fachada.
