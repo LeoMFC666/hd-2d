@@ -342,6 +342,27 @@ const MAP_GROUP_LENGTHS:
     ],
   };
 
+function familyFromCode(
+  gameCode: string,
+): 'RS' | 'E' | 'FRLG' | null {
+  const prefix =
+    gameCode.slice(0, 3);
+
+  if (prefix === 'AXV' || prefix === 'AXP') {
+    return 'RS';
+  }
+
+  if (prefix === 'BPE') {
+    return 'E';
+  }
+
+  if (prefix === 'BPR' || prefix === 'BPG') {
+    return 'FRLG';
+  }
+
+  return null;
+}
+
 interface FireRedMapHeaderCandidate {
   mapHeaderAddress: number;
   mapLayoutAddress: number;
@@ -355,6 +376,8 @@ interface FireRedMapHeaderCandidate {
 }
 
 export interface Gen3MapCatalogAnchor {
+  // Motor da Gen 3, quando o adaptador ja sabe (hacks com header trocado).
+  family?: 'RS' | 'E' | 'FRLG';
   mapGroup: number;
   mapNumber: number;
   mapLayoutId: number;
@@ -429,80 +452,37 @@ export class MapCatalog {
         4,
       );
 
-    const revision =
-      this.readU8(
-        romBytes,
-        REVISION_OFFSET,
-      );
+    // O motor (RS, E, FRLG) decide o caminho; o codigo do ROM so escolhe os
+    // tamanhos vanilla de referencia. Qualquer idioma, revisao ou hack com
+    // header trocado (motor vindo do adaptador) monta o catalogo: a tabela
+    // gMapGroups e os tamanhos dos grupos saem da estrutura do ROM.
+    const family =
+      anchor.family ??
+      familyFromCode(gameCode);
 
-    if (
-      gameCode === 'BPRE' ||
-      gameCode === 'BPRP' ||
-      gameCode === 'BPRJ' ||
-      gameCode === 'BPGE' ||
-      gameCode === 'BPGP' ||
-      gameCode === 'BPGJ'
-    ) {
-      if (
-        revision !== 0 &&
-        revision !== 1
-      ) {
-        return 0;
-      }
+    if (!this.isPlausibleAnchor(anchor)) {
+      return 0;
+    }
 
-      const groupLengths =
-        gameCode === 'BPRE' ||
-        gameCode === 'BPRP' ||
-        gameCode === 'BPRJ'
-          ? MAP_GROUP_LENGTHS.BPRE
-          : MAP_GROUP_LENGTHS.BPGE;
-
-      if (!groupLengths) {
-        return 0;
-      }
-
+    if (family === 'FRLG') {
       return this.buildFireRedFromGlobalMapGroups(
         romBytes,
         anchor,
-        groupLengths,
+        gameCode.startsWith('BPG')
+          ? MAP_GROUP_LENGTHS.BPGE
+          : MAP_GROUP_LENGTHS.BPRE,
       );
     }
 
-    if (
-      revision !==
-        0 ||
-      !MAP_GROUP_LENGTHS[
-        gameCode
-      ]
-    ) {
+    if (family !== 'RS' && family !== 'E') {
       return 0;
     }
 
     const groupLengths =
-      MAP_GROUP_LENGTHS[
-        gameCode
-      ];
-
-    if (
-      anchor.mapGroup < 0 ||
-      anchor.mapGroup >=
-        groupLengths.length
-    ) {
-      return 0;
-    }
-
-    const groupLength =
-      groupLengths[
-        anchor.mapGroup
-      ];
-
-    if (
-      anchor.mapNumber < 0 ||
-      anchor.mapNumber >=
-        groupLength
-    ) {
-      return 0;
-    }
+      MAP_GROUP_LENGTHS[gameCode] ??
+      (family === 'E'
+        ? MAP_GROUP_LENGTHS.BPEE
+        : MAP_GROUP_LENGTHS.AXVE);
 
     if (
       !this.isValidRomPointer(
@@ -763,27 +743,8 @@ export class MapCatalog {
     anchor: Gen3MapCatalogAnchor,
     groupLengths: readonly number[],
   ): number {
-    if (
-      anchor.mapGroup < 0 ||
-      anchor.mapGroup >=
-        groupLengths.length
-    ) {
-      return 0;
-    }
-
-    const groupLength =
-      groupLengths[
-        anchor.mapGroup
-      ];
-
-    if (
-      anchor.mapNumber < 0 ||
-      anchor.mapNumber >=
-        groupLength
-    ) {
-      return 0;
-    }
-
+    // Sem limite pelos tamanhos vanilla: hacks expandem os grupos (o
+    // mapa atual pode estar alem deles). isPlausibleAnchor ja barrou lixo.
     if (
       !this.isValidRomPointer(
         romBytes,
@@ -2206,6 +2167,17 @@ export class MapCatalog {
       romBytes,
       layoutAddress - GBA_ROM_BASE,
       borderDimsInLayout,
+    );
+  }
+
+  private isPlausibleAnchor(
+    anchor: Gen3MapCatalogAnchor,
+  ): boolean {
+    return (
+      anchor.mapGroup >= 0 &&
+      anchor.mapGroup < MAX_MAP_GROUP_COUNT &&
+      anchor.mapNumber >= 0 &&
+      anchor.mapNumber < MAX_MAPS_PER_GROUP
     );
   }
 

@@ -125,6 +125,10 @@ export interface GameInfo {
   version: string;
   region: string;
   revision: string;
+
+  // Motor da Gen 3 (RS, E, FRLG): decide tileset primario, atributos de
+  // metatile e catalogo de mapas, inclusive em hacks com header trocado.
+  family?: 'RS' | 'E' | 'FRLG';
 }
 
 export interface GameState {

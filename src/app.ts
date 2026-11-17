@@ -18,6 +18,14 @@ import {
   GameUiOverlay,
 } from './ui/GameUiOverlay';
 
+import {
+  Hd2dPanel,
+} from './ui/Hd2dPanel';
+
+import {
+  loadHd2dSettings,
+} from './render/hd2d/Hd2dSettings';
+
 export function setupApp(): void {
   const canvas =
     document.querySelector<HTMLCanvasElement>(
@@ -84,6 +92,16 @@ export function setupApp(): void {
       '#togglePip',
     );
 
+  const hd2dToggle =
+    document.querySelector<HTMLButtonElement>(
+      '#toggleHd2d',
+    );
+
+  const hd2dPanel =
+    document.querySelector<HTMLElement>(
+      '#hd2dPanel',
+    );
+
   if (
     !canvas ||
     !sceneContainer ||
@@ -97,7 +115,9 @@ export function setupApp(): void {
     !statusEl ||
     !stage ||
     !uiCanvas ||
-    !pipToggle
+    !pipToggle ||
+    !hd2dToggle ||
+    !hd2dPanel
   ) {
     throw new Error(
       'Missing required app elements.',
@@ -117,6 +137,20 @@ export function setupApp(): void {
   let overlay:
     GameUiOverlay | null =
     null;
+
+  // Ajustes do visual HD-2D: um objeto so, compartilhado entre o painel e
+  // o renderizador (sobrevive a troca de ROM).
+  const hd2dSettings =
+    loadHd2dSettings();
+
+  new Hd2dPanel(
+    hd2dToggle,
+    hd2dPanel,
+    hd2dSettings,
+  );
+
+  (window as unknown as { __hd2d?: unknown }).__hd2d =
+    hd2dSettings;
 
   stage.dataset.loaded = 'false';
   stage.dataset.pip = 'visible';
@@ -194,6 +228,7 @@ export function setupApp(): void {
             sceneContainer,
             stateAdapter,
             romBytes,
+            hd2dSettings,
           );
 
         overlay?.destroy();

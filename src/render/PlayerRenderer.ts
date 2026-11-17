@@ -136,6 +136,9 @@ const PIXELS_PER_TILE =
 const INDOOR_MAP_TYPE =
   8;
 
+const UNDERGROUND_MAP_TYPE =
+  4;
+
 const SECRET_BASE_MAP_TYPE =
   9;
 
@@ -209,6 +212,24 @@ import {
   isBorderRaised,
   type PaddingMapInput,
 } from './PaddingBuilder';
+
+import {
+  primaryTilesetSize,
+} from '../gen3/GameProfile';
+
+import {
+  substituteBuildings,
+} from './buildings/BuildingSubstitution';
+
+import {
+  Hd2dPipeline,
+  type Hd2dEnvironment,
+} from './hd2d/Hd2dPipeline';
+
+import {
+  loadHd2dSettings,
+  type Hd2dSettings,
+} from './hd2d/Hd2dSettings';
 
 import {
   OverworldSprites,
@@ -513,6 +534,14 @@ export class PlayerRenderer {
   private lastMapLayoutId =
     -1;
 
+  // Visual HD-2D (luz, sombra pontilhada, DOF, splat, paleta). Desligado
+  // nos ajustes, renderiza direto como antes.
+  private readonly hd2d:
+    Hd2dPipeline;
+
+  private readonly hd2dFocus =
+    new THREE.Vector3();
+
   private resizeHandler:
     () => void;
 
@@ -520,6 +549,7 @@ export class PlayerRenderer {
     container: HTMLElement,
     stateAdapter: Gen3StateAdapter,
     romBytes: Uint8Array,
+    hd2dSettings: Hd2dSettings = loadHd2dSettings(),
   ) {
     this.container =
       container;
@@ -626,22 +656,6 @@ export class PlayerRenderer {
       ambient,
     );
 
-    const sun =
-      new THREE.DirectionalLight(
-        0xffffff,
-        1.2,
-      );
-
-    sun.position.set(
-      8,
-      16,
-      8,
-    );
-
-    this.scene.add(
-      sun,
-    );
-
     this.renderer =
       new THREE.WebGLRenderer({
         antialias: false,
@@ -665,6 +679,14 @@ export class PlayerRenderer {
     this.container.appendChild(
       this.renderer.domElement,
     );
+
+    // O sol do HD-2D (com shadow map) vive no pipeline.
+    this.hd2d =
+      new Hd2dPipeline(
+        this.renderer,
+        this.scene,
+        hd2dSettings,
+      );
 
     this.resize();
 
@@ -769,6 +791,9 @@ export class PlayerRenderer {
         .buildGen3FromRom(
           this.romBytes,
           {
+            family:
+              state.game.family,
+
             mapGroup:
               state.map.mapGroup,
 
@@ -843,10 +868,7 @@ export class PlayerRenderer {
   private isFireRedFamily(
     state: GameState,
   ): boolean {
-    return (
-      state.game.region === 'firered' ||
-      state.game.region === 'leafgreen'
-    );
+    return state.game.family === 'FRLG';
   }
 
   private ensureCurrentMapDefinition(
@@ -2596,12 +2618,12 @@ export class PlayerRenderer {
       return found;
     };
 
-    // Metatiles do tileset primario: 640 no FRLG, 512 no RSE.
-    const gameCode =
-      String.fromCharCode(...this.romBytes.subarray(0xac, 0xaf));
-
+    // Metatiles do tileset primario: 640 no FRLG, 512 no RSE. Pelo motor
+    // (vale para hacks com header trocado), nao pelo codigo do ROM.
     const primaryCount =
-      gameCode === 'BPR' || gameCode === 'BPG' ? 640 : 512;
+      primaryTilesetSize(
+        this.stateAdapter.getFamily() ?? undefined,
+      );
 
     // Camada de cima encostando na borda de baixo do tile: topo de objeto
     // (copa, cumeeira, ponta do pinheiro) que continua no bloco de baixo.
@@ -2891,8 +2913,22 @@ export class PlayerRenderer {
       map.height *
       GBA_METATILE_PIXELS;
 
+    // Construcoes com modelo proprio (ginasio...): saem do chao antes da
+    // dobra e voltam como modelo 3D (ver buildings/).
+    const substituted =
+      substituteBuildings(
+        this.stateAdapter.getFamily(),
+        map.width,
+        map.height,
+        renderData.blocks,
+        renderData.graphics,
+      );
+
     const data =
-      renderData;
+      {
+        ...renderData,
+        blocks: substituted.blocks as typeof renderData.blocks,
+      };
 
     // Volume (ver VoxelFolding): o que cada bloco vira - estrutura 3D,
     // objeto em pe, ledge, grama alta, flor ou chao. Calculado ANTES das
@@ -3241,7 +3277,7 @@ export class PlayerRenderer {
       index++
     ) {
       metatileIds[index] =
-        renderData.blocks[index]?.metatileId ?? 0;
+        data.blocks[index]?.metatileId ?? 0;
     }
 
     let modelTexture =
@@ -3286,6 +3322,19 @@ export class PlayerRenderer {
         0,
         position.y,
       );
+
+      // Modelos das construcoes, no espaco do mapa (descartados junto).
+      for (const building of substituted.buildings) {
+        voxelGroup.add(building.model);
+
+        building.model.traverse(object => {
+          const material = (object as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+
+          if (material?.map) {
+            (voxelGroup.userData.textures ??= []).push(material.map);
+          }
+        });
+      }
 
       this.root.add(
         voxelGroup,
@@ -3592,6 +3641,9 @@ export class PlayerRenderer {
         );
 
       this.playerXray.renderOrder = ORDER_XRAY;
+
+      // O fantasma do raio-x nao projeta sombra (o sprite ja projeta).
+      this.playerXray.userData.noShadow = true;
     }
 
     const xray =
@@ -3915,11 +3967,52 @@ export class PlayerRenderer {
         );
       }
 
-      this.renderer.render(
-        this.scene,
+      this.hd2d.render(
         this.camera,
+        {
+          focus:
+            this.hd2dFocus.set(
+              playerPosition.x,
+              this.groundHeightAt(playerPosition.x, playerPosition.z),
+              playerPosition.z,
+            ),
+          environment:
+            this.getHd2dEnvironment(state),
+          mapKey:
+            this.createMapKey(
+              state.map.mapGroup,
+              state.map.mapNumber,
+            ),
+        },
       );
     };
+
+  /**
+   * Ambiente da luz pelo tipo do mapa: caverna (UNDERGROUND) fica escura
+   * com a luz do jogador; interiores com luz de cima; o resto ao ar livre.
+   */
+  private getHd2dEnvironment(
+    state: GameState,
+  ): Hd2dEnvironment {
+    const mapType =
+      this.mapCatalog.get(
+        state.map.mapGroup,
+        state.map.mapNumber,
+      )?.mapType;
+
+    if (mapType === UNDERGROUND_MAP_TYPE) {
+      return 'cave';
+    }
+
+    if (
+      mapType === INDOOR_MAP_TYPE ||
+      mapType === SECRET_BASE_MAP_TYPE
+    ) {
+      return 'interior';
+    }
+
+    return 'outdoor';
+  }
 
   destroy(): void {
     cancelAnimationFrame(
@@ -4060,6 +4153,8 @@ export class PlayerRenderer {
     } else {
       this.player.material.dispose();
     }
+
+    this.hd2d.dispose();
 
     this.renderer.dispose();
 

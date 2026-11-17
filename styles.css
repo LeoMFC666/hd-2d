@@ -63,7 +63,7 @@ input {
 
   /* 3:2 como a tela do GBA: as janelas do jogo caem no lugar certo. */
   aspect-ratio: 3 / 2;
-  width: min(100%, calc((100vh - 130px) * 1.5));
+  width: min(100%, calc((100vh - 175px) * 1.5));
 
   border-radius: var(--radius-stage);
   overflow: hidden;
@@ -157,7 +157,8 @@ input {
   grid-template-columns: auto 1fr;
   grid-template-areas:
     'brand controls'
-    'status status';
+    'status status'
+    'panel panel';
   align-items: center;
   gap: 10px 20px;
   padding: 12px 24px 20px;
@@ -211,6 +212,95 @@ input {
   font-size: 0.9375rem;
 }
 
+/* ------------------------------------------------- ajustes do HD-2D */
+
+.hd2d-panel {
+  grid-area: panel;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
+
+.hd2d-panel summary {
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.hd2d-panel summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.hd2d-panel [data-disabled] {
+  opacity: 0.5;
+}
+
+.hd2d-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 4px 24px;
+  padding: 4px 14px 14px;
+}
+
+.hd2d-form fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.hd2d-form legend {
+  padding: 8px 0 4px;
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+
+.hd2d-row {
+  display: grid;
+  grid-template-columns: 1fr 112px 52px;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 0.9375rem;
+}
+
+.hd2d-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--cobalt-bright);
+}
+
+.hd2d-row input[type='range']:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.hd2d-row output {
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hd2d-reset {
+  justify-self: start;
+  align-self: end;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.hd2d-reset:hover {
+  background: var(--panel-raised);
+}
+
+.hd2d-reset:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 @media (max-width: 720px) {
   .stage-area {
     padding: 12px 12px 8px;
@@ -225,7 +315,8 @@ input {
     grid-template-areas:
       'brand'
       'controls'
-      'status';
+      'status'
+      'panel';
     padding: 8px 12px 16px;
   }
 

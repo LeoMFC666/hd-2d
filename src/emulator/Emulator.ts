@@ -1,7 +1,7 @@
 import { load } from '@wasm-gaming/mgba-wasm';
 import { MgbaMemoryReader } from '../gen3/MemoryReader';
 import type { EmulatorAdapter } from './EmulatorAdapter';
-import { detectGen3Game } from '../gen3/GameProfile';
+import { detectGen3Game, familyFromGameCode } from '../gen3/GameProfile';
 
 const LOCAL_SAVE_KEY = 'pkmn25d:last-save';
 
@@ -78,6 +78,7 @@ export class MgbaEmulatorAdapter implements EmulatorAdapter {
       title,
       gameCode,
       revision,
+      family: profile?.family ?? familyFromGameCode(gameCode) ?? 'deduzido da RAM',
       profile,
     });
 

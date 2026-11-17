@@ -15,10 +15,24 @@ import type { MemoryReader } from './MemoryReader';
 import { TileGraphicsDecoder } from './TileGraphicsDecoder';
 
 import {
+  detectGen3FamilyFromMemory,
   detectGen3Game,
+  familyFromGameCode,
+  profileForFamily,
+  type Gen3Family,
   type Gen3GameProfile,
   type Gen3ObjectStateLayout,
 } from './GameProfile';
+
+import {
+  Gen3RuntimeLocator,
+  type RuntimeLocatorReport,
+} from './RuntimeLocator';
+
+// Intervalo entre tentativas de deduzir o motor de um ROM com header
+// desconhecido (so funciona depois que o jogo chega ao overworld).
+const FAMILY_PROBE_INTERVAL_MS =
+  500;
 
 const GBA_ROM_HEADER_GAME_CODE =
   0x080000ac;
@@ -267,8 +281,17 @@ const DIR_EAST = 4;
 export class Gen3StateAdapter {
   private readonly memoryReader: MemoryReader;
 
-  private readonly profile:
+  private profile:
     Gen3GameProfile | null;
+
+  // Acha ObjectEvents, PlayerAvatar e SaveBlock1 pela estrutura quando o
+  // perfil nao tem (Ruby/Sapphire) ou nao bate (outro idioma, hack).
+  private locator:
+    Gen3RuntimeLocator | null = null;
+
+  private readonly forceDiscovery: boolean;
+
+  private nextFamilyProbeAt = 0;
 
   private readonly tileGraphicsDecoder:
     TileGraphicsDecoder;
@@ -340,8 +363,21 @@ export class Gen3StateAdapter {
     this.memoryReader =
       memoryReader;
 
+    this.forceDiscovery =
+      typeof location !== 'undefined' &&
+      new URLSearchParams(location.search).has('gen3discover');
+
     this.profile =
       this.detectProfile();
+
+    if (this.profile) {
+      this.locator =
+        new Gen3RuntimeLocator(
+          memoryReader,
+          this.profile,
+          this.forceDiscovery,
+        );
+    }
 
     this.tileGraphicsDecoder =
       new TileGraphicsDecoder(
@@ -367,12 +403,19 @@ export class Gen3StateAdapter {
         EMPTY_GAME_STATE,
       );
 
+    const now =
+      performance.now();
+
     if (!this.profile) {
+      this.probeFamily(now);
+    }
+
+    if (!this.profile || !this.locator) {
       return state;
     }
 
     const saveBlock1Address =
-      this.resolveSaveBlock1Address();
+      this.locator.resolveSaveBlock1(now);
 
     this.readMapState(
       state,
@@ -384,17 +427,21 @@ export class Gen3StateAdapter {
       saveBlock1Address,
     );
 
-    if (
-      this.profile.memory.objectState
-    ) {
+    const objectState =
+      this.locator.getObjectState(
+        saveBlock1Address,
+        now,
+      );
+
+    if (objectState) {
       this.readPlayerObjectState(
         state,
-        this.profile.memory.objectState,
+        objectState,
       );
 
       this.readObjectEvents(
         state,
-        this.profile.memory.objectState,
+        objectState,
       );
     } else {
       state.player.direction =
@@ -420,11 +467,80 @@ export class Gen3StateAdapter {
         String(
           this.profile.revision,
         ),
+      family:
+        this.profile.family,
     };
 
     this.previous = state;
 
     return state;
+  }
+
+  /** Motor do jogo (RS, E, FRLG), ou null antes de reconhecer o ROM. */
+  getFamily(): Gen3Family | null {
+    return this.profile?.family ?? null;
+  }
+
+  /** Enderecos em uso (depuracao: __gen3.scene / console). */
+  getLocatorReport(): RuntimeLocatorReport | null {
+    return this.locator?.report() ?? null;
+  }
+
+  private isFrlgFamily(): boolean {
+    return this.profile?.family === 'FRLG';
+  }
+
+  /**
+   * ROM com header desconhecido (hack que trocou o codigo): o motor sai da
+   * RAM viva quando o jogo chega ao overworld.
+   */
+  private probeFamily(
+    now: number,
+  ): void {
+    if (now < this.nextFamilyProbeAt) {
+      return;
+    }
+
+    this.nextFamilyProbeAt =
+      now + FAMILY_PROBE_INTERVAL_MS;
+
+    const family =
+      detectGen3FamilyFromMemory(
+        this.memoryReader,
+      );
+
+    if (!family) {
+      return;
+    }
+
+    const gameCode =
+      new TextDecoder().decode(
+        this.memoryReader.readRange(
+          GBA_ROM_HEADER_GAME_CODE,
+          4,
+        ),
+      ).replace(/[^\x20-\x7e]/g, '?');
+
+    this.profile =
+      profileForFamily(
+        family,
+        gameCode,
+        this.memoryReader.readU8(
+          GBA_ROM_HEADER_REVISION,
+        ),
+      );
+
+    this.locator =
+      new Gen3RuntimeLocator(
+        this.memoryReader,
+        this.profile,
+        this.forceDiscovery,
+      );
+
+    console.log(
+      '[gen3] ROM sem codigo conhecido; motor deduzido da RAM:',
+      family,
+    );
   }
 
   getPrimaryMetatileGraphics(): Gen3MetatileGraphics | null {
@@ -1998,8 +2114,7 @@ export class Gen3StateAdapter {
 
   private getNumTilesInPrimary(): number {
     if (
-      this.profile?.id === 'firered' ||
-      this.profile?.id === 'leafgreen'
+      this.isFrlgFamily()
     ) {
       return FRLG_NUM_TILES_IN_PRIMARY;
     }
@@ -2009,8 +2124,7 @@ export class Gen3StateAdapter {
 
   private getNumMetatilesInPrimary(): number {
     if (
-      this.profile?.id === 'firered' ||
-      this.profile?.id === 'leafgreen'
+      this.isFrlgFamily()
     ) {
       return FRLG_NUM_METATILES_IN_PRIMARY;
     }
@@ -2020,8 +2134,7 @@ export class Gen3StateAdapter {
 
   private getNumPalsInPrimary(): number {
     if (
-      this.profile?.id === 'firered' ||
-      this.profile?.id === 'leafgreen'
+      this.isFrlgFamily()
     ) {
       return FRLG_NUM_PALS_IN_PRIMARY;
     }
@@ -2214,8 +2327,7 @@ export class Gen3StateAdapter {
       );
 
     const metatileAttributesOffset =
-      this.profile?.id === 'firered' ||
-      this.profile?.id === 'leafgreen'
+      this.isFrlgFamily()
         ? FRLG_TILESET_METATILE_ATTRIBUTES_OFFSET
         : EMERALD_TILESET_METATILE_ATTRIBUTES_OFFSET;
 
@@ -2338,10 +2450,7 @@ export class Gen3StateAdapter {
     let layerType = 0;
 
     if (
-      this.profile?.id ===
-        'firered' ||
-      this.profile?.id ===
-        'leafgreen'
+      this.isFrlgFamily()
     ) {
       rawAttribute =
         this.memoryReader.readU32(
@@ -2736,13 +2845,17 @@ export class Gen3StateAdapter {
       this.profile!.memory
         .playerPositionOffset;
 
+    // SaveBlock1.pos ja vem SEM o deslocamento de 7 da grade (o jogo grava
+    // x - MAP_OFFSET em SetCameraFocusCoords). Medido no Emerald: pos (10,4)
+    // com o ObjectEvent do jogador em (17,11). Subtrair 7 de novo deixava o
+    // jogador fora do mapa nos jogos sem ObjectEvent lido (Ruby/Sapphire).
     state.player.x =
-      this.readMapCoordinate(
+      this.readSigned16(
         positionAddress,
       );
 
     state.player.y =
-      this.readMapCoordinate(
+      this.readSigned16(
         positionAddress + 2,
       );
   }
@@ -2860,22 +2973,14 @@ export class Gen3StateAdapter {
     const playerAvatarAddress =
       layout.playerAvatarAddress;
 
-    const objectEventId =
-      this.memoryReader.readU8(
-        playerAvatarAddress +
-          layout.playerAvatarObjectEventIdOffset,
-      );
+    // Sem avatar (descoberta em motores que nao o declaram ao lado da
+    // tabela): o jogador e o ObjectEvent com o bit isPlayer.
+    const objectEventAddress =
+      this.locator?.playerObjectEventAddress(layout) ?? 0;
 
-    if (
-      objectEventId >= 16
-    ) {
+    if (objectEventAddress === 0) {
       return;
     }
-
-    const objectEventAddress =
-      layout.objectEventsAddress +
-      objectEventId *
-        layout.objectEventSize;
 
     const currentCoordsAddress =
       objectEventAddress +
@@ -2913,6 +3018,17 @@ export class Gen3StateAdapter {
         facingDirection,
         movementDirection,
       );
+
+    if (playerAvatarAddress === 0) {
+      // Andando = origem do passo (0x14) diferente do destino (0x10).
+      state.player.movementState =
+        this.memoryReader.readU32(currentCoordsAddress) !==
+        this.memoryReader.readU32(currentCoordsAddress + 4)
+          ? 'walking'
+          : 'idle';
+
+      return;
+    }
 
     const runningState =
       this.memoryReader.readU8(
@@ -3040,50 +3156,30 @@ export class Gen3StateAdapter {
         GBA_ROM_HEADER_REVISION,
       );
 
-    return detectGen3Game(
-      gameCode,
-      revision,
-    );
-  }
-
-  private resolveSaveBlock1Address(): number {
-    const memory =
-      this.profile?.memory;
-
-    if (!memory) {
-      return 0;
-    }
-
-    if (
-      memory.saveBlock1AddressMode ===
-      'FIXED'
-    ) {
-      return (
-        memory.saveBlock1FixedAddress ??
-        0
+    const exact =
+      detectGen3Game(
+        gameCode,
+        revision,
       );
+
+    if (exact) {
+      return exact;
     }
 
-    if (
-      memory.saveBlock1AddressMode ===
-      'POINTER'
-    ) {
-      const pointerAddress =
-        memory.saveBlock1PointerAddress;
-
-      if (
-        pointerAddress ===
-        undefined
-      ) {
-        return 0;
-      }
-
-      return this.memoryReader.readU32(
-        pointerAddress,
+    // Codigo de 4 letras com prefixo conhecido mas idioma/variante fora da
+    // lista: usa o motor do prefixo.
+    const family =
+      familyFromGameCode(
+        gameCode,
       );
-    }
 
-    return 0;
+    return family
+      ? profileForFamily(
+          family,
+          gameCode,
+          revision,
+        )
+      : null;
   }
 
   private readSigned16(

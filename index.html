@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gen 3 Faithful 2.5D</title>
+    <title>Gen 3 HD-2D</title>
     <meta
       name="description"
       content="Pokémon da terceira geração em 2.5D no navegador, rodando o seu próprio ROM no mGBA."
@@ -44,7 +44,7 @@
       </main>
 
       <footer class="toolbar">
-        <span class="brand">Gen 3 Faithful 2.5D</span>
+        <span class="brand">Gen 3 HD-2D</span>
 
         <input id="romInput" type="file" accept=".gba,.gb,.gbc,.zip" hidden />
         <input id="saveInput" type="file" accept=".sav" hidden />
@@ -56,7 +56,13 @@
           <button id="pauseToggle" type="button" data-state="running">Pausar</button>
           <button id="resetGame" type="button">Reiniciar</button>
           <button id="togglePip" type="button" aria-pressed="true">Esconder tela GBA</button>
+          <button id="toggleHd2d" type="button" aria-pressed="true">Visual: HD-2D</button>
         </div>
+
+        <details class="hd2d-panel">
+          <summary>Ajustes do visual</summary>
+          <div id="hd2dPanel"></div>
+        </details>
 
         <p id="status" class="status" role="status">Nenhum ROM aberto.</p>
       </footer>
