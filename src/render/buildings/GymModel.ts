@@ -29,8 +29,9 @@ export const FRLG_GYM_TEMPLATE: readonly (readonly number[])[] = [
 
 const PX = 16;
 
-// Parede da fachada na borda sul da linha da porta (ver buildGymModel).
-const FACADE_SHIFT = 2;
+// Parede da fachada na borda norte da linha da porta (ver buildGymModel):
+// do tile na frente da porta, um passo entra.
+const FACADE_SHIFT = 1;
 
 export interface GymArt {
   // Arte do ginasio inteiro (largura x 5 metatiles), RGBA, linhas de cima
@@ -85,9 +86,9 @@ export function buildGymModel(art: GymArt): THREE.Group {
   root.name = 'gym';
 
   // As medidas abaixo seguem a ARTE (linha 3 = inicio da fachada). No
-  // mundo, a parede fica na borda sul da linha da porta (linha 4), como
-  // as estruturas da dobra: o jogador para no tile da frente e entra na
-  // porta andando para dentro da parede. Dai o deslocamento de 2 tiles.
+  // mundo, a parede fica no inicio da linha da porta (linha 4): o tile da
+  // porta fica na frente dela e, do tile seguinte, um passo entra. Dai o
+  // deslocamento de 1 tile.
   const group = new THREE.Group();
   group.position.z = FACADE_SHIFT;
   root.add(group);

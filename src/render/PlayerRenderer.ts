@@ -3378,6 +3378,16 @@ export class PlayerRenderer {
 
       voxelGroup.userData.doorPlanes = doorPlanes;
 
+      // Mesma escala vertical dos sprites em pe (1/cos da inclinacao da
+      // camera): o predio fica com a altura do GBA em relacao ao jogador,
+      // em vez de o jogador parecer maior que ele.
+      voxelGroup.userData.buildingModels =
+        substituted.buildings.map(building => building.model);
+
+      for (const building of substituted.buildings) {
+        building.model.scale.y = this.getUprightSpriteScale();
+      }
+
       this.root.add(
         voxelGroup,
       );
@@ -3719,6 +3729,12 @@ export class PlayerRenderer {
 
     for (const mesh of this.paddingCardMeshes) {
       mesh.scale.y = upright;
+    }
+
+    for (const visual of this.mapVisuals.values()) {
+      for (const model of (visual.voxelGroup?.userData.buildingModels ?? []) as THREE.Object3D[]) {
+        model.scale.y = upright;
+      }
     }
   }
 
