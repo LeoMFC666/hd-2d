@@ -2,7 +2,9 @@ import * as THREE from 'three';
 
 import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
+import { buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
+import { Art } from './ModelKit';
 
 import {
   buildPokemonCenterModel,
@@ -36,7 +38,7 @@ interface Block {
 export interface PlacedBuilding {
   // gym = tipo Pewter (completo); gym-small = tipo Viridian (sem o trecho
   // da janela da direita).
-  kind: 'gym' | 'gym-small' | 'pokemon-center' | 'poke-mart';
+  kind: 'gym' | 'gym-small' | 'pokemon-center' | 'poke-mart' | string;
   // Canto noroeste do bloco, em metatiles do mapa.
   x: number;
   y: number;
@@ -231,14 +233,47 @@ export function substituteBuildings<T extends Block>(
    * camada de cima) vira transparente: nao sobra grama no telhado nem na
    * fachada.
    */
-  const prepare = (x0: number, y0: number, w: number, h: number): Uint8Array => {
+  const prepare = (
+    x0: number,
+    y0: number,
+    w: number,
+    h: number,
+    // Celulas do bloco que sao da construcao (padrao: todas). As outras
+    // ficam no mapa como estao e saem da arte do modelo (cercas e
+    // arvores ao lado de um predio que nao e retangular).
+    mask?: (col: number, row: number) => boolean,
+    // Chao = so a camada de baixo de blocos ANDAVEIS (do entorno e de
+    // dentro do bloco). Sem isso, um tile de parede repetido 3 vezes na
+    // largura (portarias, casas compridas) era tomado por chao e sumia.
+    walkableGround = false,
+  ): Uint8Array => {
     const fallback = surroundingGround(width, height, x0, y0, w, h, blocks);
     const signatures = new Map<number, { count: number; metatileId: number }>();
     const cellSignature: number[] = [];
+    const inMask = (col: number, row: number): boolean => !mask || mask(col, row);
+    const walkable = new Set<number>();
+
+    if (walkableGround) {
+      for (let y = y0 - 1; y <= y0 + h; y++) {
+        for (let x = x0 - 1; x <= x0 + w; x++) {
+          if (x < 0 || y < 0 || x >= width || y >= height) {
+            continue;
+          }
+
+          const inside = x >= x0 && y >= y0 && x < x0 + w && y < y0 + h;
+          const block = blocks[y * width + x];
+          const source = graphicsAt(x, y);
+
+          if (block && source && block.collision === 0 && (!inside || inMask(x - x0, y - y0))) {
+            walkable.add(hashPixels(source.bottomPixels));
+          }
+        }
+      }
+    }
 
     for (let y = y0; y < y0 + h; y++) {
       for (let x = x0; x < x0 + w; x++) {
-        const source = graphicsAt(x, y);
+        const source = inMask(x - x0, y - y0) ? graphicsAt(x, y) : undefined;
         const signature = source ? hashPixels(source.bottomPixels) : -1;
 
         cellSignature.push(signature);
@@ -252,7 +287,8 @@ export function substituteBuildings<T extends Block>(
       }
     }
 
-    const isGround = (signature: number): boolean => (signatures.get(signature)?.count ?? 0) >= 3;
+    const isGround = (signature: number): boolean =>
+      walkableGround ? walkable.has(signature) && signatures.has(signature) : (signatures.get(signature)?.count ?? 0) >= 3;
 
     const mostCommonGround = (cells: number[]): number | undefined => {
       let best: number | undefined;
@@ -298,6 +334,16 @@ export function substituteBuildings<T extends Block>(
         const groundSignature = isGround(signature) ? signature : rowGround;
         const groundEntry = groundSignature === undefined ? undefined : signatures.get(groundSignature);
         const groundSource = groundEntry ? graphics.get(groundEntry.metatileId) : undefined;
+
+        if (!inMask(col, row)) {
+          for (let sy = 0; sy < PX; sy++) {
+            for (let sx = 0; sx < PX; sx++) {
+              art[((row * PX + sy) * w * PX + col * PX + sx) * 4 + 3] = 0;
+            }
+          }
+
+          continue;
+        }
 
         if (!original) {
           continue;
@@ -480,6 +526,23 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(mart.x, 0, mart.y);
     buildings.push({ kind: 'poke-mart', x: mart.x, y: mart.y, model });
+  }
+
+  // Portarias (casas de guarda entre rotas) e entradas do subterraneo.
+  const gates = findGatehouses(width, height, metatileAt);
+
+  linkStackedGatehouses(gates);
+
+  for (const gate of gates) {
+    if (gate.facadeless && gate.facadeless.wallHeight === 0) {
+      continue;
+    }
+
+    const art = prepare(gate.x, gate.y, gate.width, gate.height, gate.mask, true);
+    const model = buildGatehouseModel(Art.ofTiles(art, gate.width, gate.height), gate);
+
+    model.position.set(gate.x, 0, gate.y);
+    buildings.push({ kind: gate.kind, x: gate.x, y: gate.y, model });
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };

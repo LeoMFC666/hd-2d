@@ -133,7 +133,9 @@ async function main(): Promise<void> {
     const bounds = new THREE.Box3().setFromObject(building.model);
     const centerX = (bounds.min.x + bounds.max.x) / 2;
     const centerZ = (bounds.min.z + bounds.max.z) / 2;
-    const inside = centerX >= x0 && centerX <= x1 + 1 && centerZ >= y0 && centerZ <= y1 + 1;
+    const inside = query.has('touch')
+      ? bounds.max.x > box[0] && bounds.min.x < box[2] + 1 && bounds.max.z > box[1] && bounds.min.z < box[3] + 1
+      : centerX >= x0 && centerX <= x1 + 1 && centerZ >= y0 && centerZ <= y1 + 1;
     const size = `${(bounds.max.x - bounds.min.x).toFixed(2)} x ${(bounds.max.y - bounds.min.y).toFixed(2)} x ${(bounds.max.z - bounds.min.z).toFixed(2)}`;
     log(`modelo ${building.kind} em (${building.x},${building.y}) tamanho ${size}${inside ? '' : ' (fora do trecho)'}`);
     if (inside) scene.add(building.model);
@@ -153,8 +155,12 @@ async function main(): Promise<void> {
   const canvas = document.getElementById('views') as HTMLCanvasElement;
   const viewW = Number(query.get('vw') ?? 600);
   const viewH = Math.round(viewW / 1.5);
-  canvas.width = viewW * 2;
-  canvas.height = viewH * 2;
+  // views=0,2 escolhe as vistas (padrao: as quatro, em 2x2).
+  const chosen = (query.get('views') ?? '0,1,2,3').split(',').map(Number);
+  const columns = chosen.length === 4 ? 2 : chosen.length;
+  const rowsOfViews = Math.ceil(chosen.length / columns);
+  canvas.width = viewW * columns;
+  canvas.height = viewH * rowsOfViews;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
   renderer.setScissorTest(true);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -170,12 +176,14 @@ async function main(): Promise<void> {
     { name: 'noroeste (fundos)', eye: [cx - 7 * far, 6 * far, cz - 7 * far], target: [cx, 0.8, cz] },
   ];
 
-  views.forEach((view, index) => {
+  chosen.forEach((which, slot) => {
+    const view = views[which];
+    const index = which;
     const camera = new THREE.PerspectiveCamera(index === 0 ? 48 : 40, viewW / viewH, 0.1, 500);
     camera.position.set(...view.eye);
     camera.lookAt(...view.target);
-    const vx = (index % 2) * viewW;
-    const vy = (1 - Math.floor(index / 2)) * viewH;
+    const vx = (slot % columns) * viewW;
+    const vy = (rowsOfViews - 1 - Math.floor(slot / columns)) * viewH;
     renderer.setViewport(vx, vy, viewW, viewH);
     renderer.setScissor(vx, vy, viewW, viewH);
     renderer.render(scene, camera);
