@@ -311,12 +311,56 @@ export const ROUTE_HOUSE_MOLD: readonly (readonly MoldCell[])[] = [
   [0x03c, [0x03d, 0x006], [0x042, 0x007], [0x043, 0x03d], 0x03f],
 ];
 
-export function buildRouteHouse(art: Art, doorCol: number): THREE.Group {
+export function buildRouteHouse(art: Art, doorCol: number, width = 5): THREE.Group {
   return buildHouse('route-house', art, {
     facadeTopPx: PX + 11,
     minWall: 1.5,
     roof: { kind: 'hip', rise: 0.55, inset: 0.78, overhang: 0.1 },
     doors: [{ col: doorCol, row: 2 }],
-    posts: [[2, 15], [5 * PX - 16, 5 * PX - 2]],
+    posts: [[2, 15], [width * PX - 16, width * PX - 2]],
   });
+}
+
+/**
+ * Casas de telhado azul do tileset primario de outras larguras ou sem porta
+ * (a de Celadon, ao lado do laguinho, tem 6 de largura e so janelas):
+ * linha 1 de 034 a 037, linha 2 de 03C a 03F. Porta: a coluna com 03D na
+ * linha 2, ou -1.
+ */
+export function findBlueRoofHouses(
+  width: number,
+  height: number,
+  metatileAt: (x: number, y: number) => number,
+): Array<{ x: number; y: number; width: number; door: number }> {
+  const found: Array<{ x: number; y: number; width: number; door: number }> = [];
+
+  for (let y = 1; y + 1 < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (metatileAt(x, y) !== 0x034 || metatileAt(x, y + 1) !== 0x03c) {
+        continue;
+      }
+
+      let right = x + 1;
+
+      while (right < width && right - x < 12 && metatileAt(right, y) !== 0x037) {
+        right++;
+      }
+
+      if (right >= width || metatileAt(right, y) !== 0x037 || metatileAt(right, y + 1) !== 0x03f || right - x < 3) {
+        continue;
+      }
+
+      let door = -1;
+
+      for (let col = 1; col < right - x && door < 0; col++) {
+        if (metatileAt(x + col, y + 1) === 0x03d) {
+          door = col;
+        }
+      }
+
+      found.push({ x, y: y - 1, width: right - x + 1, door });
+    }
+  }
+
+  return found;
 }

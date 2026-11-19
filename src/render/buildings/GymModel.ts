@@ -42,6 +42,10 @@ export interface GymArt {
   // da porta (0x15B) dentro do bloco.
   width?: number;
   door?: number;
+
+  // Tile da porta com as duas camadas (a arte acima e so a de cima): para
+  // achar a paleta da animacao da porta.
+  doorTile?: Uint8ClampedArray | Uint8Array;
 }
 
 function crop(art: GymArt, x: number, y: number, w: number, h: number): THREE.DataTexture {
@@ -78,6 +82,33 @@ function textured(map: THREE.Texture, shade = 1): THREE.MeshBasicMaterial {
 }
 
 /**
+ * Ultima linha (px) com arte nas colunas [x0, x1) a partir de `from`, que
+ * cobre ao menos `share` delas. -1 se nenhuma.
+ */
+function lastRow(art: GymArt, x0: number, x1: number, from: number, to: number, share: number): number {
+  const fullWidth = (art.width ?? 7) * PX;
+
+  for (let y = to; y >= from; y--) {
+    let filled = 0;
+    let total = 0;
+
+    for (let x = Math.max(0, x0); x < Math.min(fullWidth, x1); x++) {
+      total++;
+
+      if (art.rgba[(y * fullWidth + x) * 4 + 3] !== 0) {
+        filled++;
+      }
+    }
+
+    if (total && filled >= total * share) {
+      return y;
+    }
+  }
+
+  return -1;
+}
+
+/**
  * Monta o ginasio com o canto noroeste do bloco 7x5 na origem (x para
  * leste, z para o sul, 1 unidade = 1 metatile).
  */
@@ -102,18 +133,35 @@ export function buildGymModel(art: GymArt): THREE.Group {
 
   const width = art.width ?? 7;
   const door = art.door ?? 3;
-  const wallHeight = 2;
   const roofFront = 3; // fachada na linha 3
   const roofBack = 0.3; // a linha 0 comeca com calcada
 
-  const wall = pixel(art, 4, 4 * PX + 4);
+  // A arte e so o predio (o chao saiu). A parede vai do topo da linha 3 ate
+  // o pe dela na arte (a linha de baixo do contorno, fora da entrada), na
+  // escala da arte: abaixo dela era a grama do chao.
+  const facadeTop = 3 * PX;
+  const porchPx0 = Math.round((door - 0.45) * PX);
+  const porchPx1 = Math.round((door + 1.45) * PX);
+  // (O menor dos dois lados: em Cinnabar a placa GYM esta desenhada na
+  // quina de baixo da direita e desce ate o fim do tile.)
+  const sides = [
+    lastRow(art, 0, porchPx0, facadeTop, 5 * PX - 1, 0.6),
+    lastRow(art, porchPx1, width * PX, facadeTop, 5 * PX - 1, 0.6),
+  ].filter((row) => row > facadeTop);
+  const facadeBottom = sides.length ? Math.min(...sides) : 5 * PX - 1;
+  const wallHeight = (facadeBottom + 1 - facadeTop) / PX;
+  // Entrada: a arte da porta vai ate o pe dela (sai um pouco abaixo da
+  // parede, por estar na frente).
+  const doorBottom = Math.max(lastRow(art, door * PX + 2, door * PX + PX - 2, 4 * PX, 5 * PX - 1, 0.5), 4 * PX + 1);
+
+  const wall = pixel(art, 8, facadeTop + 8);
   const roofEdge = pixel(art, 3 * PX, 2 * PX + 14);
 
   // Laterais e fundo: parede com as mesmas faixas da fachada.
   const depth = roofFront - roofBack;
   // Uma coluna so da fachada (sem janela nem contorno), esticada: as
   // faixas horizontais da frente continuam nas laterais, sem listras.
-  const side = crop(art, 6, 3 * PX, 1, 2 * PX);
+  const side = crop(art, 6, facadeTop, 1, facadeBottom + 1 - facadeTop);
 
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(width - 0.04, wallHeight, depth),
@@ -129,29 +177,30 @@ export function buildGymModel(art: GymArt): THREE.Group {
   body.position.set(width / 2, wallHeight / 2, roofBack + depth / 2);
   group.add(body);
 
-  // Fachada: linhas 3-4 em pe na frente do corpo.
+  // Fachada: da linha 3 ao pe da parede, em pe na frente do corpo.
   const facade = new THREE.Mesh(
     new THREE.PlaneGeometry(width, wallHeight),
-    textured(crop(art, 0, 3 * PX, width * PX, 2 * PX), 0.95),
+    textured(crop(art, 0, facadeTop, width * PX, facadeBottom + 1 - facadeTop), 0.95),
   );
   facade.position.set(width / 2, wallHeight / 2, roofFront + 0.001);
   group.add(facade);
 
-  // Entrada: a porta (linha 4) sai da parede numa caixa de 1 tile de
-  // altura. O painel da Poke Bola (linha 3) e a cobertura dela: uma laje
-  // DEITADA (horizontal) no topo da fachada, saindo da parede.
+  // Entrada: a porta (linha 4) sai da parede numa caixa que sobe ate a
+  // ponta da laje. O painel da Poke Bola (linha 3) e a cobertura dela: uma
+  // laje DEITADA (horizontal) no topo da fachada, saindo da parede.
   const porchX0 = door - 0.45;
   const porchX1 = door + 1.45;
   const porchWidth = porchX1 - porchX0;
   const porchDepth = 0.3;
-  const porchSide = textured(crop(art, 6, 4 * PX, 1, PX), 0.75);
+  const porchHeight = wallHeight - 0.5;
+  const porchSide = textured(crop(art, 6, 4 * PX, 1, doorBottom + 1 - 4 * PX), 0.75);
   const porch = new THREE.Mesh(
-    new THREE.BoxGeometry(porchWidth, 1.5, porchDepth),
+    new THREE.BoxGeometry(porchWidth, porchHeight, porchDepth),
     [porchSide, porchSide, plain(wall, 0.9), plain(wall, 0.5),
-      textured(crop(art, Math.round(porchX0 * PX), 4 * PX, Math.round(porchWidth * PX), PX)),
+      textured(crop(art, Math.round(porchX0 * PX), 4 * PX, Math.round(porchWidth * PX), doorBottom + 1 - 4 * PX)),
       plain(wall, 0.6)],
   );
-  porch.position.set((porchX0 + porchX1) / 2, 0.5, roofFront + porchDepth / 2);
+  porch.position.set((porchX0 + porchX1) / 2, porchHeight / 2, roofFront + porchDepth / 2);
   entrance.add(porch);
 
   const canopyDepth = 0.85;
@@ -190,7 +239,7 @@ export function buildGymModel(art: GymArt): THREE.Group {
     new THREE.PlaneGeometry(porchWidth, 1),
     textured(crop(art, 6, 3 * PX, 1, PX), 0.95),
   );
-  behind.position.set((porchX0 + porchX1) / 2, 1.5, roofFront + 0.002);
+  behind.position.set((porchX0 + porchX1) / 2, wallHeight - 0.5, roofFront + 0.002);
   entrance.add(behind);
 
   // Telhado: duas aguas rasas com a arte das linhas 0-2 (beirada a beirada),
@@ -232,10 +281,10 @@ export function buildGymModel(art: GymArt): THREE.Group {
   // Porta animada: plano na frente da entrada, escondido; o DoorAnimator
   // mostra nele o quadro da animacao de porta lido da VRAM.
   const doorPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
+    new THREE.PlaneGeometry(1, porchHeight),
     new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5 }),
   );
-  doorPlane.position.set(door + 0.5, 0.5, roofFront + porchDepth + 0.003);
+  doorPlane.position.set(door + 0.5, porchHeight / 2, roofFront + porchDepth + 0.003);
   doorPlane.visible = false;
   doorPlane.userData.door = true;
 
@@ -243,9 +292,13 @@ export function buildGymModel(art: GymArt): THREE.Group {
   const closed = new Uint8Array(PX * PX * 4);
   const artWidth = width * PX;
 
-  for (let row = 0; row < PX; row++) {
-    const source = ((4 * PX + row) * artWidth + door * PX) * 4;
-    closed.set(art.rgba.subarray(source, source + PX * 4), row * PX * 4);
+  if (art.doorTile) {
+    closed.set(art.doorTile.subarray(0, PX * PX * 4));
+  } else {
+    for (let row = 0; row < PX; row++) {
+      const source = ((4 * PX + row) * artWidth + door * PX) * 4;
+      closed.set(art.rgba.subarray(source, source + PX * 4), row * PX * 4);
+    }
   }
 
   doorPlane.userData.closedArt = closed;

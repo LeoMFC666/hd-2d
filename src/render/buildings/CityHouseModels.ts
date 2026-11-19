@@ -1,7 +1,7 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 
 import { type HouseSpec, type MoldCell, buildHouse, findMold } from './HouseModel';
-import { type Art, PX } from './ModelKit';
+import { Art, PX, box, plain, textured } from './ModelKit';
 
 /**
  * Casas das cidades de Kanto (tilesets SECUNDARIOS de cada cidade).
@@ -33,6 +33,18 @@ export interface FoundHouse {
   height: number;
   doors: Array<{ col: number; row: number }>;
   spec: Omit<HouseSpec, 'doors'>;
+  // A linha de cima e a de baixo de outro predio (colado atras): pode estar
+  // tomada por ele.
+  sharedTop?: boolean;
+  // Px de cima da linha de cima que sao uma cerca atras do predio (em pe,
+  // no chao, como as outras cercas).
+  backFence?: number;
+  // Predio de tras de dois colados: sobe e vem para a frente esta altura
+  // (a da parede do da frente), apoiado num corpo liso escondido atras
+  // dele. Pela regra da dobra fica no mesmo lugar na tela, mas acima do
+  // telhado do da frente: a fileira de janelas dele aparece, como no
+  // original (na camera do jogo, mais baixa que 45 graus, ela sumia).
+  lift?: number;
 }
 
 type MetatileAt = (x: number, y: number) => number;
@@ -142,6 +154,31 @@ const FIXED: FixedFamily[] = [
     // A linha de cima e a mureta de tijolo (px 0-7) ou, na casa do irmao do
     // Fishing Guru, a porta dos fundos: a laje comeca na borda cinza (px 8).
     spec: { roofTopPx: 8, roof: { kind: 'flat', rise: 0, overhang: 0.06, parapet: 0.1 } },
+  },
+  {
+    // Os 4 prediozoes amarelos sem porta em volta da Silph (Saffron): laje
+    // verde com moldura amarela e um respiro amarelo, 3 andares de janelas
+    // e a base roxa. Na arte: laje do px 0 ao 44 (linha escura do beiral),
+    // parede do 45 ao 94; respiro: tampa com o circulo (px 2-16) e frente
+    // listrada (17-30), nas colunas 48-69.
+    kind: 'house-saffron-block',
+    mold: [
+      [0x281, 0x282, 0x282, 0x285, 0x286],
+      [0x288, 0x289, 0x289, 0x28d, 0x28e],
+      [0x290, 0x291, 0x292, 0x293, 0x294],
+      [0x298, 0x299, 0x29a, 0x29b, 0x29c],
+      [0x298, 0x299, 0x29a, 0x29b, 0x29c],
+      [0x2a0, 0x2a1, 0x2a2, 0x2a3, 0x2a4],
+    ],
+    doors: [],
+    spec: {
+      roofTopPx: 0,
+      facadeTopPx: 45,
+      bodyPx: [0, 5 * PX],
+      sidePx: 4,
+      roof: { kind: 'flat', rise: 0, overhang: 0.02, parapet: 0.08 },
+      chimneys: [{ x0: 48, y0: 2, x1: 70, y1: 31, frontPx: 17, patchDx: -24 }],
+    },
   },
 ];
 
@@ -322,7 +359,11 @@ function findSaffronHouses(width: number, height: number, metatileAt: MetatileAt
  * primeira linha de laje. Na arte, a laje comeca no px 8 e a fachada 11 px
  * abaixo do topo da linha da cornija.
  */
-const CELADON_TOP = new Set([0x2ed, 0x2d9]);
+// 2ED/2D9: beirada comum; 336: com a cerca branca atras (ao lado do
+// Ginasio); 310: a de um predio colado na frente de outro (a linha mostra o
+// pe da fachada do de tras e a beirada do da frente).
+const CELADON_TOP = new Set([0x2ed, 0x2d9, 0x336, 0x310]);
+const CELADON_FRONT_TOP = 0x310;
 
 function findCeladonBlocks(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
   const found: FoundHouse[] = [];
@@ -351,7 +392,33 @@ function findCeladonBlocks(width: number, height: number, metatileAt: MetatileAt
         row++;
       }
 
-      if (metatileAt(x, row) !== 0x2f8 && metatileAt(x, row) !== 0x2e5) {
+      // Predio de tras de dois colados (Celadon, a direita do Ginasio): em
+      // vez da base, a linha de cima do da frente; a fachada dele vai ate o
+      // px 8 dela, onde comeca a beirada do outro.
+      const behind = metatileAt(x, row) === CELADON_FRONT_TOP;
+      let lift: number | undefined;
+
+      if (behind) {
+        // Altura da parede do da frente: da cornija (11 px abaixo do topo
+        // da linha dela) ate o fim da linha da base.
+        let frontCornice = row + 1;
+
+        while (frontCornice < height && metatileAt(x, frontCornice) !== 0x2e8) {
+          frontCornice++;
+        }
+
+        let frontBase = frontCornice + 1;
+
+        while (frontBase < height && metatileAt(x, frontBase) !== 0x2f8 && metatileAt(x, frontBase) !== 0x2e5) {
+          frontBase++;
+        }
+
+        if (frontBase < height) {
+          lift = ((frontBase - frontCornice) * PX + PX - 11) / PX;
+        }
+      }
+
+      if (!behind && metatileAt(x, row) !== 0x2f8 && metatileAt(x, row) !== 0x2e5) {
         continue;
       }
 
@@ -396,7 +463,11 @@ function findCeladonBlocks(width: number, height: number, metatileAt: MetatileAt
           sidePx: 4,
           roof: { kind: 'flat', rise: 0, overhang: 0.02, parapet: 0.08 },
           chimneys,
+          ...(behind ? { frontPx: (bottom - y) * PX + 8, minWall: 0.5 } : {}),
         },
+        sharedTop: metatileAt(x, y) === CELADON_FRONT_TOP,
+        backFence: metatileAt(x, y) === 0x336 ? 8 : undefined,
+        lift,
       });
     }
   }
@@ -439,6 +510,49 @@ export function buildCityHouse(art: Art, house: FoundHouse): THREE.Group {
   // referencia para medir a fachada; nao ganha plano de porta.
   const reference = house.doors.length ? house.doors : [{ col: 1, row: house.height - 1 }];
   const group = buildHouse(house.kind, art, { ...house.spec, doors: reference });
+
+  if (house.lift) {
+    const lift = house.lift;
+    const body = new THREE.Box3().setFromObject(group);
+
+    for (const child of group.children) {
+      child.position.y += lift;
+      child.position.z += lift;
+    }
+
+    // Corpo liso por baixo (a parede de baixo, escondida atras do predio da
+    // frente), na cor da coluna lisa da fachada.
+    const color = art.color(house.spec.sidePx ?? 4, (house.spec.facadeTopPx ?? 0) + 6);
+    const sides = plain(color, 0.8);
+
+    group.add(box(0.02, house.width - 0.02, 0, lift, body.min.z + lift, body.max.z + lift - 0.02, [
+      sides, sides, plain(color, 1), plain(color, 0.5), plain(color, 0.9), plain(color, 0.7),
+    ]));
+  }
+
+  if (house.backFence) {
+    // Cerca atras do predio: os px de cima da linha de cima, em pe. Fica
+    // como a cerca vizinha (as celulas de cerca com arvore viram uma carta
+    // de 1 tile em pe na borda sul da linha): a mesma altura e o mesmo
+    // lugar, com a cerca no alto da carta. Sem a grama entre as estacas.
+    const rows = house.backFence;
+    const fence = art.cut(0, 0, art.width, rows);
+
+    for (let p = 0; p < fence.length; p += 4) {
+      if (fence[p + 1] > fence[p] + 16 && fence[p + 1] > fence[p + 2]) {
+        fence[p + 3] = 0;
+      }
+    }
+
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(house.width, rows / PX),
+      textured(new Art(fence, art.width, rows).texture(0, 0, art.width, rows)),
+    );
+
+    plane.name = 'back-fence';
+    plane.position.set(house.width / 2, 1 - rows / PX / 2, 1);
+    group.add(plane);
+  }
 
   if (!house.doors.length) {
     const doors: THREE.Object3D[] = [];

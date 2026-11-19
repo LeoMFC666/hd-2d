@@ -8,7 +8,7 @@ import { buildCityHouse, findCityHouses } from './CityHouseModels';
 import { findLandmarks } from './LandmarkModels';
 
 export { landmarkExtraMetatiles } from './LandmarkModels';
-import { ROUTE_HOUSE_MOLD, buildRouteHouse, findMold } from './HouseModel';
+import { ROUTE_HOUSE_MOLD, buildRouteHouse, findBlueRoofHouses, findMold } from './HouseModel';
 import { Art } from './ModelKit';
 
 import {
@@ -79,13 +79,16 @@ function blockArt(
   h: number,
   blocks: readonly (Block | undefined)[],
   graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+  // So a camada de cima (o predio, sem o chao da camada de baixo).
+  topOnly = false,
 ): Uint8Array {
   const art = new Uint8Array(w * PX * h * PX * 4);
 
   for (let ty = 0; ty < h; ty++) {
     for (let tx = 0; tx < w; tx++) {
       const block = blocks[(y0 + ty) * width + x0 + tx];
-      const pixels = block ? graphics.get(block.metatileId)?.pixels : undefined;
+      const source = block ? graphics.get(block.metatileId) : undefined;
+      const pixels = topOnly ? source?.topPixels : source?.pixels;
 
       if (!pixels) {
         continue;
@@ -217,8 +220,9 @@ function outsideGround(
   h: number,
   blocks: readonly (Block | undefined)[],
   isWater: (metatileId: number) => boolean,
+  isFiller: (metatileId: number) => boolean,
 ): Block | undefined {
-  const counts = new Map<number, { block: Block; count: number }>();
+  const counts = new Map<number, { block: Block; count: number; filler: boolean }>();
   const visit = (x: number, y: number): void => {
     if (x < 0 || y < 0 || x >= width || y >= height) {
       return;
@@ -232,7 +236,7 @@ function outsideGround(
       return;
     }
 
-    const entry = counts.get(block.metatileId) ?? { block, count: 0 };
+    const entry = counts.get(block.metatileId) ?? { block, count: 0, filler: isFiller(block.metatileId) };
 
     entry.count++;
     counts.set(block.metatileId, entry);
@@ -247,10 +251,13 @@ function outsideGround(
     visit(x0 + w, y);
   }
 
-  let best: { block: Block; count: number } | undefined;
+  // Enchimento (a beirada andavel do predio vizinho, com agua na camada de
+  // baixo) so vale se nao houver outro chao em volta: a portaria da Rota
+  // 12, no meio do mar, so tem a ponte - e a agua debaixo dela combina.
+  let best: { block: Block; count: number; filler: boolean } | undefined;
 
   for (const entry of counts.values()) {
-    if (!best || entry.count > best.count) {
+    if (!best || (best.filler && !entry.filler) || (best.filler === entry.filler && entry.count > best.count)) {
       best = entry;
     }
   }
@@ -327,7 +334,8 @@ export function substituteBuildings<T extends Block>(
     const inMask = (col: number, row: number): boolean => !mask || mask(col, row);
     const walkable = new Set<number>();
     // So os de FORA do bloco: chao de verdade. Dentro, um tile andavel pode
-    // ter enchimento na camada de baixo (a agua do beiral do Fan Club).
+    // ter enchimento na camada de baixo (a agua do beiral do Fan Club); fora,
+    // tambem fica de fora a beirada de um predio vizinho (isFillerId).
     const walkableOutside = new Set<number>();
     // Cores verdes do chao andavel em volta (tufos de grama no pe da fachada).
     const walkableGreens = new Set<number>();
@@ -347,7 +355,7 @@ export function substituteBuildings<T extends Block>(
             walkable.add(hashPixels(source.bottomPixels));
             addGreens(source.bottomPixels, walkableGreens);
 
-            if (!inside) {
+            if (!inside && !isFillerId(block.metatileId)) {
               walkableOutside.add(hashPixels(source.bottomPixels));
             }
           }
@@ -392,7 +400,7 @@ export function substituteBuildings<T extends Block>(
 
     const blockGround = mostCommonGround(cellSignature);
     const art = blockArt(width, x0, y0, w, h, blocks, graphics);
-    const outside = classic ? undefined : outsideGround(width, height, x0, y0, w, h, blocks, isWaterId);
+    const outside = classic ? undefined : outsideGround(width, height, x0, y0, w, h, blocks, isWaterId, isFillerId);
     const outsideSource = outside ? graphics.get(outside.metatileId) : undefined;
 
     for (let row = 0; row < h; row++) {
@@ -613,6 +621,47 @@ export function substituteBuildings<T extends Block>(
     return behavior !== undefined && isWaterBehavior(behavior);
   }
 
+  // Enchimento: tile que nao e agua, com desenho na camada de cima e agua
+  // (azul) na de baixo. E a beirada andavel dos predios de Saffron e
+  // Celadon (o topo do telhado): a camada de baixo dela nao e chao, e
+  // usada como chao fazia listras de agua debaixo do modelo vizinho.
+  const fillerCache = new Map<number, boolean>();
+
+  function isFillerId(metatileId: number): boolean {
+    let filler = fillerCache.get(metatileId);
+
+    if (filler === undefined) {
+      const source = graphics.get(metatileId);
+
+      filler = false;
+
+      if (source && !isWaterBehavior(source.behavior)) {
+        let top = 0;
+
+        for (let p = 3; p < source.topPixels.length; p += 4) {
+          top += source.topPixels[p] !== 0 ? 1 : 0;
+        }
+
+        let opaque = 0;
+        let blue = 0;
+        const bottom = source.bottomPixels;
+
+        for (let p = 0; p < bottom.length; p += 4) {
+          if (bottom[p + 3] !== 0) {
+            opaque++;
+            blue += bottom[p + 2] > bottom[p] + 24 && bottom[p + 2] >= bottom[p + 1] ? 1 : 0;
+          }
+        }
+
+        filler = top > 0 && opaque > 0 && blue * 2 > opaque;
+      }
+
+      fillerCache.set(metatileId, filler);
+    }
+
+    return filler;
+  }
+
   function graphicsAt(x: number, y: number): Gen3MetatileGraphics | null | undefined {
     const block = blocks[y * width + x];
 
@@ -622,13 +671,18 @@ export function substituteBuildings<T extends Block>(
   const metatileAt = (x: number, y: number): number => blocks[y * width + x]?.metatileId ?? -1;
 
   for (const gym of findGyms(width, height, metatileAt)) {
-    // Ginasio: do jeito anterior (independente do Centro Pokemon) - arte
-    // inteira e, no chao, a camada de baixo de cada tile dele.
-    const art = blockArt(width, gym.x, gym.y, gym.width, GYM_HEIGHT, blocks, graphics);
+    // Ginasio (independente do Centro Pokemon): no chao, a camada de baixo
+    // de cada tile dele; o modelo leva so a camada de cima, que e o predio
+    // inteiro em todos os ginasios de Kanto (a de baixo e so chao: grama,
+    // calcada, pedra). Com a arte inteira, a grama do pe da fachada ia em
+    // pe no modelo, uma faixa que fazia o ginasio parecer flutuar.
+    const art = blockArt(width, gym.x, gym.y, gym.width, GYM_HEIGHT, blocks, graphics, true);
 
     groundFromOwnBottom(gym.x, gym.y, gym.width, GYM_HEIGHT);
 
-    const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door });
+    const doorBlock = blocks[(gym.y + GYM_HEIGHT - 1) * width + gym.x + gym.door];
+    const doorTile = doorBlock ? graphics.get(doorBlock.metatileId)?.pixels : undefined;
+    const model = buildGymModel({ rgba: art, width: gym.width, door: gym.door, doorTile });
 
     model.position.set(gym.x, 0, gym.y);
     buildings.push({ kind: gym.kind === 'viridian' ? 'gym-small' : 'gym', x: gym.x, y: gym.y, model });
@@ -675,6 +729,34 @@ export function substituteBuildings<T extends Block>(
     const doorCol = metatileAt(house.x + 1, house.y + 2) === 0x03d ? 1 : 3;
     const art = prepare(house.x, house.y, 5, 3, undefined, true);
     const model = buildRouteHouse(Art.ofTiles(art, 5, 3), doorCol);
+
+    model.position.set(house.x, 0, house.y);
+    buildings.push({ kind: 'route-house', x: house.x, y: house.y, model });
+  }
+
+  // O mesmo telhado azul em outras larguras ou sem porta (Celadon).
+  for (const house of findBlueRoofHouses(width, height, metatileAt)) {
+    if (buildings.some((building) => building.kind === 'route-house' && building.x === house.x && building.y === house.y)) {
+      continue;
+    }
+
+    const art = prepare(house.x, house.y, house.width, 3, undefined, true);
+    // Sem porta: a coluna 1 so serve de referencia para medir a fachada.
+    const model = buildRouteHouse(Art.ofTiles(art, house.width, 3), house.door >= 0 ? house.door : 1, house.width);
+
+    if (house.door < 0) {
+      const doors: THREE.Object3D[] = [];
+
+      model.traverse((object) => {
+        if (object.userData?.door) {
+          doors.push(object);
+        }
+      });
+
+      for (const door of doors) {
+        door.removeFromParent();
+      }
+    }
 
     model.position.set(house.x, 0, house.y);
     buildings.push({ kind: 'route-house', x: house.x, y: house.y, model });
@@ -747,7 +829,7 @@ export function substituteBuildings<T extends Block>(
   for (const house of findCityHouses(width, height, metatileAt)) {
     let free = true;
 
-    for (let y = house.y; y < house.y + house.height && free; y++) {
+    for (let y = house.y + (house.sharedTop ? 1 : 0); y < house.y + house.height && free; y++) {
       for (let x = house.x; x < house.x + house.width && free; x++) {
         free = !taken.has(y * width + x);
       }

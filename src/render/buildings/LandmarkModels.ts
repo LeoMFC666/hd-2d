@@ -596,8 +596,12 @@ function buildBikeShop(art: Art): THREE.Group {
 
   const wallFront = 5.5;
   const wallTop = wallFront - 56 / PX;
-  // Atras do toldo: a entrada escura (o vao debaixo dele), ate o chao.
-  const facade = art.clone().fill(3, 72, 61, 88, 32, 90);
+  // Atras do toldo: a entrada escura (o vao debaixo dele), ate o chao. Na
+  // arte, o escuro do vao esta na camada de baixo das portas, que sai com o
+  // chao (as portas sao andaveis): pinta com o escuro da moldura das
+  // janelas (px 20, 70), senao a frente ficava vazada e a loja parecia uma
+  // mesa sobre os postes.
+  const facade = art.clone().fill(3, 72, 61, 88, 20, 70);
 
   root.add(artBlock(facade, { x: [0, 64], z: [wallFront - 48 / PX, wallFront], y: [0, wallTop], front: [56, 88] }));
   root.add(artRoof(art, {
