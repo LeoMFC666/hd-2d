@@ -5,6 +5,9 @@ import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 import { buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
 import { buildCityHouse, findCityHouses } from './CityHouseModels';
+import { findLandmarks } from './LandmarkModels';
+
+export { landmarkExtraMetatiles } from './LandmarkModels';
 import { ROUTE_HOUSE_MOLD, buildRouteHouse, findMold } from './HouseModel';
 import { Art } from './ModelKit';
 
@@ -98,6 +101,40 @@ function blockArt(
   }
 
   return art;
+}
+
+/**
+ * Arte de uma extensao (metatiles do mapa vizinho, desenho completo) em
+ * cima da arte do bloco: as linhas novas vem primeiro.
+ */
+function withExtension(
+  art: Uint8Array,
+  w: number,
+  rows: readonly (readonly number[])[],
+  graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+): Uint8Array {
+  const top = new Uint8Array(w * PX * rows.length * PX * 4);
+
+  rows.forEach((row, ty) => {
+    row.forEach((id, tx) => {
+      const pixels = graphics.get(id)?.pixels;
+
+      if (!pixels || tx >= w) {
+        return;
+      }
+
+      for (let sy = 0; sy < PX; sy++) {
+        top.set(pixels.subarray(sy * PX * 4, (sy + 1) * PX * 4), ((ty * PX + sy) * w * PX + tx * PX) * 4);
+      }
+    });
+  });
+
+  const full = new Uint8Array(top.length + art.length);
+
+  full.set(top, 0);
+  full.set(art, top.length);
+
+  return full;
 }
 
 /** Chao mais comum em volta do bloco (sem a linha de cima: calcada). */
@@ -570,6 +607,55 @@ export function substituteBuildings<T extends Block>(
         taken.add(y * width + x);
       }
     }
+  }
+
+  // Construcoes unicas (laboratorio, museu, torre...): molde exato.
+  for (const found of findLandmarks(width, height, metatileAt)) {
+    const { landmark } = found;
+    const inside = (col: number, row: number): boolean => !landmark.outside?.(col, row);
+    let free = true;
+
+    for (let row = 0; row < found.height && free; row++) {
+      for (let col = 0; col < found.width && free; col++) {
+        free = !inside(col, row) || !taken.has((found.y + row) * width + found.x + col);
+      }
+    }
+
+    if (!free) {
+      continue;
+    }
+
+    for (let row = 0; row < found.height; row++) {
+      for (let col = 0; col < found.width; col++) {
+        if (inside(col, row)) {
+          taken.add((found.y + row) * width + found.x + col);
+        }
+      }
+    }
+
+    const art = prepare(found.x, found.y, found.width, found.height, landmark.outside ? inside : undefined, true);
+
+    if (landmark.keep?.length) {
+      const original = blockArt(width, found.x, found.y, found.width, found.height, blocks, graphics);
+      const rowBytes = found.width * PX * 4;
+
+      for (const [x0, y0, x1, y1] of landmark.keep) {
+        for (let y = y0; y < y1; y++) {
+          art.set(original.subarray(y * rowBytes + x0 * 4, y * rowBytes + x1 * 4), y * rowBytes + x0 * 4);
+        }
+      }
+    }
+
+    const extension = landmark.extension ?? [];
+    const full = extension.length ? withExtension(art, found.width, extension, graphics) : art;
+    const model = landmark.build(Art.ofTiles(full, found.width, found.height + extension.length));
+
+    if (!model) {
+      continue;
+    }
+
+    model.position.set(found.x, 0, found.y - extension.length);
+    buildings.push({ kind: landmark.kind, x: found.x, y: found.y, model });
   }
 
   for (const house of findCityHouses(width, height, metatileAt)) {

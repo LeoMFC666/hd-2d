@@ -12,7 +12,7 @@ import * as THREE from 'three';
 
 import { Gen3StateAdapter } from '../../src/gen3/Gen3StateAdapter';
 import { MapCatalog } from '../../src/gen3/world/MapCatalog';
-import { substituteBuildings } from '../../src/render/buildings/BuildingSubstitution';
+import { landmarkExtraMetatiles, substituteBuildings } from '../../src/render/buildings/BuildingSubstitution';
 
 const BASE = 0x08000000;
 const PX = 16;
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < border.borderWidth * border.borderHeight; i++) {
     borderIds.push(reader.readU16(border.borderAddress + i * 2) & 0x3ff);
   }
-  const data = adapter.getMapRenderData(u32(layout + 12), W, H, u32(layout + 16), u32(layout + 20), borderIds);
+  const data = adapter.getMapRenderData(u32(layout + 12), W, H, u32(layout + 16), u32(layout + 20), [...borderIds, ...landmarkExtraMetatiles()]);
   const substituted = substituteBuildings('FRLG', W, H, data.blocks, data.graphics);
   console.log = quiet;
 

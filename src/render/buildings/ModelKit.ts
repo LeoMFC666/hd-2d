@@ -57,6 +57,47 @@ export class Art {
     return this.rgba[o] + this.rgba[o + 1] + this.rgba[o + 2];
   }
 
+  clone(): Art {
+    return new Art(this.rgba.slice(), this.width, this.height);
+  }
+
+  /**
+   * Cobre o retangulo [x0,x1) x [y0,y1) com a arte deslocada (dx, dy) px
+   * (copia de x - dx, y - dy): o pedaco de parede ou de laje escondido
+   * atras de outra parte do predio, continuado pelo padrao do lado.
+   */
+  patch(x0: number, y0: number, x1: number, y1: number, dx: number, dy = 0): this {
+    const source = this.rgba.slice();
+
+    for (let y = Math.max(0, y0); y < Math.min(this.height, y1); y++) {
+      for (let x = Math.max(0, x0); x < Math.min(this.width, x1); x++) {
+        const sx = x - dx;
+        const sy = y - dy;
+
+        if (sx < 0 || sy < 0 || sx >= this.width || sy >= this.height) {
+          continue;
+        }
+
+        this.rgba.set(source.subarray(this.offset(sx, sy), this.offset(sx, sy) + 4), this.offset(x, y));
+      }
+    }
+
+    return this;
+  }
+
+  /** Pinta o retangulo [x0,x1) x [y0,y1) com a cor do pixel (sx, sy). */
+  fill(x0: number, y0: number, x1: number, y1: number, sx: number, sy: number): this {
+    const color = this.rgba.slice(this.offset(sx, sy), this.offset(sx, sy) + 4);
+
+    for (let y = Math.max(0, y0); y < Math.min(this.height, y1); y++) {
+      for (let x = Math.max(0, x0); x < Math.min(this.width, x1); x++) {
+        this.rgba.set(color, this.offset(x, y));
+      }
+    }
+
+    return this;
+  }
+
   /** Recorte em textura (DataTexture guarda as linhas de baixo para cima). */
   texture(x: number, y: number, w: number, h: number): THREE.DataTexture {
     return dataTexture(this.cut(x, y, w, h), w, h);
@@ -427,4 +468,58 @@ export function doorPlane(
 /** Faixa vertical da arte (1 px de largura) para laterais e fundos. */
 export function stripe(art: Art, x: number, y0: number, y1: number): THREE.DataTexture {
   return art.texture(x, y0, 1, Math.max(1, y1 - y0));
+}
+
+/**
+ * Volume de uma parte de construcao, com as faces tiradas da arte:
+ *  - x: colunas da arte (px) - em tiles, px / 16;
+ *  - z, y: faixas em tiles (contas da regra da dobra feitas por quem chama);
+ *  - front: linhas da arte (px) pintadas na frente (sul), em pe;
+ *  - lid: linhas da arte projetadas de cima na tampa (sem ela: sem tampa,
+ *    para o que fica debaixo de um telhado);
+ *  - sides: material dos lados e do fundo (padrao: a coluna mais lisa da
+ *    frente, esticada).
+ */
+export function artBlock(
+  art: Art,
+  options: {
+    x: [number, number];
+    z: [number, number];
+    y: [number, number];
+    front?: [number, number];
+    lid?: [number, number];
+    sides?: THREE.Material;
+    frontShade?: number;
+  },
+): THREE.Mesh {
+  const [px0, px1] = options.x;
+  const width = px1 - px0;
+  let sides = options.sides;
+
+  if (!sides) {
+    const [r0, r1] = options.front ?? options.lid ?? [0, art.height];
+    const column = art.plainestColumn(px0 + 2, Math.max(px0 + 3, px1 - 2), r0, r1, true);
+
+    sides = textured(stripe(art, column, r0, r1), 0.75);
+  }
+
+  const front = options.front
+    ? textured(art.texture(px0, options.front[0], width, options.front[1] - options.front[0]), options.frontShade ?? 0.97)
+    : sides;
+  const lid = options.lid ? textured(art.texture(px0, options.lid[0], width, options.lid[1] - options.lid[0])) : invisible();
+
+  return box(px0 / PX, px1 / PX, options.y[0], options.y[1], options.z[0], options.z[1], [
+    sides, sides, lid, invisible(), front, sides,
+  ]);
+}
+
+/** Telhado com as linhas [r0, r1) da arte (colunas px0..px1) projetadas de cima. */
+export function artRoof(
+  art: Art,
+  options: Omit<RoofOptions, 'map' | 'mapBounds'> & { px: [number, number]; rows: [number, number] },
+): THREE.Group {
+  const [px0, px1] = options.px;
+  const [r0, r1] = options.rows;
+
+  return roof({ ...options, map: art.texture(px0, r0, px1 - px0, r1 - r0) });
 }

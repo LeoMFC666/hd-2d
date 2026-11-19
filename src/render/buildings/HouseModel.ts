@@ -36,7 +36,14 @@ export interface HouseSpec {
     parapet?: number;
   };
   // Chamines: retangulos (px) da arte que sobem do telhado como caixas.
-  chimneys?: Array<{ x0: number; y0: number; x1: number; y1: number; height: number }>;
+  //  - com `frontPx` (lajes): a regra da dobra na caixa: as linhas de cima
+  //    (y0..frontPx) sao a tampa vista de cima e as de baixo
+  //    (frontPx..y1) a frente; altura e fundura saem da arte;
+  //  - sem ele: a arte toda na frente, com `height` de altura.
+  //  `patchDx`: no telhado, o retangulo (e a sombra logo abaixo) recebe a
+  //  arte `patchDx` px a esquerda (o padrao da laje), para a chamine nao
+  //  ficar pintada no chao do telhado atras da caixa.
+  chimneys?: Array<{ x0: number; y0: number; x1: number; y1: number; height?: number; frontPx?: number; patchDx?: number }>;
   // Celulas das portas (coluna e linha no bloco).
   doors: Array<{ col: number; row: number }>;
   // Colunas (px) dos pilares das quinas, que saem um pouco da parede.
@@ -44,6 +51,8 @@ export interface HouseSpec {
   // Largura do corpo (px) quando a arte tem algo para fora (padrao: as
   // colunas com arte na linha da porta).
   bodyPx?: [number, number];
+  // Coluna (px) da fachada esticada nos lados (padrao: a mais lisa).
+  sidePx?: number;
 }
 
 export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group {
@@ -80,14 +89,15 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   const posts = spec.posts ?? [];
   const searchX0 = posts.length ? Math.max(bodyPx0 + 6, posts[0][1] + 1) : bodyPx0 + 6;
   const searchX1 = posts.length > 1 ? Math.min(bodyPx1 - 6, posts[posts.length - 1][0]) : bodyPx1 - 6;
-  const sideColumn = art.plainestColumn(searchX0, Math.max(searchX0 + 1, searchX1), facadeTop, facadeBottom + 1, true);
+  const sideColumn = spec.sidePx ?? art.plainestColumn(searchX0, Math.max(searchX0 + 1, searchX1), facadeTop, facadeBottom + 1, true);
   const side = stripe(art, sideColumn, facadeTop, facadeBottom + 1);
   const wallColor = art.color(sideColumn, Math.round((facadeTop + facadeBottom) / 2));
 
+  // (Sem tampa: o telhado cobre; numa laje, a tampa brigava com ela.)
   root.add(box(x0 + 0.02, x1 - 0.02, 0, wallHeight, back, front - 0.01, [
     textured(side, 0.82),
     textured(side, 0.72),
-    plain(wallColor, 0.7),
+    invisible(),
     plain(wallColor, 0.4),
     invisible(),
     textured(side, 0.62),
@@ -118,7 +128,8 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   // Telhado com a arte de cima.
   const overhang = spec.roof.overhang ?? 0.1;
   const bounds = { x0: x0 - overhang, x1: x1 + overhang, z0: back - overhang, z1: front + overhang };
-  const roofArt = art.texture(bodyPx0, roofTop, bodyPx1 - bodyPx0, facadeTop - roofTop);
+  const roofSource = patchedRoof(art, spec.chimneys ?? []);
+  const roofArt = roofSource.texture(bodyPx0, roofTop, bodyPx1 - bodyPx0, facadeTop - roofTop);
   const eaveColor = art.color(Math.round((bodyPx0 + bodyPx1) / 2), facadeTop - 2);
 
   root.add(roof({
@@ -151,6 +162,22 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   for (const chimney of spec.chimneys ?? []) {
     const cx0 = chimney.x0 / PX;
     const cx1 = chimney.x1 / PX;
+
+    if (chimney.frontPx !== undefined) {
+      const lid = art.texture(chimney.x0, chimney.y0, chimney.x1 - chimney.x0, chimney.frontPx - chimney.y0);
+      const face = art.texture(chimney.x0, chimney.frontPx, chimney.x1 - chimney.x0, chimney.y1 - chimney.frontPx);
+      const faceColor = art.color(Math.round((chimney.x0 + chimney.x1) / 2), Math.round((chimney.frontPx + chimney.y1) / 2));
+      const sides = plain(faceColor, 0.72);
+      const zFront = back + (chimney.y1 - roofTop) / PX;
+      const zBack = zFront - (chimney.frontPx - chimney.y0) / PX;
+      const top = wallHeight + (chimney.y1 - chimney.frontPx) / PX;
+
+      root.add(box(cx0, cx1, wallHeight, top, zBack, zFront, [
+        sides, sides, textured(lid), sides, textured(face), sides,
+      ]));
+      continue;
+    }
+
     const art2d = art.texture(chimney.x0, chimney.y0, chimney.x1 - chimney.x0, chimney.y1 - chimney.y0);
     const color = art.color(Math.round((chimney.x0 + chimney.x1) / 2), Math.round((chimney.y0 + chimney.y1) / 2));
     const sideMaterial = plain(color, 0.7);
@@ -158,7 +185,7 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
     const zFront = back + (chimney.y1 - roofTop) / PX;
     const zBack = zFront - (cx1 - cx0) * 0.8;
 
-    root.add(box(cx0, cx1, wallHeight, wallHeight + chimney.height, zBack, zFront, [
+    root.add(box(cx0, cx1, wallHeight, wallHeight + (chimney.height ?? 0.5), zBack, zFront, [
       sideMaterial, sideMaterial, plain(color, 0.9), sideMaterial, textured(art2d), sideMaterial,
     ]));
   }
@@ -171,6 +198,33 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   root.userData.measures = { front, back, wallHeight, artWall, depth, x0, x1 };
 
   return root;
+}
+
+/** Copia da arte com o lugar das chamines coberto pelo padrao da laje. */
+function patchedRoof(art: Art, chimneys: NonNullable<HouseSpec['chimneys']>): Art {
+  const patched = chimneys.filter((chimney) => chimney.patchDx);
+
+  if (!patched.length) {
+    return art;
+  }
+
+  const copy = new Art(art.rgba.slice(), art.width, art.height);
+
+  for (const chimney of patched) {
+    const dx = chimney.patchDx!;
+
+    for (let y = chimney.y0; y < Math.min(art.height, chimney.y1 + 2); y++) {
+      for (let x = chimney.x0 - 1; x < chimney.x1 + 1; x++) {
+        if (x - dx < 0 || x >= art.width) {
+          continue;
+        }
+
+        copy.rgba.set(art.rgba.subarray(art.offset(x - dx, y), art.offset(x - dx, y) + 4), copy.offset(x, y));
+      }
+    }
+  }
+
+  return copy;
 }
 
 /**

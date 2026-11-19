@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
 
 import { type HouseSpec, type MoldCell, buildHouse, findMold } from './HouseModel';
-import type { Art } from './ModelKit';
+import { type Art, PX } from './ModelKit';
 
 /**
  * Casas das cidades de Kanto (tilesets SECUNDARIOS de cada cidade).
@@ -308,6 +308,96 @@ function findSaffronHouses(width: number, height: number, metatileAt: MetatileAt
   return found;
 }
 
+/**
+ * Predios modulares de Celadon (restaurante, casa, hotel e os prediozinhos
+ * sem porta): beirada de cima 2ED/2D9, linhas de laje 2E0.., cornija
+ * 2E8..2EC, linhas de fachada 2F0.. e a base 2F8..2FC. Largura e altura
+ * variam (4x5 ate 7x8); o respiro e a caixa escura das celulas 2E2/2E3 da
+ * primeira linha de laje. Na arte, a laje comeca no px 8 e a fachada 11 px
+ * abaixo do topo da linha da cornija.
+ */
+const CELADON_TOP = new Set([0x2ed, 0x2d9]);
+
+function findCeladonBlocks(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
+  const found: FoundHouse[] = [];
+
+  for (let y = 0; y + 3 < height; y++) {
+    for (let x = 0; x + 3 < width; x++) {
+      if (!CELADON_TOP.has(metatileAt(x, y)) || metatileAt(x, y + 1) !== 0x2e0) {
+        continue;
+      }
+
+      let row = y + 1;
+
+      while (row < height && metatileAt(x, row) === 0x2e0) {
+        row++;
+      }
+
+      if (metatileAt(x, row) !== 0x2e8) {
+        continue;
+      }
+
+      const cornice = row++;
+
+      // (Com a porta na ponta esquerda, a moldura dela ocupa a coluna:
+      // 314 na fachada e 2E5 na base.)
+      while (row < height && (metatileAt(x, row) === 0x2f0 || metatileAt(x, row) === 0x314)) {
+        row++;
+      }
+
+      if (metatileAt(x, row) !== 0x2f8 && metatileAt(x, row) !== 0x2e5) {
+        continue;
+      }
+
+      const bottom = row;
+      let right = x;
+
+      while (right < width && metatileAt(right, cornice) !== 0x2ec) {
+        right++;
+      }
+
+      if (right >= width) {
+        continue;
+      }
+
+      const w = right - x + 1;
+      const chimneys: NonNullable<HouseSpec['chimneys']> = [];
+      const doors: Array<{ col: number; row: number }> = [];
+
+      for (let col = 0; col < w; col++) {
+        if (metatileAt(x + col, y + 1) === 0x2e2) {
+          const x0 = col * PX + 1;
+
+          chimneys.push({ x0, y0: 8, x1: x0 + 22, y1: 31, frontPx: 24, patchDx: col >= 2 ? 24 : -24 });
+        }
+
+        if (metatileAt(x + col, bottom) === 0x03d) {
+          doors.push({ col, row: bottom - y });
+        }
+      }
+
+      found.push({
+        kind: 'house-celadon',
+        x,
+        y,
+        width: w,
+        height: bottom - y + 1,
+        doors,
+        spec: {
+          roofTopPx: 8,
+          facadeTopPx: (cornice - y) * PX + 11,
+          bodyPx: [0, w * PX],
+          sidePx: 4,
+          roof: { kind: 'flat', rise: 0, overhang: 0.02, parapet: 0.08 },
+          chimneys,
+        },
+      });
+    }
+  }
+
+  return found;
+}
+
 /** Todas as casas de cidade do mapa. */
 export function findCityHouses(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
   const found: FoundHouse[] = [];
@@ -333,6 +423,7 @@ export function findCityHouses(width: number, height: number, metatileAt: Metati
   }
 
   found.push(...findSaffronHouses(width, height, metatileAt));
+  found.push(...findCeladonBlocks(width, height, metatileAt));
 
   return found;
 }

@@ -218,6 +218,7 @@ import {
 } from '../gen3/GameProfile';
 
 import {
+  landmarkExtraMetatiles,
   substituteBuildings,
 } from './buildings/BuildingSubstitution';
 
@@ -2894,7 +2895,9 @@ export class PlayerRenderer {
               map.height,
               map.primaryTilesetAddress,
               map.secondaryTilesetAddress,
-              borderMetatileIds,
+              // + os metatiles das extensoes de construcoes (a parte alta
+              // da Torre Pokemon, desenhada na Rota 10).
+              [...borderMetatileIds, ...landmarkExtraMetatiles()],
             );
       } catch (error) {
         console.warn(
