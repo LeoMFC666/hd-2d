@@ -2581,7 +2581,11 @@ export class PlayerRenderer {
       }
 
       mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
+
+      // Os modelos de construcao tem caixas com um material por face.
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        material.dispose();
+      }
     });
 
     visual.voxelGroup = undefined;

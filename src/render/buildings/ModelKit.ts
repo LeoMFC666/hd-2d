@@ -551,6 +551,14 @@ export function artBlock(
   ]);
 }
 
+/**
+ * Textura de telhado: o recorte com os furos (chao tirado na borda do
+ * desenho) preenchidos pelo vizinho - um telhado nunca e vazado.
+ */
+export function roofTexture(art: Art, x: number, y: number, w: number, h: number): THREE.DataTexture {
+  return new Art(art.cut(x, y, w, h), w, h).bleed().texture(0, 0, w, h);
+}
+
 /** Telhado com as linhas [r0, r1) da arte (colunas px0..px1) projetadas de cima. */
 export function artRoof(
   art: Art,
@@ -559,5 +567,5 @@ export function artRoof(
   const [px0, px1] = options.px;
   const [r0, r1] = options.rows;
 
-  return roof({ ...options, map: art.texture(px0, r0, px1 - px0, r1 - r0) });
+  return roof({ ...options, map: roofTexture(art, px0, r0, px1 - px0, r1 - r0) });
 }

@@ -63,6 +63,23 @@ async function main(): Promise<void> {
   const substituted = substituteBuildings('FRLG', W, H, data.blocks, data.graphics);
   console.log = quiet;
 
+  // north=g.n: o mapa conectado ao norte (deslocamento 0), para conferir
+  // construcoes que passam da borda (Torre Pokemon, Mansao, portaria da Liga).
+  const northKey = query.get('north');
+  let north: { W: number; H: number; data: typeof data; substituted: typeof substituted } | undefined;
+
+  if (northKey) {
+    console.log = () => {};
+    const [ng, nn] = northKey.split('.').map(Number);
+    const nheader = u32(u32(groups - BASE + ng * 4) - BASE + nn * 4);
+    const nlayout = u32(nheader - BASE) - BASE;
+    const NW = u32(nlayout);
+    const NH = u32(nlayout + 4);
+    const ndata = adapter.getMapRenderData(u32(nlayout + 12), NW, NH, u32(nlayout + 16), u32(nlayout + 20), [...borderIds, ...landmarkExtraMetatiles()]);
+    north = { W: NW, H: NH, data: ndata, substituted: substituteBuildings('FRLG', NW, NH, ndata.blocks, ndata.graphics) };
+    console.log = quiet;
+  }
+
   const box = (query.get('box') ?? `0,0,${W - 1},${H - 1}`).split(',').map(Number);
   const margin = Number(query.get('margin') ?? 2);
   const x0 = Math.max(0, box[0] - margin);
@@ -127,6 +144,40 @@ async function main(): Promise<void> {
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(x0 + tw / 2, 0, y0 + th / 2);
   scene.add(ground);
+
+  if (north) {
+    // Faixa de baixo do mapa do norte (12 linhas), na mesma largura.
+    const rows = Math.min(12, north.H);
+    const strip = new Uint8Array(tw * PX * rows * PX * 4);
+
+    for (let ty = 0; ty < rows; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        const block = north.substituted.blocks[(north.H - rows + ty) * north.W + x0 + tx];
+        const pixels = block ? north.substituted.graphics.get(block.metatileId)?.pixels : undefined;
+        if (!pixels) continue;
+        for (let sy = 0; sy < PX; sy++) {
+          // DataTexture de baixo para cima.
+          strip.set(pixels.subarray(sy * PX * 4, (sy + 1) * PX * 4), ((rows * PX - 1 - (ty * PX + sy)) * tw * PX + tx * PX) * 4);
+        }
+      }
+    }
+
+    const stripTexture = new THREE.DataTexture(strip, tw * PX, rows * PX, THREE.RGBAFormat);
+    stripTexture.magFilter = THREE.NearestFilter;
+    stripTexture.colorSpace = THREE.SRGBColorSpace;
+    stripTexture.needsUpdate = true;
+    const stripMesh = new THREE.Mesh(new THREE.PlaneGeometry(tw, rows), new THREE.MeshBasicMaterial({ map: stripTexture }));
+    stripMesh.rotation.x = -Math.PI / 2;
+    stripMesh.position.set(x0 + tw / 2, 0, -rows / 2);
+    scene.add(stripMesh);
+
+    for (const building of north.substituted.buildings) {
+      if (building.y < north.H - rows || building.x + 1 < x0 || building.x > x1) continue;
+      building.model.position.z -= north.H;
+      log(`modelo (norte) ${building.kind} em (${building.x},${building.y})`);
+      scene.add(building.model);
+    }
+  }
 
   for (const building of substituted.buildings) {
     // So entra o modelo cujo centro (no chao) cai dentro do trecho.

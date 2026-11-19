@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { Art, PX, box, doorPlane, invisible, plain, roof, stripe, textured, wall } from './ModelKit';
+import { Art, PX, box, doorPlane, invisible, plain, roof, roofTexture, stripe, textured, wall } from './ModelKit';
 
 /**
  * Casa generica do FRLG: um bloco retangular de metatiles com o telhado em
@@ -132,7 +132,7 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   const overhang = spec.roof.overhang ?? 0.1;
   const bounds = { x0: x0 - overhang, x1: x1 + overhang, z0: back - overhang, z1: front + overhang };
   const roofSource = patchedRoof(art, spec.chimneys ?? []);
-  const roofArt = roofSource.texture(bodyPx0, roofTop, bodyPx1 - bodyPx0, facadeTop - roofTop);
+  const roofArt = roofTexture(roofSource, bodyPx0, roofTop, bodyPx1 - bodyPx0, facadeTop - roofTop);
   const eaveColor = art.color(Math.round((bodyPx0 + bodyPx1) / 2), facadeTop - 2);
 
   root.add(roof({
