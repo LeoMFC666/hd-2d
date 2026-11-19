@@ -85,6 +85,44 @@ export class Art {
     return this;
   }
 
+  /**
+   * Preenche os pixels transparentes com o pixel opaco mais perto na mesma
+   * linha (ou na mesma coluna): para superficies curvas mapeadas pela
+   * dobra, cuja borda pega um pouco do chao tirado (sem isso, viram furos).
+   */
+  bleed(): this {
+    const source = this.rgba.slice();
+    const opaque = (x: number, y: number): boolean => source[this.offset(x, y) + 3] > 0;
+
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        if (opaque(x, y)) {
+          continue;
+        }
+
+        let found = -1;
+
+        for (let d = 1; d < 24 && found < 0; d++) {
+          if (x - d >= 0 && opaque(x - d, y)) {
+            found = this.offset(x - d, y);
+          } else if (x + d < this.width && opaque(x + d, y)) {
+            found = this.offset(x + d, y);
+          } else if (y - d >= 0 && opaque(x, y - d)) {
+            found = this.offset(x, y - d);
+          } else if (y + d < this.height && opaque(x, y + d)) {
+            found = this.offset(x, y + d);
+          }
+        }
+
+        if (found >= 0) {
+          this.rgba.set(source.subarray(found, found + 4), this.offset(x, y));
+        }
+      }
+    }
+
+    return this;
+  }
+
   /** Pinta o retangulo [x0,x1) x [y0,y1) com a cor do pixel (sx, sy). */
   fill(x0: number, y0: number, x1: number, y1: number, sx: number, sy: number): this {
     const color = this.rgba.slice(this.offset(sx, sy), this.offset(sx, sy) + 4);

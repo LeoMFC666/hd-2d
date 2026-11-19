@@ -53,6 +53,9 @@ export interface HouseSpec {
   bodyPx?: [number, number];
   // Coluna (px) da fachada esticada nos lados (padrao: a mais lisa).
   sidePx?: number;
+  // Linha (px) logo abaixo da fachada (padrao: o fim da arte na coluna da
+  // porta), quando a porta e um vao num alpendre que sai da parede.
+  frontPx?: number;
 }
 
 export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group {
@@ -72,7 +75,7 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   })();
   const doorCol = spec.doors[0]?.col ?? Math.floor(art.width / PX / 2);
   const facadeTop = spec.facadeTopPx ?? eaveBottom(art, bodyPx0, bodyPx1, doorRow * PX) + 1;
-  const [, facadeBottom] = art.rows(doorCol * PX + 2, doorCol * PX + PX - 2, facadeTop);
+  const facadeBottom = spec.frontPx !== undefined ? spec.frontPx - 1 : art.rows(doorCol * PX + 2, doorCol * PX + PX - 2, facadeTop)[1];
   const [roofTopMeasured] = art.rows(bodyPx0 + 8, bodyPx1 - 8);
   const roofTop = spec.roofTopPx ?? roofTopMeasured;
 

@@ -138,6 +138,11 @@ function withExtension(
 }
 
 /** Chao mais comum em volta do bloco (sem a linha de cima: calcada). */
+/** Comportamentos de agua (lago, mar, corredeira, cachoeira, poca, alga). */
+function isWaterBehavior(behavior: number): boolean {
+  return (behavior >= 0x10 && behavior <= 0x1b) || behavior === 0x22;
+}
+
 function surroundingGround(
   width: number,
   height: number,
@@ -146,6 +151,7 @@ function surroundingGround(
   w: number,
   h: number,
   blocks: readonly (Block | undefined)[],
+  isWater: (metatileId: number) => boolean = () => false,
 ): Block | undefined {
   const counts = new Map<number, { block: Block; count: number }>();
 
@@ -159,7 +165,7 @@ function surroundingGround(
 
       const block = blocks[y * width + x];
 
-      if (!block || block.collision !== 0) {
+      if (!block || block.collision !== 0 || isWater(block.metatileId)) {
         continue;
       }
 
@@ -194,6 +200,7 @@ function outsideGround(
   w: number,
   h: number,
   blocks: readonly (Block | undefined)[],
+  isWater: (metatileId: number) => boolean = () => false,
 ): Block | undefined {
   const counts = new Map<number, { block: Block; count: number }>();
   const visit = (x: number, y: number): void => {
@@ -203,7 +210,9 @@ function outsideGround(
 
     const block = blocks[y * width + x];
 
-    if (!block || block.collision !== 0) {
+    // (A agua andavel de surfe nao e chao: a Mansao de Cinnabar, na beira
+    // do mar, ficava com o mar debaixo dela.)
+    if (!block || block.collision !== 0 || isWater(block.metatileId)) {
       return;
     }
 
@@ -286,7 +295,7 @@ export function substituteBuildings<T extends Block>(
     // largura (portarias, casas compridas) era tomado por chao e sumia.
     walkableGround = false,
   ): Uint8Array => {
-    const fallback = surroundingGround(width, height, x0, y0, w, h, blocks);
+    const fallback = surroundingGround(width, height, x0, y0, w, h, blocks, isWaterId);
     const signatures = new Map<number, { count: number; metatileId: number }>();
     const cellSignature: number[] = [];
     const inMask = (col: number, row: number): boolean => !mask || mask(col, row);
@@ -303,7 +312,7 @@ export function substituteBuildings<T extends Block>(
           const block = blocks[y * width + x];
           const source = graphicsAt(x, y);
 
-          if (block && source && block.collision === 0 && (!inside || inMask(x - x0, y - y0))) {
+          if (block && source && block.collision === 0 && !isWaterBehavior(source.behavior) && (!inside || inMask(x - x0, y - y0))) {
             walkable.add(hashPixels(source.bottomPixels));
           }
         }
@@ -352,7 +361,7 @@ export function substituteBuildings<T extends Block>(
     // a arte; o que vai no CHAO do mapa segue o entorno quando ele e outro
     // (o Centro Pokemon de Saffron tem grama debaixo do telhado, mas a
     // cidade e calcada: sem isso aparecia uma faixa de grama atras dele).
-    const outside = outsideGround(width, height, x0, y0, w, h, blocks);
+    const outside = outsideGround(width, height, x0, y0, w, h, blocks, isWaterId);
     const outsideSource = outside ? graphics.get(outside.metatileId) : undefined;
     const ownGroundSource =
       blockGround === undefined ? undefined : graphics.get(signatures.get(blockGround)!.metatileId);
@@ -525,6 +534,12 @@ export function substituteBuildings<T extends Block>(
         result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
       }
     }
+  }
+
+  function isWaterId(metatileId: number): boolean {
+    const behavior = graphics.get(metatileId)?.behavior;
+
+    return behavior !== undefined && isWaterBehavior(behavior);
   }
 
   function graphicsAt(x: number, y: number): Gen3MetatileGraphics | null | undefined {

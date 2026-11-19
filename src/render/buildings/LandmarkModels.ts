@@ -150,6 +150,206 @@ const LANDMARKS: Landmark[] = [
     build: buildCondominiums,
   },
   {
+    // Cassino (Game Corner) de Celadon: 7x5 em (31,17), mais a ponta das
+    // colunas da entrada na linha de baixo (cols 2 e 4).
+    kind: 'celadon-game-corner',
+    mold: [
+      [0x2b0, 0x2b1, 0x2b1, 0x2b1, 0x2b1, 0x2b1, 0x2b2],
+      [0x2b8, 0x2b3, 0x2b3, 0x2b9, 0x2bb, 0x2bb, 0x2ba],
+      [0x2c0, 0x2b3, 0x2b4, 0x2c1, 0x2bc, 0x2bb, 0x2c2],
+      [0x2c8, 0x2b7, 0x2b5, 0x2c9, 0x2b6, 0x2b7, 0x2ca],
+      [0x2c3, 0x2bf, 0x2bd, 0x15b, 0x2be, 0x2bf, 0x2c4],
+      [null, null, 0x2c5, null, 0x2c6, null, null],
+    ],
+    outside: (col, row) => row === 5 && col !== 2 && col !== 4,
+    build: buildGameCorner,
+  },
+  {
+    // Sala de premios do cassino: 3x4 em (38,17), o mesmo estilo.
+    kind: 'celadon-prize-room',
+    mold: [
+      [0x2b0, 0x2b1, 0x2b2],
+      [0x2c0, 0x2b9, 0x2c2],
+      [0x2c8, 0x2c7, 0x2ca],
+      [0x2c3, 0x15b, 0x2c4],
+    ],
+    build: (art) => {
+      const house = buildHouse('celadon-prize-room', art, {
+        roofTopPx: 8,
+        facadeTopPx: 40,
+        bodyPx: [0, 48],
+        roof: { kind: 'flat', rise: 0, overhang: 0.02 },
+        doors: [{ col: 1, row: 3 }],
+      });
+
+      house.add(crenellations(art, house, 48));
+
+      return house;
+    },
+  },
+  {
+    // Entrada da Zona Safari (Fuchsia, 6x6 em (22,0); a palha passa da
+    // borda de cima do mapa), mais o pe dos postes da porta (cols 1 e 3).
+    kind: 'safari-zone-entrance',
+    mold: [
+      [0x2bc, 0x2bd, 0x2bd, 0x2bd, 0x2bd, 0x2be],
+      [0x2bc, 0x2bd, 0x2bd, 0x2bd, 0x2bd, 0x2be],
+      [0x2bc, 0x2bd, 0x2bd, 0x2bd, 0x2bd, 0x2be],
+      [0x2c0, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c2],
+      [0x2c8, 0x2c9, 0x2ca, 0x2cb, 0x2d6, 0x2cf],
+      [0x2d0, 0x2d1, 0x2d2, 0x2d3, 0x2d7, 0x2c3],
+      [null, 0x2d4, null, 0x2d5, null, null],
+    ],
+    outside: (col, row) => row === 6 && col !== 1 && col !== 3,
+    build: (art) => {
+      // Palha (0-65) com a beirada escura; parede de ripas (65-96) com as
+      // janelas e a cerca viva embaixo; porta de correr (24,5) num portal
+      // branco: postes 24-28 e 51-55 ate a linha 98, viga 72-80.
+      const house = buildHouse('safari-zone-entrance', art, {
+        roofTopPx: 0,
+        facadeTopPx: 65,
+        bodyPx: [0, 96],
+        sidePx: 3,
+        roof: { kind: 'hip', rise: 0.75, inset: 0.8, overhang: 0.1 },
+        doors: [{ col: 2, row: 5 }],
+      });
+      const { front } = house.userData.measures as { front: number };
+      const portal = plain(art.color(26, 76), 0.85);
+      const postTop = (98 - 79) / PX;
+
+      for (const x0 of [24, 51]) {
+        house.add(artBlock(art, { x: [x0, x0 + 4], z: [front - 0.02, front + 0.14], y: [0, postTop], front: [79, 98], sides: portal }));
+      }
+
+      house.add(artBlock(art, { x: [24, 55], z: [front - 0.02, front + 0.16], y: [postTop, postTop + 4 / PX], lid: [72, 76], front: [76, 80], sides: portal }));
+
+      return house;
+    },
+  },
+  {
+    // Silph Co. (Saffron, 9x15 em (29,16)).
+    kind: 'silph-co',
+    mold: [
+      [0x2a8, 0x2a9, 0x2a9, 0x2c5, 0x2c6, 0x2c7, 0x2a9, 0x2a9, 0x2aa],
+      [0x2b0, 0x2b1, 0x2b1, 0x2cd, 0x2ce, 0x2cf, 0x2b1, 0x2b1, 0x2b2],
+      [0x2b0, 0x2b1, 0x2b1, 0x2cd, 0x2ce, 0x2cf, 0x2b1, 0x2b1, 0x2b2],
+      [0x2b0, 0x2b1, 0x2b1, 0x2cd, 0x2ce, 0x2cf, 0x2b1, 0x2b1, 0x2b2],
+      [0x2b8, 0x2b9, 0x2b9, 0x2d5, 0x2d6, 0x2d7, 0x2b9, 0x2b9, 0x2ba],
+      [0x2c0, 0x2c1, 0x2c2, 0x2c2, 0x2c2, 0x2c2, 0x2c2, 0x2c3, 0x2c4],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2ca, 0x2cb, 0x2cc],
+      [0x2c8, 0x2c9, 0x2ca, 0x2ab, 0x2ac, 0x2ad, 0x2ca, 0x2cb, 0x2cc],
+      [0x2d0, 0x2d1, 0x2ca, 0x2b3, 0x2b4, 0x2b5, 0x2ca, 0x2d2, 0x2d3],
+      [0x2d8, 0x2d9, 0x2d4, 0x2bb, 0x2bc, 0x2bd, 0x2d4, 0x2da, 0x2db],
+    ],
+    build: buildSilphCo,
+  },
+  {
+    // Dojo de Saffron (6x5 em (37,8)); a linha de cima tem o pe das arvores
+    // de tras (fica no mapa) e o alto da cumeeira.
+    kind: 'saffron-dojo',
+    mold: [
+      [0x330, 0x331, 0x31f, 0x331, 0x31f, 0x332],
+      [0x338, 0x339, 0x339, 0x339, 0x339, 0x33a],
+      [0x340, 0x341, 0x341, 0x341, 0x341, 0x342],
+      [0x335, 0x336, 0x337, 0x32b, 0x32c, 0x33b],
+      [0x33d, 0x33e, 0x33f, 0x333, 0x334, 0x343],
+    ],
+    outside: (_col, row) => row === 0,
+    build: (art) => {
+      // Telhado de telhas (cumeeira e agua da frente, 16-52), parede baixa
+      // com as janelas (52-72) e o alpendre do meio (40-72): o painel da
+      // Poke Bola em cima (46-62), os postes brancos e o vao escuro da
+      // entrada (40,12) ate a linha 78.
+      const house = buildHouse('saffron-dojo', art, {
+        roofTopPx: 16,
+        facadeTopPx: 52,
+        frontPx: 72,
+        bodyPx: [0, 96],
+        sidePx: 4,
+        roof: { kind: 'gable', rise: 0.6, ridgeAt: 0.15, overhang: 0.12 },
+        doors: [],
+      });
+      const { front } = house.userData.measures as { front: number };
+
+      house.add(artBlock(art, {
+        x: [40, 72], z: [front - 0.02, front + 0.375], y: [0, 32 / PX], lid: [42, 46], front: [46, 78],
+        sides: plain(art.color(44, 70), 0.85),
+      }));
+
+      return house;
+    },
+  },
+  {
+    // Mansao Pokemon (Cinnabar, 7x4 em (5,0) + o pe da escada); o alto do
+    // telhado esta nas 2 ultimas linhas da Rota 21 Sul (mesmo tileset).
+    kind: 'pokemon-mansion',
+    mold: [
+      [0x290, 0x28f, 0x291, 0x28f, 0x291, 0x28f, 0x292],
+      [0x298, 0x297, 0x299, 0x297, 0x299, 0x297, 0x29a],
+      [0x29b, 0x29c, 0x29d, 0x28b, 0x28c, 0x28d, 0x28e],
+      [0x2a3, 0x2a4, 0x2a5, 0x293, 0x294, 0x295, 0x296],
+      [null, null, 0x29e, 0x29f, 0x2a6, null, null],
+    ],
+    outside: (col, row) => row === 4 && (col < 2 || col > 4),
+    extension: [
+      [0x285, 0x286, 0x286, 0x286, 0x286, 0x286, 0x286],
+      [0x288, 0x289, 0x289, 0x289, 0x289, 0x289, 0x28a],
+    ],
+    build: (art) => {
+      // Arte com as 2 linhas da Rota 21: terraco rosa no alto (18-32),
+      // agua marrom com as tres aguas-furtadas (32-56), cornija (56-63),
+      // fachada de dois andares (63-96) e, no meio (40-72), o alpendre com
+      // a sacada xadrez, as colunas, o vao escuro (8,3) e a escada (ate 104).
+      const house = buildHouse('pokemon-mansion', art, {
+        roofTopPx: 18,
+        facadeTopPx: 63,
+        frontPx: 96,
+        bodyPx: [0, 112],
+        sidePx: 5,
+        roof: { kind: 'gable', rise: 0.7, ridgeAt: 0.31, overhang: 0.06 },
+        chimneys: [
+          { x0: 16, y0: 33, x1: 32, y1: 56, frontPx: 44, patchDx: -16 },
+          { x0: 48, y0: 33, x1: 64, y1: 56, frontPx: 44, patchDx: 16 },
+          { x0: 80, y0: 33, x1: 96, y1: 56, frontPx: 44, patchDx: 16 },
+        ],
+        doors: [],
+      });
+      const { front } = house.userData.measures as { front: number };
+
+      house.add(artBlock(art, {
+        x: [40, 72], z: [front - 0.02, front + 0.5], y: [0, (104 - 66) / PX], lid: [62, 66], front: [66, 104],
+        sides: plain(art.color(42, 92), 0.8),
+      }));
+
+      return house;
+    },
+  },
+  {
+    // O alto do telhado da Mansao na Rota 21 Sul: sai do mapa.
+    kind: 'pokemon-mansion-top',
+    mold: [
+      [0x285, 0x286, 0x286, 0x286, 0x286, 0x286, 0x286],
+      [0x288, 0x289, 0x289, 0x289, 0x289, 0x289, 0x28a],
+    ],
+    build: () => null,
+  },
+  {
+    // Laboratorio Pokemon de Cinnabar (7x4 em (5,6)).
+    kind: 'cinnabar-lab',
+    mold: [
+      [0x2a0, 0x2bd, 0x2be, 0x2ab, 0x2a1, 0x2a2, 0x2ac],
+      [0x2a8, 0x2a9, 0x2aa, 0x2b3, 0x2a9, 0x2aa, 0x2b4],
+      [0x2b0, 0x2b1, 0x2b2, 0x2bb, 0x2b1, 0x2b2, 0x2bc],
+      [0x2b8, 0x2b9, 0x2ba, 0x2ad, 0x2ae, 0x2af, 0x2b5],
+    ],
+    build: buildCinnabarLab,
+  },
+  {
     // Torre Pokemon (Lavender, 7x7 em (15,0)), com a parte alta desenhada
     // nas 8 ultimas linhas da Rota 10 (mesmo tileset).
     kind: 'pokemon-tower',
@@ -562,6 +762,225 @@ function buildCondominiums(art: Art): THREE.Group {
   house.add(wall(72 / PX, back - 0.004, 40 / PX, back - 0.004, 0, 1.05, plain(art.color(56, 2), 1)));
 
   return house;
+}
+
+/**
+ * Mureta ameiada atras da laje (linhas 2-8 da arte, em pe no fundo): as
+ * frestas sao a grama, que sai com o chao e vira buraco.
+ */
+function crenellations(art: Art, house: THREE.Group, widthPx: number): THREE.Mesh {
+  const { back, wallHeight } = house.userData.measures as { back: number; wallHeight: number };
+
+  return artBlock(art, {
+    x: [0, widthPx], z: [back, back + 0.08], y: [wallHeight, wallHeight + 6 / PX], front: [2, 8],
+    sides: plain(art.color(Math.min(widthPx - 1, 100), 7), 0.8),
+  });
+}
+
+/** Coordenadas de textura pela regra da dobra: linha da arte = rowOf(x, y, z) (px). */
+function artUv(geometry: THREE.BufferGeometry, art: Art, rowOf: (x: number, y: number, z: number) => number): void {
+  const position = geometry.attributes.position;
+  const uv = new Float32Array(position.count * 2);
+
+  for (let i = 0; i < position.count; i++) {
+    uv[i * 2] = (position.getX(i) * PX) / art.width;
+    uv[i * 2 + 1] = 1 - rowOf(position.getX(i), position.getY(i), position.getZ(i)) / art.height;
+  }
+
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+}
+
+/**
+ * Cassino de Celadon (7x5, + a ponta das colunas). Na arte: mureta ameiada
+ * (2-8), laje creme com as claraboias e o chanfro da frente (8-56),
+ * fachada de tijolo laranja com os losangos (56-80, 1,5 de altura em
+ * z = 5); a entrada e uma abobada roxa com estrelas e o leque amarelo
+ * (x 39-73) sobre duas colunas brancas (40-48 e 64-72, linhas 68-86):
+ * pela dobra, colunas de 1,125 com a frente em z = 5,375 e a abobada de
+ * raio 1,0625 com o eixo na altura delas, de z 5 a 5,375.
+ */
+function buildGameCorner(art: Art): THREE.Group {
+  // Atras da abobada: a laje e a parede continuam o padrao do lado.
+  const body = art.clone().patch(38, 40, 74, 56, 38).patch(38, 56, 48, 80, 16).patch(64, 56, 74, 80, -16);
+  const house = buildHouse('celadon-game-corner', body, {
+    roofTopPx: 8,
+    facadeTopPx: 56,
+    bodyPx: [0, 112],
+    roof: { kind: 'flat', rise: 0, overhang: 0.02 },
+    doors: [{ col: 3, row: 4 }],
+  });
+  const { front } = house.userData.measures as { front: number };
+
+  house.add(crenellations(art, house, 112));
+
+  const vaultFront = 86 / PX;
+  const spring = (86 - 68) / PX;
+  const radius = 17 / PX;
+  const cx = 56 / PX;
+  const material = textured(art.texture(0, 0, art.width, art.height), 1, true);
+
+  // Frente da abobada: meio disco (o leque e as estrelas).
+  const shape = new THREE.Shape();
+
+  shape.moveTo(cx + radius, spring);
+  shape.absarc(cx, spring, radius, 0, Math.PI, false);
+  shape.lineTo(cx + radius, spring);
+
+  const face = new THREE.ShapeGeometry(shape, 16);
+
+  face.translate(0, 0, vaultFront);
+  artUv(face, art, (_x, y) => (vaultFront - y) * PX);
+  house.add(new THREE.Mesh(face, material));
+
+  // Casca curva, de z = frente da casa ate a frente da abobada.
+  const shell = new THREE.CylinderGeometry(radius, radius, vaultFront - front, 16, 1, true, -Math.PI / 2, Math.PI);
+
+  shell.rotateX(Math.PI / 2);
+  shell.translate(cx, spring, (front + vaultFront) / 2);
+  artUv(shell, art, (_x, y, z) => (z - y) * PX);
+  house.add(new THREE.Mesh(shell, material));
+
+  // Colunas brancas.
+  const columnSide = plain(art.color(44, 76), 0.85);
+
+  for (const x0 of [40, 64]) {
+    house.add(artBlock(art, { x: [x0, x0 + 8], z: [vaultFront - 0.3, vaultFront], y: [0, spring], front: [68, 86], sides: columnSide }));
+  }
+
+  return house;
+}
+
+/**
+ * Silph Co. (9x15). Na arte (px do bloco):
+ *  - telhado (8-82): as duas metades lilases com nervuras e borda clara e,
+ *    no meio (48-96), a abobada de vidro: tampa de tras (2-8), corpo
+ *    (8-66) e a frente (66-80, o arco branco e a boca escura);
+ *  - fachada (82-232): nove andares de vidro com as lajes, as colunas
+ *    brancas dos cantos e as luminarias amarelas embaixo;
+ *  - entrada (48-96): bloco saliente com o painel das luzes, a verga
+ *    escura e as portas de vidro (193-238), porta (33,30).
+ * Dobra: fachada de 9,375 em z = 14,5; telhado de z 9,875 a 14,5; a
+ * abobada (corda de 3, flecha de 0,875) vai de z 10,375 a 14,375.
+ */
+function buildSilphCo(art: Art): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'silph-co';
+
+  const front = 232 / PX;
+  const wallTop = (232 - 82) / PX;
+  const back = front - (82 - 8) / PX;
+  const entrance = new THREE.Group();
+
+  entrance.name = 'entrance';
+  root.add(entrance);
+
+  root.add(artBlock(art, { x: [0, 144], z: [back, front], y: [0, wallTop], front: [82, 232] }));
+  root.add(artRoof(art, {
+    px: [0, 144], rows: [8, 82], kind: 'flat', rise: 0, y: wallTop + 0.002,
+    bounds: { x0: 0, x1: 9, z0: back, z1: front },
+  }));
+
+  // Borda clara em volta das metades lilases.
+  const rim = plain(art.color(2, 20), 0.95);
+  const t = 0.1;
+  const edges: Array<[number, number, number, number]> = [
+    [0, 144, back, back + t],
+    [0, 144, front - t, front],
+    [0, t * PX, back, front],
+    [144 - t * PX, 144, back, front],
+  ];
+
+  for (const [x0, x1, z0, z1] of edges) {
+    root.add(artBlock(art, { x: [x0, x1], z: [z0, z1], y: [wallTop, wallTop + 0.08], sides: rim }));
+  }
+
+  // Abobada de vidro: segmento de cilindro ao longo de z.
+  const chord = 48 / PX;
+  const rise = 14 / PX;
+  const radius = (chord * chord / 4 + rise * rise) / (2 * rise);
+  const half = Math.asin(chord / 2 / radius);
+  const axisY = wallTop + rise - radius;
+  const cx = 72 / PX;
+  const vaultFront = 80 / PX + wallTop;
+  const vaultBack = 2 / PX + wallTop + rise;
+  const glass = textured(art.texture(0, 0, art.width, art.height), 1, true);
+  const shell = new THREE.CylinderGeometry(radius, radius, vaultFront - vaultBack, 18, 1, true, -half, 2 * half);
+
+  shell.rotateX(Math.PI / 2);
+  shell.translate(cx, axisY, (vaultFront + vaultBack) / 2);
+  artUv(shell, art, (_x, y, z) => (z - y) * PX);
+  root.add(new THREE.Mesh(shell, glass));
+
+  const cap = new THREE.Shape();
+
+  cap.moveTo(cx - chord / 2, wallTop);
+  cap.lineTo(cx + chord / 2, wallTop);
+  cap.absarc(cx, axisY, radius, Math.PI / 2 - half, Math.PI / 2 + half, false);
+  cap.lineTo(cx - chord / 2, wallTop);
+
+  const face = new THREE.ShapeGeometry(cap, 12);
+
+  face.translate(0, 0, vaultFront);
+  artUv(face, art, (_x, y) => (vaultFront - y) * PX);
+  root.add(new THREE.Mesh(face, glass));
+
+  // Entrada saliente, com as portas de vidro (porta de correr na col 4).
+  const vestibule = front + 0.375;
+
+  root.add(artBlock(art, {
+    x: [48, 96], z: [front - 0.02, vestibule], y: [0, (238 - 193) / PX], lid: [189, 193], front: [193, 238],
+    sides: plain(art.color(50, 212), 0.85),
+  }));
+  entrance.add(doorPlane(art, 64, 224, 4.5, vestibule + 0.004));
+
+  return root;
+}
+
+/**
+ * Laboratorio de Cinnabar (7x4): um pavilhao em forma de capsula deitada
+ * (meio cilindro ao longo de x com as pontas arredondadas, os "C" brancos
+ * da arte), com as nervuras creme e, no meio (48-64), a faixa laranja e a
+ * porta de vidro (8,9). Na arte o corpo vai da linha 2 a 62: pela dobra,
+ * um cilindro de raio R aparece com 2,414 R de altura, entao R = 1,55, com
+ * o eixo no chao em z = 2,32. A superficie e mapeada pela dobra (linha =
+ * z - y), espelhando a metade de tras.
+ */
+function buildCinnabarLab(art: Art): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'cinnabar-lab';
+
+  const front = 62 / PX;
+  const radius = (60 / PX) / (1 + Math.SQRT2);
+  const cz = front - radius;
+  const length = art.width / PX;
+  const skin = art.clone().bleed();
+  const material = textured(skin.texture(0, 0, skin.width, skin.height), 1, true);
+  const capsule = new THREE.CapsuleGeometry(radius, length - 2 * radius, 10, 32);
+
+  capsule.rotateZ(Math.PI / 2);
+  capsule.translate(length / 2, 0, cz);
+
+  // So a metade de cima: a de baixo fica achatada logo abaixo do chao.
+  const position = capsule.attributes.position;
+
+  for (let i = 0; i < position.count; i++) {
+    position.setY(i, Math.max(-0.02, position.getY(i)));
+  }
+  artUv(capsule, skin, (_x, y, z) => ((z >= cz ? z : 2 * cz - z) - Math.max(0, y)) * PX);
+  root.add(new THREE.Mesh(capsule, material));
+
+  // Entrada: o vao da porta de vidro na base da capsula.
+  const entrance = new THREE.Group();
+
+  entrance.name = 'entrance';
+  root.add(entrance);
+  root.add(artBlock(art, {
+    x: [48, 64], z: [front - 0.5, front + 0.02], y: [0, 1], lid: [40, 46], front: [46, 62],
+    sides: plain(art.color(50, 44), 0.8),
+  }));
+  entrance.add(doorPlane(art, 48, 46, 3.5, front + 0.024));
+
+  return root;
 }
 
 export interface FoundLandmark {
