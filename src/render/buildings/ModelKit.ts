@@ -173,8 +173,10 @@ export class Art {
         }
       }
 
-      // Com preferLight, a parede clara (reboco) ganha da sombra lisa.
-      const count = colors.size + holes * 4 - (preferLight ? (light / Math.max(1, y1 - y0)) * 4 : 0);
+      // Com preferLight, a parede clara (reboco) ganha da sombra lisa e de
+      // uma janela escura que ocupe a coluna toda.
+      const fraction = light / Math.max(1, y1 - y0);
+      const count = colors.size + holes * 4 - (preferLight ? fraction * 4 : 0) + (preferLight && fraction < 0.3 ? 6 : 0);
 
       if (count < bestCount) {
         best = x;

@@ -1,0 +1,295 @@
+import type * as THREE from 'three';
+
+import { type HouseSpec, type MoldCell, buildHouse, findMold } from './HouseModel';
+import type { Art } from './ModelKit';
+
+/**
+ * Casas das cidades de Kanto (tilesets SECUNDARIOS de cada cidade).
+ *
+ * Todas seguem a mesma estrutura na arte: telhado ate uma linha escura de
+ * beiral por volta do px 42 do bloco, 3 px de sombra e uma parede de 18 a
+ * 21 px com a porta (Pallet tem dois andares: 37 px). O fim do beiral e
+ * medido na arte (HouseModel.eaveBottom); aqui ficam so o molde de
+ * metatiles, a porta e a forma do telhado de cada familia, tirada do
+ * desenho:
+ *
+ *   Pallet     5x5  telhado vermelho de 4 aguas (dois andares)
+ *   Viridian   5x4  telhado verde listrado, 2 aguas (casa e escola)
+ *   Pewter     5x4  telhado de ardosia com a cumeeira clara atras
+ *   Cerulean   Nx4  telhado azul de 4 aguas (largura variavel)
+ *   Lavender   5x4  laje roxa com mureta clara (tambem as geminadas)
+ *   Vermilion  5x4  telhado laranja ondulado, 2 aguas
+ *   Fuchsia    5x4  laje cinza quadriculada (geminadas e a do Guarda)
+ *   Saffron    4x5  telhado verde de 4 aguas (21 casas; so 4 com porta)
+ *   Safari     Nx?  telhado de palha amarelo (escritorio e casas de
+ *                   descanso da Zona Safari)
+ */
+
+export interface FoundHouse {
+  kind: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  doors: Array<{ col: number; row: number }>;
+  spec: Omit<HouseSpec, 'doors'>;
+}
+
+type MetatileAt = (x: number, y: number) => number;
+
+interface FixedFamily {
+  kind: string;
+  mold: readonly (readonly MoldCell[])[];
+  // Portas: (coluna, linha) e o id esperado (sem ele: casa sem porta).
+  doors: Array<{ col: number; row: number; id: number }>;
+  spec: Omit<HouseSpec, 'doors'>;
+}
+
+const FIXED: FixedFamily[] = [
+  {
+    kind: 'house-pallet',
+    mold: [
+      [0x281, 0x282, 0x282, 0x282, 0x283],
+      [0x289, 0x28a, 0x28a, 0x28a, 0x28b],
+      [0x291, 0x293, 0x292, 0x292, 0x294],
+      [0x298, 0x299, 0x29a, 0x29b, 0x29c],
+      [0x2a0, 0x2a3, 0x2a2, 0x2a1, 0x2a4],
+    ],
+    doors: [{ col: 1, row: 4, id: 0x2a3 }],
+    spec: { roof: { kind: 'hip', rise: 0.75, inset: 0.5, overhang: 0.12 } },
+  },
+  {
+    kind: 'house-viridian',
+    mold: [
+      [0x280, 0x281, 0x282, 0x283, 0x284],
+      [0x288, 0x289, 0x28a, 0x28b, 0x28c],
+      [0x290, 0x291, 0x292, 0x293, 0x294],
+      [null, 0x299, null, null, null],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x299 }],
+    spec: { roof: { kind: 'gable', rise: 0.55, overhang: 0.1 } },
+  },
+  {
+    // A casa de Viridian (nao a escola) tem uma agua-furtada marrom com
+    // janela no telhado (px 46-65 x 8-32 da arte, linha de cima 2A8-2AC).
+    kind: 'house-viridian',
+    mold: [
+      [0x2a8, 0x2a9, 0x2aa, 0x2ab, 0x2ac],
+      [0x288, 0x289, 0x28a, 0x28b, 0x28c],
+      [0x290, 0x291, 0x292, 0x293, 0x294],
+      [null, 0x299, null, null, null],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x299 }],
+    spec: {
+      roof: { kind: 'gable', rise: 0.55, overhang: 0.1 },
+      chimneys: [{ x0: 46, y0: 8, x1: 66, y1: 33, height: 0.85 }],
+    },
+  },
+  {
+    kind: 'house-pewter',
+    mold: [
+      [0x2a7, 0x2b6, 0x2b6, 0x2b6, 0x287],
+      [0x2af, 0x2be, 0x2be, 0x2be, 0x28f],
+      [0x2b7, 0x2c6, 0x2b0, 0x2b1, 0x297],
+      [0x2bf, 0x2ce, 0x2b8, 0x2b9, 0x29f],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x2ce }],
+    spec: { roof: { kind: 'gable', rise: 0.5, ridgeAt: 0.3, overhang: 0.1 } },
+  },
+  {
+    kind: 'house-lavender',
+    mold: [
+      [0x288, null, null, null, 0x28c],
+      [0x290, 0x291, 0x291, 0x291, 0x294],
+      [0x298, 0x299, 0x29a, 0x29b, 0x29c],
+      [0x2a0, 0x2a1, 0x2a2, 0x2a3, 0x2a4],
+    ],
+    doors: [{ col: 2, row: 3, id: 0x2a2 }],
+    spec: { roof: { kind: 'flat', rise: 0, overhang: 0.06, parapet: 0.12 } },
+  },
+  {
+    kind: 'house-vermilion',
+    mold: [
+      [null, null, null, null, null],
+      [0x2a8, 0x2a9, 0x2a9, 0x2a9, 0x2aa],
+      [0x2b0, 0x2a7, null, null, null],
+      [0x2b8, 0x29e, null, null, null],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x29e }],
+    spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
+  },
+  {
+    kind: 'house-fuchsia',
+    mold: [
+      [null, null, null, null, null],
+      [0x2a8, 0x2a9, 0x2a9, 0x2a9, 0x2aa],
+      [0x2b0, 0x2b1, 0x2b2, 0x2b3, 0x2ab],
+      [0x2b8, 0x2bf, 0x2b9, 0x2ba, 0x2bb],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x2bf }],
+    // A linha de cima e a mureta de tijolo (px 0-7) ou, na casa do irmao do
+    // Fishing Guru, a porta dos fundos: a laje comeca na borda cinza (px 8).
+    spec: { roofTopPx: 8, roof: { kind: 'flat', rise: 0, overhang: 0.06, parapet: 0.1 } },
+  },
+  {
+    kind: 'house-saffron',
+    mold: [
+      [0x295, 0x296, 0x296, 0x297],
+      [0x29d, 0x29e, 0x29e, 0x29f],
+      [0x2a5, 0x2a6, 0x28f, 0x2a7],
+      [null, null, null, 0x29c],
+      [null, null, null, 0x2a4],
+    ],
+    doors: [{ col: 1, row: 4, id: 0x284 }],
+    spec: { roof: { kind: 'hip', rise: 0.55, inset: 0.35, overhang: 0.08 } },
+  },
+];
+
+/** Casas de largura variavel: canto esquerdo e direito de cada linha. */
+interface WideFamily {
+  kind: string;
+  // Linhas de baixo para cima: [esquerda, direita]; a ultima pode repetir
+  // (telhado com 1 ou mais linhas iguais) quando `repeatLast`.
+  rows: Array<[number, number]>;
+  repeatLast?: boolean;
+  door: number;
+  spec: Omit<HouseSpec, 'doors'>;
+  // Linha de cima (beirada) que entra no bloco, sem conferir os ids.
+  topRow: boolean;
+}
+
+const WIDE: WideFamily[] = [
+  {
+    kind: 'house-cerulean',
+    rows: [[0x2b8, 0x2ba], [0x2b0, 0x2b2], [0x2a8, 0x2aa]],
+    door: 0x298,
+    topRow: true,
+    spec: { roof: { kind: 'hip', rise: 0.5, inset: 0.5, overhang: 0.1 } },
+  },
+  {
+    kind: 'house-safari',
+    rows: [[0x2cc, 0x2ce], [0x2c4, 0x2c6], [0x2bc, 0x2be]],
+    repeatLast: true,
+    door: 0x2bf,
+    topRow: true,
+    spec: { roof: { kind: 'hip', rise: 0.5, inset: 0.4, overhang: 0.1 } },
+  },
+];
+
+function findWide(width: number, height: number, metatileAt: MetatileAt, family: WideFamily): FoundHouse[] {
+  const found: FoundHouse[] = [];
+  const [bottomLeft, bottomRight] = family.rows[0];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (metatileAt(x, y) !== bottomLeft) {
+        continue;
+      }
+
+      let right = x + 1;
+
+      while (right < width && right - x < 12 && metatileAt(right, y) !== bottomRight) {
+        right++;
+      }
+
+      if (metatileAt(right, y) !== bottomRight) {
+        continue;
+      }
+
+      // Sobe conferindo os cantos de cada linha.
+      let top = y;
+      let ok = true;
+
+      for (let i = 1; i < family.rows.length && ok; i++) {
+        top--;
+        ok = top >= 0 && metatileAt(x, top) === family.rows[i][0] && metatileAt(right, top) === family.rows[i][1];
+      }
+
+      if (!ok) {
+        continue;
+      }
+
+      if (family.repeatLast) {
+        const [left, rightId] = family.rows[family.rows.length - 1];
+
+        while (top - 1 >= 0 && metatileAt(x, top - 1) === left && metatileAt(right, top - 1) === rightId) {
+          top--;
+        }
+      }
+
+      if (family.topRow && top - 1 >= 0) {
+        top--;
+      }
+
+      const doors: Array<{ col: number; row: number }> = [];
+
+      for (let col = x; col <= right; col++) {
+        if (metatileAt(col, y) === family.door) {
+          doors.push({ col: col - x, row: y - top });
+        }
+      }
+
+      found.push({
+        kind: family.kind,
+        x,
+        y: top,
+        width: right - x + 1,
+        height: y - top + 1,
+        doors,
+        spec: family.spec,
+      });
+    }
+  }
+
+  return found;
+}
+
+/** Todas as casas de cidade do mapa. */
+export function findCityHouses(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
+  const found: FoundHouse[] = [];
+
+  for (const family of FIXED) {
+    for (const at of findMold(width, height, metatileAt, family.mold)) {
+      found.push({
+        kind: family.kind,
+        x: at.x,
+        y: at.y,
+        width: family.mold[0].length,
+        height: family.mold.length,
+        doors: family.doors
+          .filter((door) => metatileAt(at.x + door.col, at.y + door.row) === door.id)
+          .map(({ col, row }) => ({ col, row })),
+        spec: family.spec,
+      });
+    }
+  }
+
+  for (const family of WIDE) {
+    found.push(...findWide(width, height, metatileAt, family));
+  }
+
+  return found;
+}
+
+export function buildCityHouse(art: Art, house: FoundHouse): THREE.Group {
+  // Casa sem porta (as de Saffron): a coluna da porta do molde serve so de
+  // referencia para medir a fachada; nao ganha plano de porta.
+  const reference = house.doors.length ? house.doors : [{ col: 1, row: house.height - 1 }];
+  const group = buildHouse(house.kind, art, { ...house.spec, doors: reference });
+
+  if (!house.doors.length) {
+    const doors: THREE.Object3D[] = [];
+
+    group.traverse((object) => {
+      if (object.userData?.door) {
+        doors.push(object);
+      }
+    });
+
+    for (const door of doors) {
+      door.removeFromParent();
+    }
+  }
+
+  return group;
+}

@@ -4,6 +4,7 @@ import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
 import { buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
+import { buildCityHouse, findCityHouses } from './CityHouseModels';
 import { ROUTE_HOUSE_MOLD, buildRouteHouse, findMold } from './HouseModel';
 import { Art } from './ModelKit';
 
@@ -554,6 +555,47 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(house.x, 0, house.y);
     buildings.push({ kind: 'route-house', x: house.x, y: house.y, model });
+  }
+
+  // Casas das cidades. Nenhuma pode pegar celula de outra construcao ja
+  // posta (os moldes de tilesets diferentes podem ter ids parecidos).
+  const taken = new Set<number>();
+
+  for (const building of buildings) {
+    const bounds = new THREE.Box3().setFromObject(building.model);
+
+    // Sem o beiral e as marquises (que passam um pouco da celula).
+    for (let y = Math.floor(bounds.min.z + 0.3); y < Math.ceil(bounds.max.z - 0.3); y++) {
+      for (let x = Math.floor(bounds.min.x + 0.3); x < Math.ceil(bounds.max.x - 0.3); x++) {
+        taken.add(y * width + x);
+      }
+    }
+  }
+
+  for (const house of findCityHouses(width, height, metatileAt)) {
+    let free = true;
+
+    for (let y = house.y; y < house.y + house.height && free; y++) {
+      for (let x = house.x; x < house.x + house.width && free; x++) {
+        free = !taken.has(y * width + x);
+      }
+    }
+
+    if (!free) {
+      continue;
+    }
+
+    for (let y = house.y; y < house.y + house.height; y++) {
+      for (let x = house.x; x < house.x + house.width; x++) {
+        taken.add(y * width + x);
+      }
+    }
+
+    const art = prepare(house.x, house.y, house.width, house.height, undefined, true);
+    const model = buildCityHouse(Art.ofTiles(art, house.width, house.height), house);
+
+    model.position.set(house.x, 0, house.y);
+    buildings.push({ kind: house.kind, x: house.x, y: house.y, model });
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };

@@ -18,8 +18,10 @@ import { Art, PX, box, doorPlane, invisible, plain, roof, stripe, textured, wall
  */
 
 export interface HouseSpec {
-  // Primeira linha (px, no bloco) da parede, logo abaixo do beiral.
-  facadeTopPx: number;
+  // Primeira linha (px, no bloco) da parede, logo abaixo do beiral. Sem
+  // ela: a linha escura do beiral mais baixa acima da porta, medida na
+  // arte (linha com pelo menos metade das colunas do corpo escuras).
+  facadeTopPx?: number;
   // Primeira linha do telhado (padrao: a primeira com arte).
   roofTopPx?: number;
   minWall?: number;
@@ -30,7 +32,11 @@ export interface HouseSpec {
     inset?: number;
     overhang?: number;
     ridgeAt?: number;
+    // Laje: mureta em volta (altura), na cor da borda da arte.
+    parapet?: number;
   };
+  // Chamines: retangulos (px) da arte que sobem do telhado como caixas.
+  chimneys?: Array<{ x0: number; y0: number; x1: number; y1: number; height: number }>;
   // Celulas das portas (coluna e linha no bloco).
   doors: Array<{ col: number; row: number }>;
   // Colunas (px) dos pilares das quinas, que saem um pouco da parede.
@@ -55,8 +61,8 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
 
     return [first, last + 1] as [number, number];
   })();
-  const facadeTop = spec.facadeTopPx;
   const doorCol = spec.doors[0]?.col ?? Math.floor(art.width / PX / 2);
+  const facadeTop = spec.facadeTopPx ?? eaveBottom(art, bodyPx0, bodyPx1, doorRow * PX) + 1;
   const [, facadeBottom] = art.rows(doorCol * PX + 2, doorCol * PX + PX - 2, facadeTop);
   const [roofTopMeasured] = art.rows(bodyPx0 + 8, bodyPx1 - 8);
   const roofTop = spec.roofTopPx ?? roofTopMeasured;
@@ -129,6 +135,34 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   // Espessura do beiral, na cor da beirada da arte.
   root.add(box(bounds.x0, bounds.x1, wallHeight - 0.06, wallHeight + 0.005, bounds.z1 - 0.04, bounds.z1, plain(eaveColor, 0.9)));
 
+  // Laje com mureta: quatro bordas baixas na cor da borda clara da arte.
+  if (spec.roof.kind === 'flat' && spec.roof.parapet) {
+    const rim = plain(art.color(Math.round((bodyPx0 + bodyPx1) / 2), roofTop + 1), 0.92);
+    const t = 0.1;
+    const top = wallHeight + spec.roof.parapet;
+
+    root.add(box(bounds.x0, bounds.x1, wallHeight, top, bounds.z0, bounds.z0 + t, rim));
+    root.add(box(bounds.x0, bounds.x1, wallHeight, top, bounds.z1 - t, bounds.z1, rim));
+    root.add(box(bounds.x0, bounds.x0 + t, wallHeight, top, bounds.z0, bounds.z1, rim));
+    root.add(box(bounds.x1 - t, bounds.x1, wallHeight, top, bounds.z0, bounds.z1, rim));
+  }
+
+  // Chamines: a arte na frente, a cor dela nos lados, de cima do telhado.
+  for (const chimney of spec.chimneys ?? []) {
+    const cx0 = chimney.x0 / PX;
+    const cx1 = chimney.x1 / PX;
+    const art2d = art.texture(chimney.x0, chimney.y0, chimney.x1 - chimney.x0, chimney.y1 - chimney.y0);
+    const color = art.color(Math.round((chimney.x0 + chimney.x1) / 2), Math.round((chimney.y0 + chimney.y1) / 2));
+    const sideMaterial = plain(color, 0.7);
+    // Posicao no telhado: a regra da dobra (a base dela no z da arte).
+    const zFront = back + (chimney.y1 - roofTop) / PX;
+    const zBack = zFront - (cx1 - cx0) * 0.8;
+
+    root.add(box(cx0, cx1, wallHeight, wallHeight + chimney.height, zBack, zFront, [
+      sideMaterial, sideMaterial, plain(color, 0.9), sideMaterial, textured(art2d), sideMaterial,
+    ]));
+  }
+
   // Portas (animadas pelo DoorAnimator).
   for (const door of spec.doors) {
     entrance.add(doorPlane(art, door.col * PX, door.row * PX, door.col + 0.5, front + 0.004));
@@ -137,6 +171,37 @@ export function buildHouse(name: string, art: Art, spec: HouseSpec): THREE.Group
   root.userData.measures = { front, back, wallHeight, artWall, depth, x0, x1 };
 
   return root;
+}
+
+/**
+ * Linha escura do beiral: a mais baixa acima de `limit` em que pelo menos
+ * metade das colunas do corpo e escura (contorno do fim do telhado).
+ */
+export function eaveBottom(art: Art, x0: number, x1: number, limit: number): number {
+  const [roofTop] = art.rows(x0 + 8, x1 - 8);
+
+  for (let y = limit - 1; y > roofTop + 6; y--) {
+    let dark = 0;
+    let total = 0;
+
+    for (let x = x0; x < x1; x++) {
+      if (!art.opaque(x, y)) {
+        continue;
+      }
+
+      total++;
+
+      if (art.light(x, y) < 340) {
+        dark++;
+      }
+    }
+
+    if (total > 0 && dark * 2 >= x1 - x0) {
+      return y;
+    }
+  }
+
+  return Math.max(roofTop, limit - PX);
 }
 
 /** Celula do molde: id exato, um de varios, ou qualquer (null). */
