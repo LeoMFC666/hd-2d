@@ -26,6 +26,24 @@ import {
   loadHd2dSettings,
 } from './render/hd2d/Hd2dSettings';
 
+const WEBGL2_MISSING =
+  'O navegador nao conseguiu criar o contexto WebGL2 (aceleracao grafica desligada ou bloqueada). ' +
+  'Ative a aceleracao de hardware nas configuracoes do navegador, feche e abra o navegador de novo ' +
+  'e confira em chrome://gpu se "WebGL2" aparece como "Hardware accelerated".';
+
+/** O navegador consegue criar um contexto WebGL2 agora? (Solta o de teste.) */
+function webgl2Available(): boolean {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+
+    return gl !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function setupApp(): void {
   const canvas =
     document.querySelector<HTMLCanvasElement>(
@@ -189,6 +207,16 @@ export function setupApp(): void {
         return;
       }
 
+      // Sem WebGL2 o 3D nao abre: avisa antes de ligar o emulador (senao o
+      // jogo roda so com o som, com a tela preta).
+      if (!webgl2Available()) {
+        updateStatus(
+          WEBGL2_MISSING,
+        );
+
+        return;
+      }
+
       updateStatus(
         `Abrindo ${file.name}...`,
       );
@@ -223,13 +251,29 @@ export function setupApp(): void {
             romBytes,
           );
 
-        scene =
-          new PlayerRenderer(
-            sceneContainer,
-            stateAdapter,
-            romBytes,
-            hd2dSettings,
-          );
+        try {
+          scene =
+            new PlayerRenderer(
+              sceneContainer,
+              stateAdapter,
+              romBytes,
+              hd2dSettings,
+            );
+        } catch (
+          error
+        ) {
+          // O emulador ja esta rodando: para, para nao ficar so o som.
+          emulator.pause();
+          scene = null;
+
+          if (error instanceof Error && /WebGL context/i.test(error.message)) {
+            throw new Error(
+              WEBGL2_MISSING,
+            );
+          }
+
+          throw error;
+        }
 
         overlay?.destroy();
 
