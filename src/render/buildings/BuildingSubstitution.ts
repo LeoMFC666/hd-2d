@@ -141,6 +141,58 @@ function surroundingGround(
 }
 
 /**
+ * Chao do entorno do bloco: o bloco andavel mais comum na linha de cima e
+ * nas colunas dos lados (sem a linha de baixo, que costuma ser a calcada da
+ * frente). E o chao que aparece atras e dos lados do modelo.
+ */
+function outsideGround(
+  width: number,
+  height: number,
+  x0: number,
+  y0: number,
+  w: number,
+  h: number,
+  blocks: readonly (Block | undefined)[],
+): Block | undefined {
+  const counts = new Map<number, { block: Block; count: number }>();
+  const visit = (x: number, y: number): void => {
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return;
+    }
+
+    const block = blocks[y * width + x];
+
+    if (!block || block.collision !== 0) {
+      return;
+    }
+
+    const entry = counts.get(block.metatileId) ?? { block, count: 0 };
+
+    entry.count++;
+    counts.set(block.metatileId, entry);
+  };
+
+  for (let x = x0 - 1; x <= x0 + w; x++) {
+    visit(x, y0 - 1);
+  }
+
+  for (let y = y0; y < y0 + h; y++) {
+    visit(x0 - 1, y);
+    visit(x0 + w, y);
+  }
+
+  let best: { block: Block; count: number } | undefined;
+
+  for (const entry of counts.values()) {
+    if (!best || entry.count > best.count) {
+      best = entry;
+    }
+  }
+
+  return best?.block;
+}
+
+/**
  * Procura as construcoes do mapa, devolve os blocos com o chao no lugar
  * delas e os modelos (posicionados no espaco do mapa: x leste, z sul).
  */
@@ -221,6 +273,19 @@ export function substituteBuildings<T extends Block>(
     const blockGround = mostCommonGround(cellSignature);
     const art = blockArt(width, x0, y0, w, h, blocks, graphics);
 
+    // O chao do proprio molde (camada de baixo dos tiles) serve para limpar
+    // a arte; o que vai no CHAO do mapa segue o entorno quando ele e outro
+    // (o Centro Pokemon de Saffron tem grama debaixo do telhado, mas a
+    // cidade e calcada: sem isso aparecia uma faixa de grama atras dele).
+    const outside = outsideGround(width, height, x0, y0, w, h, blocks);
+    const outsideSource = outside ? graphics.get(outside.metatileId) : undefined;
+    const ownGroundSource =
+      blockGround === undefined ? undefined : graphics.get(signatures.get(blockGround)!.metatileId);
+    const placeGround =
+      outsideSource && ownGroundSource && hashPixels(outsideSource.bottomPixels) !== blockGround
+        ? outsideSource
+        : undefined;
+
     for (let row = 0; row < h; row++) {
       const rowCells = cellSignature.slice(row * w, row * w + w);
       const rowGround = mostCommonGround(rowCells) ?? blockGround;
@@ -246,18 +311,19 @@ export function substituteBuildings<T extends Block>(
           continue;
         }
 
-        const id = GROUND_ONLY_BASE + groundSource.metatileId;
+        const floor = placeGround ?? groundSource;
+        const id = GROUND_ONLY_BASE + floor.metatileId;
 
         if (!resultGraphics.has(id)) {
-          const empty = new Uint8ClampedArray(groundSource.topPixels.length);
+          const empty = new Uint8ClampedArray(floor.topPixels.length);
 
           resultGraphics.set(id, {
-            ...groundSource,
+            ...floor,
             metatileId: id,
             layerType: 0,
             behavior: 0,
-            pixels: groundSource.bottomPixels,
-            basePixels: groundSource.bottomPixels,
+            pixels: floor.bottomPixels,
+            basePixels: floor.bottomPixels,
             foregroundPixels: empty,
             topPixels: empty,
             topTileIds: [],

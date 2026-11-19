@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Laboratorio de modelos</title>
+    <style>
+      body { margin: 0; background: #0b1220; color: #dfe6f3; font: 12px monospace; }
+      #lab { display: inline-flex; gap: 8px; padding: 8px; align-items: flex-start; }
+      canvas { display: block; }
+      #gba { image-rendering: pixelated; }
+      pre { margin: 4px 8px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div id="lab">
+      <canvas id="gba"></canvas>
+      <canvas id="views"></canvas>
+    </div>
+    <pre id="info"></pre>
+    <script type="module" src="lab.js"></script>
+  </body>
+</html>

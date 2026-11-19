@@ -455,7 +455,11 @@ export function buildPokeMartModel(art: PokeMartArt): THREE.Group {
   return root;
 }
 
-/** Acha os Poke Marts (canto noroeste do bloco 4x4) pelas linhas 1-3. */
+/**
+ * Acha os Poke Marts (canto noroeste do bloco 4x4) pelas linhas 1-3. Na
+ * linha da porta as quinas podem ser da cidade: em Saffron o predio fica
+ * na calcada (0x2F6 e 0x2F7 no lugar de 0x040 e 0x063).
+ */
 export function findPokeMarts(
   width: number,
   height: number,
@@ -469,7 +473,9 @@ export function findPokeMarts(
 
       for (let row = 1; row < POKE_MART_HEIGHT && match; row++) {
         for (let col = 0; col < POKE_MART_WIDTH && match; col++) {
-          match = metatileAt(x + col, y + row) === FRLG_POKE_MART_TEMPLATE[row][col];
+          const corner = row === POKE_MART_HEIGHT - 1 && (col === 0 || col === POKE_MART_WIDTH - 1);
+
+          match = corner || metatileAt(x + col, y + row) === FRLG_POKE_MART_TEMPLATE[row][col];
         }
       }
 
