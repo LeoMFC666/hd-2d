@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { Art, PX, box, invisible, plain, roof, stripe, textured, wall } from './ModelKit';
+import { Art, PX, box, doorPlane, invisible, plain, roof, stripe, textured, wall } from './ModelKit';
 
 /**
  * Modelo 3D das PORTARIAS do FRLG (as casas de guarda entre rotas e
@@ -44,10 +44,13 @@ const PORCH_DOOR = new Set([0x190]);
 const VESTIBULE_WEST = 0x140;
 const VESTIBULE_EAST = 0x144;
 const BACK_LEFT = new Set([0x178, 0x310]);
+const UNDERGROUND_EAVE_LEFT = 0x054;
+const UNDERGROUND_EAVE_RIGHT = 0x056;
+const UNDERGROUND_DOOR = 0x03d;
 const BACK_RIGHT = new Set([0x17a, 0x312]);
 
 export interface FoundGatehouse {
-  kind: 'gate-ew' | 'gate-ns';
+  kind: 'gate-ew' | 'gate-ns' | 'underground-entrance';
   // Bloco (com vestibulos e a linha da entrada de tras), em metatiles.
   x: number;
   y: number;
@@ -65,6 +68,11 @@ export interface FoundGatehouse {
   // baixo (ver linkStackedGatehouses).
   facadeless?: { wallHeight: number; front: number };
   vestibules: { west: boolean; east: boolean };
+  // Colunas das portas animadas (entrada do subterraneo: 03D).
+  doors: number[];
+  // Linha (px) em que a fachada comeca, quando nao e a linha seguinte ao
+  // beiral (entrada do subterraneo: 8 px dentro da linha 054).
+  facadeTopPx?: number;
   // Colunas [c0, c1) da marquise da frente e da entrada de tras.
   porch: [number, number] | null;
   back: [number, number] | null;
@@ -103,6 +111,40 @@ export function findGatehouses(
         row++;
       }
 
+      // Entrada do Caminho Subterraneo: 4 de largura, beiral 054-056 (com a
+      // placa 067) e a base com a porta de madeira 03D.
+      if (metatileAt(x, row) === UNDERGROUND_EAVE_LEFT && metatileAt(end, row) === UNDERGROUND_EAVE_RIGHT
+        && metatileAt(x, row + 1) === 0x064 && metatileAt(end, row + 1) === 0x066) {
+        const doors: number[] = [];
+
+        for (let col = x; col <= end; col++) {
+          if (metatileAt(col, row + 1) === UNDERGROUND_DOOR) {
+            doors.push(col - x);
+          }
+        }
+
+        found.push({
+          kind: 'underground-entrance',
+          x,
+          y,
+          width: bodyWidth,
+          height: row + 2 - y,
+          bodyX0: 0,
+          bodyX1: bodyWidth,
+          topRow: 0,
+          eaveRow: row - y,
+          baseRow: row + 1 - y,
+          vestibules: { west: false, east: false },
+          doors,
+          facadeTopPx: (row - y) * PX + 8,
+          porch: null,
+          back: null,
+          mask: () => true,
+        });
+
+        continue;
+      }
+
       if (metatileAt(x, row) !== EAVE_LEFT || metatileAt(end, row) !== EAVE_RIGHT || metatileAt(x + 1, row) !== EAVE_FILL) {
         continue;
       }
@@ -130,6 +172,7 @@ export function findGatehouses(
           baseRow,
           facadeless: { wallHeight: 0, front: 0 },
           vestibules: { west, east },
+          doors: [],
           porch: null,
           back: null,
           mask: (col, r) => (col >= bodyX0 && col < bodyX1) || (r >= baseRow - 3 && ((col < bodyX0 && west) || (col >= bodyX1 && east))),
@@ -210,6 +253,7 @@ export function findGatehouses(
         eaveRow: row - blockY,
         baseRow,
         vestibules: { west, east },
+        doors: [],
         porch: porch ? [porch[0] + bodyX0, porch[1] + bodyX0] : null,
         back: back ? [back[0] + bodyX0, back[1] + bodyX0] : null,
         mask: (col, row) => {
@@ -275,7 +319,7 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
   // beiral (a linha 183 termina com 5 px escuros). A fachada comeca na
   // linha seguinte e vai ate o ultimo pixel da base.
   const [roofTop] = art.rows(pxBody0 + 4, pxBody1 - 4, gate.topRow * PX);
-  const facadeTop = (gate.eaveRow + 1) * PX;
+  const facadeTop = gate.facadeTopPx ?? (gate.eaveRow + 1) * PX;
   const [, measuredBottom] = art.rows(pxBody0, pxBody0 + PX, facadeTop);
   const facadeless = gate.facadeless && gate.facadeless.wallHeight > 0 ? gate.facadeless : null;
   const facadeBottom = facadeless ? facadeTop - 1 : measuredBottom;
@@ -333,7 +377,8 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
     kind: 'gable',
     bounds,
     y: wallHeight,
-    rise: ROOF_RISE,
+    // Caimento proporcional a profundidade (3 tiles nas portarias).
+    rise: ROOF_RISE * Math.min(1, depth / 3),
     map: roofArt,
     gableMaterial: plain(art.color(facadeColumn, facadeTop + 18), 0.7),
   }));
@@ -341,6 +386,11 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
   // Espessura do beiral: faixa escura em pe na beirada da frente.
   const fascia = plain(art.color(pxBody0 + PX + 4, facadeTop - 3), 0.85);
   root.add(box(bounds.x0, bounds.x1, wallHeight - 0.07, wallHeight + 0.005, bounds.z1 - 0.04, bounds.z1, fascia));
+
+  // Portas animadas (DoorAnimator) rentes a fachada.
+  for (const col of gate.doors) {
+    entrance.add(doorPlane(art, (gate.bodyX0 + col) * PX, gate.baseRow * PX, gate.bodyX0 + col + 0.5, front + 0.004));
+  }
 
   if (gate.kind === 'gate-ew') {
     // As celulas dos vestibulos sao metade construcao, metade chao: fica
@@ -356,7 +406,7 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
     }
 
     buildVestibules(root, art, gate, front, wallHeight);
-  } else {
+  } else if (gate.kind === 'gate-ns') {
     buildPorches(root, entrance, art, gate, front, back, wallHeight);
   }
 
