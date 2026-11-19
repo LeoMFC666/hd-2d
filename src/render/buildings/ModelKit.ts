@@ -151,13 +151,14 @@ export class Art {
    * Coluna mais lisa (menos cores diferentes) entre [x0, x1) nas linhas
    * [y0, y1): a faixa de parede usada nas laterais e no fundo.
    */
-  plainestColumn(x0: number, x1: number, y0: number, y1: number): number {
+  plainestColumn(x0: number, x1: number, y0: number, y1: number, preferLight = false): number {
     let best = x0;
     let bestCount = Infinity;
 
     for (let x = x0; x < x1; x++) {
       const colors = new Set<number>();
       let holes = 0;
+      let light = 0;
 
       for (let y = y0; y < y1; y++) {
         if (!this.opaque(x, y)) {
@@ -166,9 +167,14 @@ export class Art {
         }
 
         colors.add(this.rgb(x, y));
+
+        if (this.light(x, y) >= 3 * 175) {
+          light++;
+        }
       }
 
-      const count = colors.size + holes * 4;
+      // Com preferLight, a parede clara (reboco) ganha da sombra lisa.
+      const count = colors.size + holes * 4 - (preferLight ? (light / Math.max(1, y1 - y0)) * 4 : 0);
 
       if (count < bestCount) {
         best = x;

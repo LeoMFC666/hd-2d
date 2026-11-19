@@ -4,6 +4,7 @@ import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
 import { buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
+import { ROUTE_HOUSE_MOLD, buildRouteHouse, findMold } from './HouseModel';
 import { Art } from './ModelKit';
 
 import {
@@ -543,6 +544,16 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(gate.x, 0, gate.y);
     buildings.push({ kind: gate.kind, x: gate.x, y: gate.y, model });
+  }
+
+  // Casa de rota (tileset primario): Rotas 2, 12 e 16.
+  for (const house of findMold(width, height, metatileAt, ROUTE_HOUSE_MOLD)) {
+    const doorCol = metatileAt(house.x + 1, house.y + 2) === 0x03d ? 1 : 3;
+    const art = prepare(house.x, house.y, 5, 3, undefined, true);
+    const model = buildRouteHouse(Art.ofTiles(art, 5, 3), doorCol);
+
+    model.position.set(house.x, 0, house.y);
+    buildings.push({ kind: 'route-house', x: house.x, y: house.y, model });
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };
