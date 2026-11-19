@@ -29,9 +29,11 @@ import { Art, PX, box, doorPlane, invisible, plain, roof, stripe, textured, wall
  * pilares de 8 px que terminam meio tile acima da base.
  */
 
-const ROOF_TOP = 0x044;
-const ROOF_MID = 0x045;
-const ROOF_END = 0x046;
+// Beirada de tras: 044-046, ou a variante do tileset de Lavender (33B-33D,
+// entrada leste do subterraneo na Rota 8).
+const ROOF_TOP = new Set([0x044, 0x33b]);
+const ROOF_MID = new Set([0x045, 0x33c]);
+const ROOF_END = new Set([0x046, 0x33d]);
 const ROOF_LEFT = 0x04c;
 const ROOF_FILL = 0x04d;
 const ROOF_RIGHT = 0x04e;
@@ -90,17 +92,17 @@ export function findGatehouses(
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (metatileAt(x, y) !== ROOF_TOP) {
+      if (!ROOF_TOP.has(metatileAt(x, y))) {
         continue;
       }
 
       let end = x + 1;
 
-      while (end < width && metatileAt(end, y) === ROOF_MID) {
+      while (end < width && ROOF_MID.has(metatileAt(end, y))) {
         end++;
       }
 
-      if (metatileAt(end, y) !== ROOF_END || end - x + 1 < 4) {
+      if (!ROOF_END.has(metatileAt(end, y)) || end - x + 1 < 4) {
         continue;
       }
 
@@ -151,7 +153,7 @@ export function findGatehouses(
 
       // Portaria colada logo abaixo (Rota 16): esta e a parte de tras, sem
       // fachada; os vestibulos dela ficam na linha do beiral.
-      if (metatileAt(x, row + 1) === ROOF_TOP && metatileAt(end, row + 1) === ROOF_END) {
+      if (ROOF_TOP.has(metatileAt(x, row + 1)) && ROOF_END.has(metatileAt(end, row + 1))) {
         const west = metatileAt(x - 1, row - 1) === VESTIBULE_WEST;
         const east = metatileAt(end + 1, row - 1) === VESTIBULE_EAST;
         const blockX = x - (west ? 1 : 0);

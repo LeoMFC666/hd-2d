@@ -119,6 +119,18 @@ const FIXED: FixedFamily[] = [
     spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
   },
   {
+    // Casas 2 e 3 de Vermilion: o mesmo desenho com 4 de largura.
+    kind: 'house-vermilion',
+    mold: [
+      [null, null, null, null],
+      [0x2a8, 0x2a9, 0x2a9, 0x2aa],
+      [0x2b0, 0x2a7, 0x2a3, 0x2a4],
+      [0x2b8, 0x29e, null, null],
+    ],
+    doors: [{ col: 1, row: 3, id: 0x29e }],
+    spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
+  },
+  {
     kind: 'house-fuchsia',
     mold: [
       [null, null, null, null, null],
@@ -130,18 +142,6 @@ const FIXED: FixedFamily[] = [
     // A linha de cima e a mureta de tijolo (px 0-7) ou, na casa do irmao do
     // Fishing Guru, a porta dos fundos: a laje comeca na borda cinza (px 8).
     spec: { roofTopPx: 8, roof: { kind: 'flat', rise: 0, overhang: 0.06, parapet: 0.1 } },
-  },
-  {
-    kind: 'house-saffron',
-    mold: [
-      [0x295, 0x296, 0x296, 0x297],
-      [0x29d, 0x29e, 0x29e, 0x29f],
-      [0x2a5, 0x2a6, 0x28f, 0x2a7],
-      [null, null, null, 0x29c],
-      [null, null, null, 0x2a4],
-    ],
-    doors: [{ col: 1, row: 4, id: 0x284 }],
-    spec: { roof: { kind: 'hip', rise: 0.55, inset: 0.35, overhang: 0.08 } },
   },
 ];
 
@@ -244,6 +244,70 @@ function findWide(width: number, height: number, metatileAt: MetatileAt, family:
   return found;
 }
 
+/**
+ * Casas de Saffron: telhado 29D 29E.. 29F (largura variavel; quando a casa
+ * encosta noutro predio, a coluna da direita e a do vizinho), beirada de
+ * cima 295-297 (ou 2DC-2DE na terrea, que fica uma linha mais baixa), a
+ * linha das janelas de cima 2A5.. e a base 2A0../2AE.. (uma linha abaixo
+ * na casa de dois andares). Porta 284 na base.
+ */
+const SAFFRON_EAVE = new Set([0x295, 0x2dc]);
+const SAFFRON_BASE = new Set([0x2a0, 0x2ae]);
+
+function findSaffronHouses(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
+  const found: FoundHouse[] = [];
+
+  for (let y = 1; y + 2 < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (metatileAt(x, y) !== 0x29d || !SAFFRON_EAVE.has(metatileAt(x, y - 1)) || metatileAt(x, y + 1) !== 0x2a5) {
+        continue;
+      }
+
+      // Terrea: a base logo abaixo das janelas; sobrado: uma linha no meio.
+      // Sem base (as casas do sul, com as copas das arvores da frente
+      // pintadas na parede 2E6..2E7) fica na dobra: o modelo cortaria as copas.
+      const baseRow = SAFFRON_BASE.has(metatileAt(x, y + 2)) ? y + 2 : SAFFRON_BASE.has(metatileAt(x, y + 3)) ? y + 3 : -1;
+
+      if (baseRow < 0) {
+        continue;
+      }
+
+      let right = x + 1;
+
+      while (right < width && metatileAt(right, y) === 0x29e) {
+        right++;
+      }
+
+      const w = right - x + (metatileAt(right, y) === 0x29f ? 1 : 0);
+
+      if (w < 3) {
+        continue;
+      }
+
+      const top = y - 1;
+      const doors: Array<{ col: number; row: number }> = [];
+
+      for (let col = 0; col < w; col++) {
+        if (metatileAt(x + col, baseRow) === 0x284) {
+          doors.push({ col, row: baseRow - top });
+        }
+      }
+
+      found.push({
+        kind: 'house-saffron',
+        x,
+        y: top,
+        width: w,
+        height: baseRow - top + 1,
+        doors,
+        spec: { roof: { kind: 'hip', rise: 0.55, inset: 0.35, overhang: 0.08 } },
+      });
+    }
+  }
+
+  return found;
+}
+
 /** Todas as casas de cidade do mapa. */
 export function findCityHouses(width: number, height: number, metatileAt: MetatileAt): FoundHouse[] {
   const found: FoundHouse[] = [];
@@ -267,6 +331,8 @@ export function findCityHouses(width: number, height: number, metatileAt: Metati
   for (const family of WIDE) {
     found.push(...findWide(width, height, metatileAt, family));
   }
+
+  found.push(...findSaffronHouses(width, height, metatileAt));
 
   return found;
 }
