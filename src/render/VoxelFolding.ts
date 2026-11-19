@@ -269,6 +269,87 @@ export function classifyLedges(
   }
 }
 
+/**
+ * Quinas de ledge do tileset geral do FRLG: o ledge para o sul vira para o
+ * norte (na grama 0x8D/0x8E, na areia 0xAD/0xAE) e encosta num ledge
+ * vertical ou numa construcao (a portaria da Rota 7 / oeste de Saffron).
+ * Nao tem comportamento de pulo, entao dobravam como bloco solido: uma
+ * peca marrom em pe, da altura de um tile, que parecia uma escada torta na
+ * frente da portaria. Viram a ponta do ledge do lado (FOLD_LEDGE: a mesma
+ * faixa baixa) e a volta para o norte fica desenhada no chao, como os
+ * ledges verticais, ate o que estiver ao norte.
+ *
+ * Devolve as celulas trocadas: o chao delas fica com o proprio desenho
+ * (a volta), em vez do chao copiado de um vizinho.
+ */
+const LEDGE_CORNERS = new Set([0x08d, 0x08e, 0x0ad, 0x0ae]);
+
+export function classifyLedgeCorners(
+  width: number,
+  height: number,
+  mask: Uint8Array,
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+): number[] {
+  const corners: number[] = [];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+
+      if (mask[index] === 0 || mask[index] === FOLD_LEDGE) {
+        continue;
+      }
+
+      const block = blockAt(x, y);
+
+      if (!block || block.secondary || block.behavior !== 0 || !LEDGE_CORNERS.has(block.metatileId)) {
+        continue;
+      }
+
+      const side = [blockAt(x - 1, y), blockAt(x + 1, y)].find(
+        (neighbor) => neighbor?.behavior === MB_JUMP_SOUTH,
+      );
+
+      if (!side || !sameLedgeFace(block.pixels, side.pixels)) {
+        continue;
+      }
+
+      mask[index] = FOLD_LEDGE;
+      corners.push(index);
+    }
+  }
+
+  return corners;
+}
+
+/**
+ * A faixa de baixo da quina e a do ledge vizinho: 90% dos pixels das 4
+ * linhas de baixo tem cores da faixa dele (linhas 9-15).
+ */
+function sameLedgeFace(corner?: Uint8ClampedArray, ledge?: Uint8ClampedArray): boolean {
+  if (!corner || !ledge) {
+    return false;
+  }
+
+  const rgb = (pixels: Uint8ClampedArray, offset: number): number =>
+    (pixels[offset] << 16) | (pixels[offset + 1] << 8) | pixels[offset + 2];
+  const face = new Set<number>();
+
+  for (let offset = 9 * 16 * 4; offset < 16 * 16 * 4; offset += 4) {
+    face.add(rgb(ledge, offset));
+  }
+
+  let hits = 0;
+
+  for (let offset = 12 * 16 * 4; offset < 16 * 16 * 4; offset += 4) {
+    if (face.has(rgb(corner, offset))) {
+      hits++;
+    }
+  }
+
+  return hits >= 0.9 * 4 * 16;
+}
+
 export function extendFoldMaskUpward(
   width: number,
   height: number,
@@ -2492,6 +2573,9 @@ export function buildMapVolume(
     (x, y) => blockAt(x, y)?.behavior ?? 0,
   );
 
+  const ledgeCorners =
+    classifyLedgeCorners(width, height, mask, blockAt);
+
   // Interior: so parede do fundo e moveis (o resto taparia o comodo). Ao
   // ar livre as colunas finas (cercas norte-sul) ficam: viram objetos em
   // pe como o resto.
@@ -2640,6 +2724,12 @@ export function buildMapVolume(
 
   unifyGroupGround(width, height, kinds, CELL_PROP, groundSources, isGround, metatileAt);
   unifyGroupGround(width, height, kinds, CELL_GRASS, groundSources, isGround, metatileAt);
+
+  // Quinas de ledge: o chao fica com o proprio desenho (a volta do ledge
+  // para o norte); so a faixa de baixo fica em pe.
+  for (const index of ledgeCorners) {
+    groundSources[index] = -1;
+  }
 
   // ---- estruturas 3D ----
   const overlayOnly = (x: number, y: number): boolean =>

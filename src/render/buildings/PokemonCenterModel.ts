@@ -295,10 +295,7 @@ export function buildPokemonCenterModel(art: PokemonCenterArt): THREE.Group {
 
 /**
  * Acha os Centros Pokemon num mapa do FRLG (canto noroeste do bloco 5x5).
- * Confere as linhas 1-4; a linha 0 (beirada) pode variar com a cidade, e
- * na linha da porta as duas quinas tambem: em Saffron o predio fica na
- * calcada e as quinas sao tiles da cidade (0x2DF e 0x307 no lugar de 0x060
- * e 0x19F).
+ * Confere as linhas 1-4; a linha 0 (beirada) pode variar com a cidade.
  */
 export function findPokemonCenters(
   width: number,
@@ -313,9 +310,7 @@ export function findPokemonCenters(
 
       for (let row = 1; row < POKEMON_CENTER_HEIGHT && match; row++) {
         for (let col = 0; col < POKEMON_CENTER_WIDTH && match; col++) {
-          const corner = row === POKEMON_CENTER_HEIGHT - 1 && (col === 0 || col === POKEMON_CENTER_WIDTH - 1);
-
-          match = corner || metatileAt(x + col, y + row) === FRLG_POKEMON_CENTER_TEMPLATE[row][col];
+          match = metatileAt(x + col, y + row) === FRLG_POKEMON_CENTER_TEMPLATE[row][col];
         }
       }
 

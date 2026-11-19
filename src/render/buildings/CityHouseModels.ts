@@ -300,7 +300,13 @@ function findSaffronHouses(width: number, height: number, metatileAt: MetatileAt
         width: w,
         height: baseRow - top + 1,
         doors,
-        spec: { roof: { kind: 'hip', rise: 0.55, inset: 0.35, overhang: 0.08 } },
+        // Na arte: telhado do px 8 ao 42 (linha escura do beiral), faixa
+        // cinza de sombra (43-47) e a parede amarela ate a base roxa. No
+        // sobrado a linha cinza do px 60 separa os andares: medida pela
+        // linha escura mais baixa, ela virava o beiral (o andar de cima ia
+        // para o telhado e a parede ficava com um andar so).
+        // Laterais: a coluna do pilar amarelo da quina (px 4), sem janela.
+        spec: { roofTopPx: 8, facadeTopPx: 43, sidePx: 4, roof: { kind: 'hip', rise: 0.55, inset: 0.35, overhang: 0.08 } },
       });
     }
   }

@@ -137,12 +137,12 @@ function withExtension(
   return full;
 }
 
-/** Chao mais comum em volta do bloco (sem a linha de cima: calcada). */
 /** Comportamentos de agua (lago, mar, corredeira, cachoeira, poca, alga). */
 function isWaterBehavior(behavior: number): boolean {
   return (behavior >= 0x10 && behavior <= 0x1b) || behavior === 0x22;
 }
 
+/** Chao mais comum em volta do bloco (sem a linha de cima: calcada). */
 function surroundingGround(
   width: number,
   height: number,
@@ -203,9 +203,10 @@ function surroundingGround(
 }
 
 /**
- * Chao do entorno do bloco: o bloco andavel mais comum na linha de cima e
- * nas colunas dos lados (sem a linha de baixo, que costuma ser a calcada da
- * frente). E o chao que aparece atras e dos lados do modelo.
+ * Chao de fora do bloco: o bloco andavel mais comum na linha de cima e nas
+ * colunas dos lados (sem a linha de baixo, que costuma ser a calcada da
+ * frente). E o chao que aparece atras e dos lados do modelo, onde o tile
+ * original era todo predio.
  */
 function outsideGround(
   width: number,
@@ -215,7 +216,7 @@ function outsideGround(
   w: number,
   h: number,
   blocks: readonly (Block | undefined)[],
-  isWater: (metatileId: number) => boolean = () => false,
+  isWater: (metatileId: number) => boolean,
 ): Block | undefined {
   const counts = new Map<number, { block: Block; count: number }>();
   const visit = (x: number, y: number): void => {
@@ -295,6 +296,10 @@ export function substituteBuildings<T extends Block>(
    * pixel que e igual ao chao escolhido para aquele tile (e sem nada da
    * camada de cima) vira transparente: nao sobra grama no telhado nem na
    * fachada.
+   *
+   * O chao que fica no mapa e sempre o do proprio bloco (o do original),
+   * nunca um chao pintado do entorno; o modelo nao tem chao: os pixels de
+   * chao da arte dele ficam transparentes.
    */
   const prepare = (
     x0: number,
@@ -309,12 +314,23 @@ export function substituteBuildings<T extends Block>(
     // dentro do bloco). Sem isso, um tile de parede repetido 3 vezes na
     // largura (portarias, casas compridas) era tomado por chao e sumia.
     walkableGround = false,
+    // Centro Pokemon e Poke Mart: o preparo de antes, sem mudar nada (o
+    // chao do entorno vai inteiro onde o bloco nao tem chao, e todo pixel
+    // verde da linha de baixo sai).
+    classic = false,
   ): Uint8Array => {
-    const fallback = surroundingGround(width, height, x0, y0, w, h, blocks, isWaterId);
+    const fallback = classic
+      ? surroundingGround(width, height, x0, y0, w, h, blocks)
+      : surroundingGround(width, height, x0, y0, w, h, blocks, isWaterId);
     const signatures = new Map<number, { count: number; metatileId: number }>();
     const cellSignature: number[] = [];
     const inMask = (col: number, row: number): boolean => !mask || mask(col, row);
     const walkable = new Set<number>();
+    // So os de FORA do bloco: chao de verdade. Dentro, um tile andavel pode
+    // ter enchimento na camada de baixo (a agua do beiral do Fan Club).
+    const walkableOutside = new Set<number>();
+    // Cores verdes do chao andavel em volta (tufos de grama no pe da fachada).
+    const walkableGreens = new Set<number>();
 
     if (walkableGround) {
       for (let y = y0 - 1; y <= y0 + h; y++) {
@@ -329,6 +345,11 @@ export function substituteBuildings<T extends Block>(
 
           if (block && source && block.collision === 0 && !isWaterBehavior(source.behavior) && (!inside || inMask(x - x0, y - y0))) {
             walkable.add(hashPixels(source.bottomPixels));
+            addGreens(source.bottomPixels, walkableGreens);
+
+            if (!inside) {
+              walkableOutside.add(hashPixels(source.bottomPixels));
+            }
           }
         }
       }
@@ -371,19 +392,8 @@ export function substituteBuildings<T extends Block>(
 
     const blockGround = mostCommonGround(cellSignature);
     const art = blockArt(width, x0, y0, w, h, blocks, graphics);
-
-    // O chao do proprio molde (camada de baixo dos tiles) serve para limpar
-    // a arte; o que vai no CHAO do mapa segue o entorno quando ele e outro
-    // (o Centro Pokemon de Saffron tem grama debaixo do telhado, mas a
-    // cidade e calcada: sem isso aparecia uma faixa de grama atras dele).
-    const outside = outsideGround(width, height, x0, y0, w, h, blocks, isWaterId);
+    const outside = classic ? undefined : outsideGround(width, height, x0, y0, w, h, blocks, isWaterId);
     const outsideSource = outside ? graphics.get(outside.metatileId) : undefined;
-    const ownGroundSource =
-      blockGround === undefined ? undefined : graphics.get(signatures.get(blockGround)!.metatileId);
-    const placeGround =
-      outsideSource && ownGroundSource && hashPixels(outsideSource.bottomPixels) !== blockGround
-        ? outsideSource
-        : undefined;
 
     for (let row = 0; row < h; row++) {
       const rowCells = cellSignature.slice(row * w, row * w + w);
@@ -412,14 +422,29 @@ export function substituteBuildings<T extends Block>(
           continue;
         }
 
-        // Sem chao proprio: o do entorno (so a camada de baixo dele).
-        const fallbackSource = fallback ? graphics.get(fallback.metatileId) : undefined;
+        if (classic && !groundSource) {
+          if (fallback) {
+            result[y * width + x] = { ...original, metatileId: fallback.metatileId, collision: 0 } as T;
+          }
 
-        if (!groundSource && !fallbackSource) {
           continue;
         }
 
-        const floor = placeGround ?? groundSource ?? fallbackSource!;
+        // Chao no mapa: onde o tile original mostra chao (a camada de baixo
+        // dele e chao), fica esse mesmo chao. Onde o tile e todo predio (o
+        // chao nao aparece no original), vai o chao de fora do bloco - o
+        // da linha de cima e dos lados, que e o que se ve atras do modelo -
+        // e nao um chao de dentro do bloco (na Mansao, a escada da frente
+        // era andavel e o desenho dela ia parar atras do predio).
+        const fallbackSource = fallback ? graphics.get(fallback.metatileId) : undefined;
+        const ownGround =
+          !classic && isGround(signature) && (!walkableGround || walkableOutside.has(signature)) ? groundSource : undefined;
+        const floor = classic ? groundSource : ownGround ?? outsideSource ?? groundSource ?? fallbackSource;
+
+        if (!floor) {
+          continue;
+        }
+
         const id = GROUND_ONLY_BASE + floor.metatileId;
 
         if (!resultGraphics.has(id)) {
@@ -478,19 +503,36 @@ export function substituteBuildings<T extends Block>(
       }
     }
 
-    // Tufos de grama desenhados na camada de cima no pe da fachada (ginasio
-    // de Pewter): na ultima linha, pixel com cor da grama do chao (verde)
-    // sai. As construcoes nao tem verde, e a calcada (Saffron) nao e verde.
-    const groundColors = new Set<number>();
+    // Tufos de grama e copas de arvore desenhados na camada de cima no pe
+    // da fachada (ginasio de Pewter, arvores na frente da portaria da Rota
+    // 2): na ultima linha, sai o pixel verde que e da natureza.
+    //  - Centro e Mart (classic): sai todo verde (eles nao tem verde);
+    //  - nos outros, sai o verde que esta no chao andavel em volta ou na
+    //    linha logo abaixo do bloco (arvores, grama) e que NAO aparece no
+    //    resto do predio: os predios de Celadon sao verdes, e a parede de
+    //    baixo deles ficava vazada.
+    const natureColors = new Set<number>(walkableGreens);
     const blockGroundSource =
       blockGround === undefined ? undefined : graphics.get(signatures.get(blockGround)!.metatileId);
 
     if (blockGroundSource) {
-      const pixels = blockGroundSource.bottomPixels;
+      addGreens(blockGroundSource.bottomPixels, natureColors);
+    }
 
-      for (let p = 0; p < pixels.length; p += 4) {
-        if (pixels[p + 1] > pixels[p] + 16 && pixels[p + 1] > pixels[p + 2]) {
-          groundColors.add((pixels[p] << 16) | (pixels[p + 1] << 8) | pixels[p + 2]);
+    const buildingColors = new Set<number>();
+
+    if (!classic) {
+      for (let x = x0; x < x0 + w && y0 + h < height; x++) {
+        const below = graphicsAt(x, y0 + h);
+
+        if (below) {
+          addGreens(below.pixels, natureColors);
+        }
+      }
+
+      for (let p = 0; p < (h - 1) * PX * w * PX * 4; p += 4) {
+        if (art[p + 3] !== 0) {
+          buildingColors.add((art[p] << 16) | (art[p + 1] << 8) | art[p + 2]);
         }
       }
     }
@@ -499,10 +541,13 @@ export function substituteBuildings<T extends Block>(
       for (let y = (h - 1) * PX; y < h * PX; y++) {
         for (let x = 0; x < w * PX; x++) {
           const a = (y * w * PX + x) * 4;
+          const color = (art[a] << 16) | (art[a + 1] << 8) | art[a + 2];
 
-          const green = art[a + 1] > art[a] + 16 && art[a + 1] > art[a + 2];
+          const green = classic
+            ? art[a + 1] > art[a] + 16 && art[a + 1] > art[a + 2]
+            : natureColors.has(color) && !buildingColors.has(color);
 
-          if (green || groundColors.has((art[a] << 16) | (art[a + 1] << 8) | art[a + 2])) {
+          if (green || (classic && natureColors.has(color))) {
             art[a + 3] = 0;
           }
         }
@@ -511,6 +556,14 @@ export function substituteBuildings<T extends Block>(
 
     return art;
   };
+
+  function addGreens(pixels: Uint8ClampedArray, into: Set<number>): void {
+    for (let p = 0; p < pixels.length; p += 4) {
+      if (pixels[p + 3] !== 0 && pixels[p + 1] > pixels[p] + 16 && pixels[p + 1] > pixels[p + 2]) {
+        into.add((pixels[p] << 16) | (pixels[p + 1] << 8) | pixels[p + 2]);
+      }
+    }
+  }
 
   // Chao do ginasio: a camada de BAIXO dos proprios tiles dele (grama em
   // Pewter e Fuchsia; calcada em Saffron). Cada tile vira um metatile
@@ -582,7 +635,7 @@ export function substituteBuildings<T extends Block>(
   }
 
   for (const center of findPokemonCenters(width, height, metatileAt)) {
-    const art = prepare(center.x, center.y, POKEMON_CENTER_WIDTH, POKEMON_CENTER_HEIGHT);
+    const art = prepare(center.x, center.y, POKEMON_CENTER_WIDTH, POKEMON_CENTER_HEIGHT, undefined, false, true);
 
     const model = buildPokemonCenterModel({ rgba: art });
 
@@ -593,7 +646,7 @@ export function substituteBuildings<T extends Block>(
   // Poke Mart: mesmo preparo do Centro Pokemon (chao por repeticao, arte
   // sem o chao); posicao e alturas saem da arte no proprio modelo.
   for (const mart of findPokeMarts(width, height, metatileAt)) {
-    const art = prepare(mart.x, mart.y, POKE_MART_WIDTH, POKE_MART_HEIGHT);
+    const art = prepare(mart.x, mart.y, POKE_MART_WIDTH, POKE_MART_HEIGHT, undefined, false, true);
     const model = buildPokeMartModel({ rgba: art });
 
     model.position.set(mart.x, 0, mart.y);
