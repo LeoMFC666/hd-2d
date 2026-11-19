@@ -201,30 +201,7 @@ const LANDMARKS: Landmark[] = [
       [null, 0x2d4, null, 0x2d5, null, null],
     ],
     outside: (col, row) => row === 6 && col !== 1 && col !== 3,
-    build: (art) => {
-      // Palha (0-65) com a beirada escura; parede de ripas (65-96) com as
-      // janelas e a cerca viva embaixo; porta de correr (24,5) num portal
-      // branco: postes 24-28 e 51-55 ate a linha 98, viga 72-80.
-      const house = buildHouse('safari-zone-entrance', art, {
-        roofTopPx: 0,
-        facadeTopPx: 65,
-        bodyPx: [0, 96],
-        sidePx: 3,
-        roof: { kind: 'hip', rise: 0.75, inset: 0.8, overhang: 0.1 },
-        doors: [{ col: 2, row: 5 }],
-      });
-      const { front } = house.userData.measures as { front: number };
-      const portal = plain(art.color(26, 76), 0.85);
-      const postTop = (98 - 79) / PX;
-
-      for (const x0 of [24, 51]) {
-        house.add(artBlock(art, { x: [x0, x0 + 4], z: [front - 0.02, front + 0.14], y: [0, postTop], front: [79, 98], sides: portal }));
-      }
-
-      house.add(artBlock(art, { x: [24, 55], z: [front - 0.02, front + 0.16], y: [postTop, postTop + 4 / PX], lid: [72, 76], front: [76, 80], sides: portal }));
-
-      return house;
-    },
+    build: (art) => buildSafariHouse('safari-zone-entrance', art, 0),
   },
   {
     // Silph Co. (Saffron, 9x15 em (29,16)).
@@ -348,6 +325,126 @@ const LANDMARKS: Landmark[] = [
       [0x2b8, 0x2b9, 0x2ba, 0x2ad, 0x2ae, 0x2af, 0x2b5],
     ],
     build: buildCinnabarLab,
+  },
+  {
+    // Plato Indigo (11x7 em (6,0); o telhado passa da borda de cima).
+    kind: 'indigo-plateau',
+    mold: [
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x300, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x301, 0x302],
+      [0x308, 0x2f3, 0x309, 0x2f4, 0x30b, 0x30c, 0x30d, 0x2f4, 0x309, 0x2f5, 0x30a],
+      [0x310, 0x2fb, 0x311, 0x2fc, 0x313, 0x314, 0x315, 0x2fc, 0x311, 0x2fd, 0x312],
+      [0x318, 0x303, 0x307, 0x304, 0x31b, 0x15b, 0x31d, 0x304, 0x307, 0x305, 0x31a],
+    ],
+    build: buildIndigoPlateau,
+  },
+  {
+    // Portaria da Liga (Rota 22, 9x7 em (4,0)): a frente, com a porta. O
+    // telhado continua nas 6 ultimas linhas da Rota 23 (outro tileset): a
+    // parte de tras e outro modelo, feito pela Rota 23 (league-gate-back).
+    kind: 'league-gate',
+    mold: [
+      [0x2c0, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c2],
+      [0x2c0, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c2],
+      [0x2c0, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c2],
+      [0x2c8, 0x2c3, 0x2c3, 0x2d4, 0x2d5, 0x2d6, 0x2c3, 0x2c3, 0x2ca],
+      [0x2d0, 0x2cb, 0x2cb, 0x2bd, 0x2be, 0x2bf, 0x2cb, 0x2cb, 0x2d2],
+      [0x2d8, 0x2d3, 0x2d3, 0x2c5, 0x15b, 0x2c7, 0x2d3, 0x2d3, 0x2da],
+      [null, 0x2db, 0x2c4, 0x2cd, 0x2ce, 0x2cf, 0x2c4, 0x2db, null],
+    ],
+    outside: (col, row) => row === 6 && (col === 0 || col === 8),
+    build: buildLeagueGate,
+  },
+  {
+    // O fundo da portaria da Liga, nas 6 ultimas linhas da Rota 23 (9x6 em
+    // (4,154)): o resto do telhado e a porta dos fundos.
+    kind: 'league-gate-back',
+    mold: [
+      [0x2f0, 0x2f1, 0x2f1, 0x30f, 0x30f, 0x30f, 0x2f1, 0x2f1, 0x2f2],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2f9, 0x2fa],
+    ],
+    build: buildLeagueGateBack,
+  },
+  {
+    // Creche da Rota 5 (5x5 em (21,21)).
+    kind: 'day-care',
+    mold: [
+      [0x2f0, 0x2f1, 0x2f2, 0x2f1, 0x2f3],
+      [0x2f8, 0x2f9, 0x2f9, 0x2f9, 0x2fb],
+      [0x300, 0x301, 0x301, 0x301, 0x303],
+      [0x2f4, 0x2f5, 0x2fe, 0x2f6, 0x2f7],
+      [0x2fc, 0x2fd, 0x298, 0x304, 0x2ff],
+    ],
+    // Telhado laranja (8-44, a agua da esquerda clara e a da direita
+    // escura), fachada creme (46-78) com as janelas, a placa e a porta.
+    build: (art) =>
+      buildHouse('day-care', art, {
+        roofTopPx: 8,
+        facadeTopPx: 46,
+        bodyPx: [0, 80],
+        roof: { kind: 'hip', rise: 0.6, inset: 0.35, overhang: 0.1 },
+        doors: [{ col: 2, row: 4 }],
+      }),
+  },
+  {
+    // Chale do Bill na Rota 25 (5x4 em (49,1)): telhado verde com a
+    // chamine cinza (56-72: tampa 0-13, frente 13-30), fachada baixa (46-62).
+    kind: 'sea-cottage',
+    mold: [
+      [0x2c8, 0x2c9, 0x2ca, 0x2cb, 0x2cc],
+      [0x2d0, 0x2d1, 0x2d2, 0x2d3, 0x2d4],
+      [0x2d8, 0x2d9, 0x2da, 0x2db, 0x2dc],
+      [0x2e0, 0x2e1, 0x298, 0x2e3, 0x2e4],
+    ],
+    build: (art) =>
+      buildHouse('sea-cottage', art, {
+        roofTopPx: 0,
+        facadeTopPx: 46,
+        bodyPx: [0, 80],
+        sidePx: 20,
+        roof: { kind: 'hip', rise: 0.55, inset: 0.45, overhang: 0.1 },
+        chimneys: [{ x0: 56, y0: 0, x1: 72, y1: 30, height: 1.3 }],
+        doors: [{ col: 2, row: 3 }],
+      }),
+  },
+  {
+    // Casa secreta da Zona Safari (Oeste, 6x7 em (10,2)): o mesmo predio da
+    // entrada da Safari, com uma linha de palha a menos.
+    kind: 'safari-secret-house',
+    mold: [
+      [0x328, 0x329, 0x32a, 0x32b, 0x32c, 0x32d],
+      [0x2bc, 0x2bd, 0x2bd, 0x2bd, 0x2bd, 0x2be],
+      [0x2bc, 0x2bd, 0x2bd, 0x2bd, 0x2bd, 0x2be],
+      [0x2c0, 0x2c1, 0x2c1, 0x2c1, 0x2c1, 0x2c2],
+      [0x2c8, 0x2c9, 0x2ca, 0x2cb, 0x2d6, 0x2cf],
+      [0x2d0, 0x2d1, 0x2d2, 0x2d3, 0x2d7, 0x2c3],
+      [null, 0x32e, null, 0x32f, null, null],
+    ],
+    outside: (col, row) => row === 6 && col !== 1 && col !== 3,
+    build: (art) => buildSafariHouse('safari-secret-house', art, 8),
+  },
+  {
+    // Usina eletrica (Rota 10, 9x8 em (3,34)); na linha de cima so o alto
+    // das quatro chamines (o resto e o penhasco).
+    kind: 'power-plant',
+    mold: [
+      [null, 0x31d, null, 0x31d, null, 0x31d, null, 0x31d, null],
+      [0x285, 0x325, 0x286, 0x325, 0x286, 0x325, 0x286, 0x325, 0x287],
+      [0x32c, 0x32d, 0x324, 0x32d, 0x324, 0x32d, 0x324, 0x32d, 0x32e],
+      [0x295, 0x296, 0x293, 0x296, 0x293, 0x296, 0x293, 0x296, 0x297],
+      [0x2d4, 0x2fe, 0x318, 0x319, 0x319, 0x319, 0x31b, 0x2fe, 0x2d5],
+      [0x2dc, 0x306, 0x320, 0x321, 0x321, 0x321, 0x323, 0x306, 0x2dd],
+      [0x2e4, 0x30e, 0x328, 0x329, 0x31a, 0x32a, 0x32b, 0x30e, 0x2e5],
+      [null, null, 0x330, 0x331, 0x322, 0x332, 0x333, null, null],
+    ],
+    outside: (col, row) => row === 0 || (row === 7 && (col < 2 || col > 6)),
+    build: buildPowerPlant,
   },
   {
     // Torre Pokemon (Lavender, 7x7 em (15,0)), com a parte alta desenhada
@@ -979,6 +1076,293 @@ function buildCinnabarLab(art: Art): THREE.Group {
     sides: plain(art.color(50, 44), 0.8),
   }));
   entrance.add(doorPlane(art, 48, 46, 3.5, front + 0.024));
+
+  return root;
+}
+
+/**
+ * Plato Indigo (11x7). Na arte: telhado verde-claro de nervuras (0-64,
+ * corta na borda do mapa), fachada laranja de ripas com as janelas (65-104),
+ * quatro ciprestes na frente dela (cols 1, 3, 7 e 9, linhas 76-110) e, no
+ * meio (64-112), o pavilhao branco da entrada: frontao (66-96), paredes e a
+ * porta dupla (96-112, porta (11,6)).
+ */
+function buildIndigoPlateau(art: Art): THREE.Group {
+  // A parede atras do pavilhao fica lisa e atras dos ciprestes continua o
+  // padrao da coluna do lado.
+  const body = art.clone().fill(64, 66, 112, 104, 40, 70);
+
+  for (const [col, from] of [[1, 2], [3, 2], [7, 8], [9, 8]]) {
+    body.patch(col * PX, 66, col * PX + PX, 104, (col - from) * PX);
+  }
+
+  const house = buildHouse('indigo-plateau', body, {
+    roofTopPx: 0,
+    facadeTopPx: 65,
+    frontPx: 104,
+    bodyPx: [0, 176],
+    sidePx: 40,
+    roof: { kind: 'gable', rise: 0.8, ridgeAt: 0.25, overhang: 0.08 },
+    doors: [],
+  });
+  const { front } = house.userData.measures as { front: number };
+
+  // Pavilhao: a frente e um frontao pontudo (o pentagono da arte, de pe:
+  // paredes ate a linha 96 e a ponta na 66, a 2,875 do chao) e, atras
+  // dele, as duas aguas brancas ate a fachada.
+  const pavilionFront = 112 / PX;
+  const pavilionBack = front - 0.4;
+  const eave = (112 - 96) / PX;
+  const apex = (112 - 66) / PX;
+  const white = plain(art.color(80, 72), 0.9);
+  const slope = plain(art.color(80, 72), 0.72);
+
+  house.add(artBlock(art, { x: [64, 112], z: [pavilionBack, pavilionFront - 0.01], y: [0, eave], sides: white }));
+
+  const gable = new THREE.Shape();
+
+  gable.moveTo(64 / PX, 0);
+  gable.lineTo(112 / PX, 0);
+  gable.lineTo(112 / PX, eave);
+  gable.lineTo(88 / PX, apex);
+  gable.lineTo(64 / PX, eave);
+  gable.lineTo(64 / PX, 0);
+
+  const face = new THREE.ShapeGeometry(gable);
+
+  face.translate(0, 0, pavilionFront);
+  artUv(face, art, (_x, y) => (pavilionFront - y) * PX);
+  house.add(new THREE.Mesh(face, textured(art.texture(0, 0, art.width, art.height), 1)));
+
+  for (const [xa, xb] of [[64, 88], [112, 88]]) {
+    house.add(polygons([{
+      points: [[xa / PX, eave, pavilionFront], [xb / PX, apex, pavilionFront], [xb / PX, apex, pavilionBack], [xa / PX, eave, pavilionBack]],
+      uv: [[0, 0], [1, 0], [1, 1], [0, 1]],
+    }], xa < xb ? slope : white));
+  }
+
+  const entrance = new THREE.Group();
+
+  entrance.name = 'entrance';
+  house.add(entrance);
+  entrance.add(doorPlane(art, 80, 96, 5.5, pavilionFront + 0.004));
+
+  // Ciprestes: recortes em pe na frente da fachada.
+  const trees = art.clone();
+
+  trees.keepOnly(0, 0, trees.width, trees.height, new Set([0x84d663, 0xbdff8c, 0x395a10, 0x399431, 0x736363, 0x423931]));
+
+  for (const col of [1, 3, 7, 9]) {
+    const x0 = col * PX;
+    const z = front + 0.375;
+
+    house.add(wall(x0 / PX, z, (x0 + PX) / PX, z, 0, 34 / PX, textured(trees.texture(x0, 76, PX, 34), 1, true)));
+  }
+
+  return house;
+}
+
+/**
+ * Portaria da Liga. O telhado de nervuras tem 153 px de arte (96 na Rota 23
+ * e 57 na Rota 22) e a fachada 39 (2,4375 de altura em z = 6 da Rota 22):
+ * pela dobra o predio vai de z -3,5625 a 6 da Rota 22, com uma agua so
+ * subindo 0,6 para tras. Cada mapa faz a sua parte, que se encontram em
+ * z = 2,4375 da Rota 22 (a 0,22 de altura a mais que o beiral).
+ */
+const LEAGUE_WALL = 39 / PX;
+const LEAGUE_DEPTH = 153 / PX;
+const LEAGUE_RISE = 0.6;
+const leagueRoofAt = (zFromFront: number): number => LEAGUE_WALL + (LEAGUE_RISE * zFromFront) / LEAGUE_DEPTH;
+const LEAGUE_ORANGE = new THREE.Color().setRGB(0xb5 / 255, 0x63 / 255, 0, THREE.SRGBColorSpace);
+
+/**
+ * Frente da portaria da Liga (Rota 22). Na arte: telhado (0-57), fachada de
+ * ripas laranja com as janelas (57-96), quatro ciprestes na frente (cols 1,
+ * 2, 6 e 7, linhas 70-102), a marquise amarela em meia-lua (54-90, linhas
+ * 58-78) sobre os postes (ate a linha 104), a porta (8,5) e o piso claro do
+ * alpendre (96-110). Pela dobra, a marquise desce da parede (z = 6, a
+ * 2,375) ate os postes (z = 6,5, a 1,625).
+ */
+function buildLeagueGate(art: Art): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'league-gate';
+
+  const front = 6;
+  const back = front - 57 / PX;
+  const facade = art.clone().fill(16, 70, 48, 96, 4, 70).fill(96, 70, 128, 96, 4, 70);
+  const sides = textured(stripe(facade, 4, 57, 96), 0.75);
+
+  root.add(artBlock(facade, { x: [0, 144], z: [back, front], y: [0, LEAGUE_WALL], front: [57, 96], sides }));
+  root.add(artRoof(art, {
+    px: [0, 144], rows: [0, 57], kind: 'gable', ridgeAt: 0, rise: leagueRoofAt(front - back) - LEAGUE_WALL, y: LEAGUE_WALL,
+    bounds: { x0: -0.04, x1: 9.04, z0: back, z1: front + 0.08 }, gableMaterial: plain(LEAGUE_ORANGE, 0.7),
+  }));
+
+  // Marquise em meia-lua: leque da parede ate a borda da frente, mapeado
+  // pela dobra (linha = z - y).
+  const cx = 72 / PX;
+  const radius = 18 / PX;
+  const topY = front - 58 / PX;
+  const edgeY = 6.5 - 78 / PX;
+  const segments = 16;
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  positions.push(cx, topY, front);
+
+  for (let i = 0; i <= segments; i++) {
+    const t = (i / segments) * Math.PI;
+
+    positions.push(cx + radius * Math.cos(t), edgeY, front + 0.5 * Math.sin(t));
+    positions.push(cx + radius * Math.cos(t), topY, front);
+  }
+
+  for (let i = 0; i < segments; i++) {
+    const a = 1 + i * 2;
+    const b = a + 2;
+
+    indices.push(0, b, a);
+    indices.push(a, b, b + 1, a, b + 1, a + 1);
+  }
+
+  const canopy = new THREE.BufferGeometry();
+
+  canopy.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  canopy.setIndex(indices);
+  artUv(canopy, art, (_x, y, z) => (z - y) * PX);
+  root.add(new THREE.Mesh(canopy, textured(art.texture(0, 0, art.width, art.height), 1, true)));
+
+  const post = plain(art.color(56, 90), 0.9);
+
+  for (const x0 of [54, 85]) {
+    root.add(artBlock(art, { x: [x0, x0 + 4], z: [6.4, 6.5], y: [0, edgeY], sides: post }));
+  }
+
+  // Piso do alpendre e a porta.
+  root.add(artBlock(art, { x: [48, 96], z: [front, 110 / PX], y: [0, 0.06], lid: [96, 110], sides: plain(art.color(72, 104), 0.8) }));
+
+  const entrance = new THREE.Group();
+
+  entrance.name = 'entrance';
+  root.add(entrance);
+  entrance.add(doorPlane(art, 64, 80, 4.5, front + 0.004));
+
+  // Ciprestes.
+  const trees = art.clone();
+
+  trees.keepOnly(0, 0, trees.width, trees.height, new Set([0x84d663, 0xbdff8c, 0x395a10, 0x399431, 0x736363, 0x423931]));
+
+  for (const col of [1, 2, 6, 7]) {
+    root.add(wall(col, 102 / PX, col + 1, 102 / PX, 0, 2, textured(trees.texture(col * PX, 70, PX, 32), 1, true)));
+  }
+
+  return root;
+}
+
+/**
+ * Fundo da portaria da Liga (Rota 23): o resto do telhado (linhas 0-96 do
+ * bloco) e o corpo, de z 2,4375 a 8,4375 do bloco (passa da borda de baixo
+ * da Rota 23 e encontra a frente feita pela Rota 22); a porta dos fundos
+ * (8,153) e uma abertura escura com a marquise na parede de tras.
+ */
+function buildLeagueGateBack(art: Art): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'league-gate-back';
+
+  const front = 96 / PX + LEAGUE_WALL;
+  const back = LEAGUE_WALL;
+  const frontY = leagueRoofAt(57 / PX);
+  const orange = plain(LEAGUE_ORANGE, 0.72);
+
+  root.add(artBlock(art, { x: [0, 144], z: [back, front], y: [0, frontY], sides: orange }));
+  root.add(artRoof(art, {
+    px: [0, 144], rows: [0, 96], kind: 'gable', ridgeAt: 0, rise: leagueRoofAt(LEAGUE_DEPTH) - frontY, y: frontY,
+    bounds: { x0: -0.04, x1: 9.04, z0: back - 0.06, z1: front }, gableMaterial: orange,
+  }));
+
+  // Porta dos fundos, virada para o norte.
+  root.add(wall(88 / PX, back - 0.004, 56 / PX, back - 0.004, 0, 1, plain(new THREE.Color(0x404858), 1)));
+  root.add(artBlock(art, { x: [52, 92], z: [back - 0.4, back], y: [1, 1.1], sides: plain(art.color(4, 3), 0.95) }));
+
+  return root;
+}
+
+/**
+ * Predio de palha da Safari (a entrada em Fuchsia e a casa secreta): palha
+ * (roofTopPx-65) com a beirada escura; parede de ripas (65-96) com as
+ * janelas e a cerca viva embaixo; porta de correr (col 2, linha 5) num
+ * portal branco: postes 24-28 e 51-55 ate a linha 98, viga 72-80.
+ */
+function buildSafariHouse(name: string, art: Art, roofTopPx: number): THREE.Group {
+  const house = buildHouse(name, art, {
+    roofTopPx,
+    facadeTopPx: 65,
+    bodyPx: [0, 96],
+    sidePx: 3,
+    roof: { kind: 'hip', rise: 0.75, inset: 0.8, overhang: 0.1 },
+    doors: [{ col: 2, row: 5 }],
+  });
+  const { front } = house.userData.measures as { front: number };
+  const portal = plain(art.color(26, 76), 0.85);
+  const postTop = (98 - 79) / PX;
+
+  for (const x0 of [24, 51]) {
+    house.add(artBlock(art, { x: [x0, x0 + 4], z: [front - 0.02, front + 0.14], y: [0, postTop], front: [79, 98], sides: portal }));
+  }
+
+  house.add(artBlock(art, { x: [24, 55], z: [front - 0.02, front + 0.16], y: [postTop, postTop + 4 / PX], lid: [72, 76], front: [76, 80], sides: portal }));
+
+  return house;
+}
+
+/**
+ * Usina eletrica (9x8). Na arte: penhasco atras, laje rosa com a borda
+ * amarela (20-72) e as quatro chamines brancas de faixas vermelhas (x 17-31,
+ * 49-63, 81-95, 113-127; tampa na linha 12-16, base na 58); fachada das
+ * alas de paineis azul-claros (72-110, 2,375 de altura em z = 6,875) e o
+ * corpo do meio (40-104) meio tile a frente, com o vidro e o vao da
+ * entrada (7,40) ate a linha 118.
+ */
+function buildPowerPlant(art: Art): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'power-plant';
+
+  const front = 110 / PX;
+  const wallTop = 38 / PX;
+  const back = front - (72 - 20) / PX;
+
+  root.add(artBlock(art, { x: [0, 144], z: [back, front], y: [0, wallTop], front: [72, 110] }));
+  root.add(artRoof(art, {
+    px: [0, 144], rows: [20, 72], kind: 'flat', rise: 0, y: wallTop + 0.002,
+    bounds: { x0: 0, x1: 9, z0: back, z1: front },
+  }));
+
+  const centerFront = 118 / PX;
+
+  root.add(artBlock(art, { x: [40, 104], z: [front - 0.02, centerFront], y: [0, 36 / PX], lid: [72, 82], front: [82, 118] }));
+
+  // Chamines: cilindros com a arte de fachada (linha = frente - y).
+  const radius = 7 / PX;
+  const stackBottom = wallTop;
+  const stackTop = wallTop + (58 - 14) / PX;
+  const zFront = 58 / PX + wallTop;
+  const skin = art.clone().bleed();
+  const material = textured(skin.texture(0, 0, skin.width, skin.height), 1);
+  const cap = plain(art.color(24, 14), 1);
+
+  for (const x of [24, 56, 88, 120]) {
+    const stack = new THREE.CylinderGeometry(radius, radius * 1.15, stackTop - stackBottom, 16, 1, true);
+
+    stack.translate(x / PX, (stackTop + stackBottom) / 2, zFront - radius);
+    artUv(stack, skin, (_x, y) => (zFront - y) * PX);
+    root.add(new THREE.Mesh(stack, material));
+
+    const lid = new THREE.Mesh(new THREE.CircleGeometry(radius, 16), cap);
+
+    lid.rotateX(-Math.PI / 2);
+    lid.position.set(x / PX, stackTop, zFront - radius);
+    root.add(lid);
+  }
 
   return root;
 }

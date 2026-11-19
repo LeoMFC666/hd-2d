@@ -155,6 +155,8 @@ function surroundingGround(
 ): Block | undefined {
   const counts = new Map<number, { block: Block; count: number }>();
 
+  // Sem chao andavel nos lados nem embaixo (o fundo da portaria da Liga,
+  // entre penhascos e a borda do mapa), vale a linha de cima.
   for (let y = y0; y <= y0 + h; y++) {
     for (let x = x0 - 1; x <= x0 + w; x++) {
       const inside = x >= x0 && x < x0 + w && y < y0 + h;
@@ -173,6 +175,19 @@ function surroundingGround(
 
       entry.count++;
       counts.set(block.metatileId, entry);
+    }
+  }
+
+  if (!counts.size && y0 > 0) {
+    for (let x = x0; x < x0 + w; x++) {
+      const block = blocks[(y0 - 1) * width + x];
+
+      if (block && block.collision === 0 && !isWater(block.metatileId)) {
+        const entry = counts.get(block.metatileId) ?? { block, count: 0 };
+
+        entry.count++;
+        counts.set(block.metatileId, entry);
+      }
     }
   }
 
@@ -397,15 +412,14 @@ export function substituteBuildings<T extends Block>(
           continue;
         }
 
-        if (!groundSource) {
-          if (fallback) {
-            result[y * width + x] = { ...original, metatileId: fallback.metatileId, collision: 0 } as T;
-          }
+        // Sem chao proprio: o do entorno (so a camada de baixo dele).
+        const fallbackSource = fallback ? graphics.get(fallback.metatileId) : undefined;
 
+        if (!groundSource && !fallbackSource) {
           continue;
         }
 
-        const floor = placeGround ?? groundSource;
+        const floor = placeGround ?? groundSource ?? fallbackSource!;
         const id = GROUND_ONLY_BASE + floor.metatileId;
 
         if (!resultGraphics.has(id)) {
@@ -425,6 +439,10 @@ export function substituteBuildings<T extends Block>(
         }
 
         result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
+
+        if (!groundSource) {
+          continue;
+        }
 
         // Tira da arte o que e chao neste tile: pixels sem camada de cima
         // que sao do chao escolhido - ou de qualquer lugar da camada de
