@@ -53,6 +53,9 @@ interface Block {
   metatileId: number;
   collision: number;
   elevation: number;
+  // Bloco solido que virou chao de um modelo 3D pequeno (cerca, cercado,
+  // caixote): para a dobra conta como ocupado, nao como chao aberto.
+  solidModel?: boolean;
 }
 
 export interface PlacedBuilding {
@@ -887,24 +890,51 @@ export function substituteBuildings<T extends Block>(
     const firstRow = terminal.part === 'bottom' ? 2 : 0;
     const water = nearbyWater(terminal.x, terminal.y + firstRow, w, rows - firstRow);
 
-    for (let row = Math.max(1, firstRow); row < rows; row++) {
-      for (let col = 0; col < w; col++) {
-        const index = (terminal.y + row) * width + terminal.x + col;
+    // Chao andavel em volta (o deque de madeira de Four e Five Island): o
+    // bloco que mostra esse chao fica com ele; o resto volta a ser agua.
+    const ringGround = new Set<number>();
 
-        taken.add(index);
+    for (let y = terminal.y - 1; y <= terminal.y + rows; y++) {
+      for (let x = terminal.x - 1; x <= terminal.x + w; x++) {
+        const inside = x >= terminal.x && x < terminal.x + w && y >= terminal.y && y < terminal.y + rows;
+        const block = x >= 0 && y >= 0 && x < width && y < height ? blocks[y * width + x] : undefined;
+        const source = block && !inside ? graphicsAt(x, y) : undefined;
 
-        if (water && result[index]) {
-          result[index] = { ...water } as T;
+        if (block && source && block.collision === 0 && !isWaterBehavior(source.behavior)) {
+          ringGround.add(hashPixels(source.bottomPixels));
         }
       }
     }
 
+    // Depois do preparo (que poe chao em todo o bloco): sem isso, onde o
+    // entorno tem pier (Six, Seven, Navel Rock, Birth Island) o terminal
+    // ficava numa laje de tabuas no meio do mar.
+    const restoreWater = (): void => {
+      for (let row = Math.max(1, firstRow); row < rows; row++) {
+        for (let col = 0; col < w; col++) {
+          const x = terminal.x + col;
+          const y = terminal.y + row;
+          const index = y * width + x;
+          const own = graphicsAt(x, y);
+
+          taken.add(index);
+
+          if (water && result[index] && !(own && ringGround.has(hashPixels(own.bottomPixels)))) {
+            result[index] = { ...water } as T;
+          }
+        }
+      }
+    };
+
     if (terminal.part === 'bottom') {
+      restoreWater();
       continue;
     }
 
     let raw = blockArt(width, terminal.x, terminal.y, w, rows, blocks, graphics);
     let art = prepare(terminal.x, terminal.y, w, rows, (_col, row) => row > 0, true);
+
+    restoreWater();
 
     if (terminal.part === 'top') {
       // As 4 linhas de baixo, montadas dos metatiles (estao no mapa de baixo).
@@ -931,8 +961,11 @@ export function substituteBuildings<T extends Block>(
 
       taken.add(index);
 
+      // Sem colisao, como os outros modelos: com ela o bloco continuava
+      // com volume na dobra (cartao de grama em pe) e as portas das casas
+      // vizinhas cresciam por ele (a casa de Three Island virava objeto).
       if (original && id !== undefined) {
-        result[index] = { ...original, metatileId: id } as T;
+        result[index] = { ...original, metatileId: id, collision: 0, solidModel: true } as T;
       }
     }
 
@@ -956,8 +989,11 @@ export function substituteBuildings<T extends Block>(
 
       taken.add(index);
 
+      // Sem colisao, como os outros modelos: com ela o bloco continuava
+      // com volume na dobra (cartao de grama em pe) e as portas das casas
+      // vizinhas cresciam por ele (a casa de Three Island virava objeto).
       if (original && id !== undefined) {
-        result[index] = { ...original, metatileId: id } as T;
+        result[index] = { ...original, metatileId: id, collision: 0, solidModel: true } as T;
       }
     }
 
@@ -1112,12 +1148,12 @@ export function substituteBuildings<T extends Block>(
       for (let y = run.y0; y <= run.y1; y++) {
         const index = y * width + run.x;
         const original = result[index];
-        const id = groundOnly(run.metatileId);
+        const id = original ? groundOnly(original.metatileId) : undefined;
 
         taken.add(index);
 
         if (original && id !== undefined) {
-          result[index] = { ...original, metatileId: id } as T;
+          result[index] = { ...original, metatileId: id, collision: 0, solidModel: true } as T;
         }
       }
 

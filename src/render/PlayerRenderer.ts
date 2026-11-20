@@ -184,6 +184,7 @@ import {
   markRocksInWater,
   type FoldGeometryData,
   type MapVolume,
+  WATER_BEHAVIORS,
   WATER_DEPTH,
 } from './VoxelFolding';
 
@@ -3080,9 +3081,10 @@ export class PlayerRenderer {
 
     // Comportamentos (MB_*) da agua deste mapa: bloco com o mesmo
     // comportamento tambem e agua, mesmo sem a elevacao 1 (mar em volta
-    // das pedras na rota de Cinnabar da Perfect Fire Red).
+    // das pedras na rota de Cinnabar da Perfect Fire Red). Os de agua de
+    // todo jogo entram sempre (mar fundo das Ilhas Sevii, elevacao 0).
     const waterBehaviors =
-      new Set<number>();
+      new Set<number>(WATER_BEHAVIORS);
 
     for (let index = 0; index < water.length; index++) {
       const block = renderData.blocks[index];
@@ -3121,7 +3123,7 @@ export class PlayerRenderer {
     // nao aparece dentro do mapa.)
     {
       const waterBehaviors =
-        new Set<number>();
+        new Set<number>(WATER_BEHAVIORS);
 
       for (let index = 0; index < water.length; index++) {
         // So agua de verdade (elevacao 1), nao as pedras rebaixadas.

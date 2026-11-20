@@ -52,7 +52,10 @@ const PRIMARY_FENCES = new Set([0xf0, 0xf1, 0xf4, 0xf5]);
 const PRIMARY_COUNT = 0x280;
 
 /** Faixa estreita e alta do desenho na camada de cima (o trilho). */
-function railBand(graphics: Gen3MetatileGraphics | null | undefined): [number, number] | null {
+function railBand(
+  graphics: Gen3MetatileGraphics | null | undefined,
+  maxBand = MAX_BAND,
+): [number, number] | null {
   if (!graphics) {
     return null;
   }
@@ -75,7 +78,7 @@ function railBand(graphics: Gen3MetatileGraphics | null | undefined): [number, n
     rows += any ? 1 : 0;
   }
 
-  return x1 >= 0 && x1 - x0 + 1 <= MAX_BAND && rows >= MIN_ROWS ? [x0, x1] : null;
+  return x1 >= 0 && x1 - x0 + 1 <= maxBand && rows >= MIN_ROWS ? [x0, x1] : null;
 }
 
 export function findNorthSouthFences(
@@ -145,14 +148,48 @@ export function findNorthSouthFences(
         continue;
       }
 
-      const y0 = y;
+      const center = (band[0] + band[1]) / 2;
 
-      while (
-        y < height &&
-        blocks[y * width + x]?.metatileId === block.metatileId &&
-        blocks[y * width + x]!.collision !== 0 &&
-        !taken.has(y * width + x)
-      ) {
+      // A fileira segue pelo mesmo tile ou por outro trilho no mesmo lugar
+      // do tile: o corrimao da Ponte Pepita alterna trecho liso e trecho
+      // com pilar (2EE/2CD), e cada um sozinho virava cartao em pe.
+      const continues = (row: number): boolean => {
+        const next = row >= 0 && row < height ? blocks[row * width + x] : undefined;
+
+        if (!next || next.collision === 0 || taken.has(row * width + x)) {
+          return false;
+        }
+
+        if (next.metatileId === block.metatileId) {
+          return true;
+        }
+
+        // So nos trilhos dos tilesets das cidades; as cercas do tileset
+        // geral ja eram fileiras do mesmo tile, com os cantos como cartao.
+        if (block.metatileId < PRIMARY_COUNT || next.metatileId < PRIMARY_COUNT) {
+          return false;
+        }
+
+        // O pilar e um pouco mais largo que o trilho (ate 12 px).
+        const nextBand =
+          bandOf(next.metatileId) ?? railBand(graphics.get(next.metatileId), 12);
+
+        return (
+          !!nextBand &&
+          nextBand[0] <= center &&
+          nextBand[1] >= center &&
+          Math.abs((nextBand[0] + nextBand[1]) / 2 - center) <= 3
+        );
+      };
+
+      // Pilar logo acima do primeiro trilho (comeco da ponte, borda do mapa).
+      let y0 = y;
+
+      while (continues(y0 - 1) && blocks[(y0 - 1) * width + x]?.metatileId !== block.metatileId) {
+        y0--;
+      }
+
+      while (continues(y)) {
         y++;
       }
 

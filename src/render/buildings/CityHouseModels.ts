@@ -143,6 +143,31 @@ const FIXED: FixedFamily[] = [
     spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
   },
   {
+    // Casas sem porta do alto de Vermilion (a do lado do Centro Pokemon e a
+    // da direita, de janelas): sem molde viravam um cartao esticado com o
+    // telhado subindo torto.
+    kind: 'house-vermilion',
+    mold: [
+      [null, null, null, null],
+      [0x2a8, 0x2a9, 0x2a9, 0x2aa],
+      [0x2b0, 0x2b1, 0x2a3, 0x2a4],
+      [0x2b8, 0x2b9, 0x2ab, 0x2ac],
+    ],
+    doors: [],
+    spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
+  },
+  {
+    kind: 'house-vermilion',
+    mold: [
+      [null, null, null, null, null],
+      [0x2a8, 0x2a9, 0x2a9, 0x2a9, 0x2aa],
+      [0x2a5, 0x2a6, 0x2b1, 0x2a3, 0x2a4],
+      [0x2ad, 0x2ae, 0x2b9, 0x2ab, 0x2ac],
+    ],
+    doors: [],
+    spec: { roof: { kind: 'gable', rise: 0.5, overhang: 0.1 } },
+  },
+  {
     kind: 'house-fuchsia',
     mold: [
       [null, null, null, null, null],
@@ -244,6 +269,23 @@ function findWide(width: number, height: number, metatileAt: MetatileAt, family:
 
       if (!ok) {
         continue;
+      }
+
+      // A mesma arte com mais uma coluna: a casa de Four Island usa os ids
+      // da de Cerulean com a borda direita em +1 (2BB/2B3/2AB/2A3). Sem
+      // isso a ultima coluna ficava no mapa e dobrava como uma rampa.
+      for (;;) {
+        let continues = right + 1 < width;
+
+        for (let row = top; row <= y && continues; row++) {
+          continues = metatileAt(right + 1, row) === metatileAt(right, row) + 1;
+        }
+
+        if (!continues || right + 1 - x >= 12) {
+          break;
+        }
+
+        right++;
       }
 
       if (family.repeatLast) {

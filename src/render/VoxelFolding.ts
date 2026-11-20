@@ -1288,6 +1288,11 @@ export interface VolumeBlock {
   // Metatile do tileset SECUNDARIO (o da cidade). Na Gen 3 os predios de
   // cada cidade ficam nele; arvores, cercas e placas, no primario.
   secondary?: boolean;
+
+  // Bloco solido que virou chao de um modelo 3D pequeno (cerca, cercado,
+  // caixote): sem volume, mas ocupado - nao conta como chao aberto em volta
+  // da natureza solta.
+  solidModel?: boolean;
 }
 
 // Fachada de predio: limites de linhas em pe.
@@ -1732,6 +1737,60 @@ function findRockMasses(
       for (const cell of component) {
         mass[cell] = 1;
       }
+
+      continue;
+    }
+
+    // Pedaco de casa cortado pela borda do mapa: a casa de Five Island
+    // continua na Five Isle Meadow, onde nao tem porta e virava objeto em pe
+    // (uma torre roxa). Os blocos do tileset da cidade do grupo, encostados
+    // na borda, com 2+ colunas e 3+ linhas, viram predio (marcados com 2).
+    const city = component.filter(
+      (cell) => blockAt(cell % width, Math.floor(cell / width))?.secondary === true,
+    );
+
+    if (city.length >= 6) {
+      let x0 = width;
+      let x1 = -1;
+      let y0 = height;
+      let y1 = -1;
+
+      for (const cell of city) {
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+      }
+
+      const atEdge = x0 === 0 || y0 === 0 || x1 === width - 1 || y1 === height - 1;
+
+      if (atEdge && x1 - x0 + 1 >= 2 && y1 - y0 + 1 >= 3) {
+        // 2 = pedaco de casa: buildMapVolume transforma em predio.
+        for (const cell of city) {
+          mass[cell] = 2;
+        }
+
+        // A beirada do telhado (com a copa da arvore por cima, verde) fica
+        // acima: entra junto enquanto for solida e da cidade.
+        for (let x = x0; x <= x1; x++) {
+          for (let y = y0 - 1; y >= 0; y--) {
+            const cell = y * width + x;
+
+            if (
+              mask[cell] !== FOLD_SOLID ||
+              buildingIds[cell] !== 0 ||
+              blockAt(x, y)?.secondary !== true
+            ) {
+              break;
+            }
+
+            mass[cell] = 2;
+          }
+        }
+      }
     }
   }
 
@@ -1745,7 +1804,8 @@ function findRockMasses(
     const thin = new Uint8Array(width * height);
 
     for (let cell = 0; cell < mass.length; cell++) {
-      if (!mass[cell]) {
+      // So montanha (1); pedaco de casa (2) vira predio inteiro.
+      if (mass[cell] !== 1) {
         continue;
       }
 
@@ -1816,7 +1876,7 @@ function findRockMasses(
   // Topos (so camada de cima) logo acima das colunas de montanha.
   for (let x = 0; x < width; x++) {
     for (let y = 1; y < height; y++) {
-      if (!mass[y * width + x]) {
+      if (mass[y * width + x] !== 1) {
         continue;
       }
 
@@ -2544,7 +2604,7 @@ export function buildMapVolume(
 
   // Bloco com comportamento de agua (pedra no mar, borda de mar
   // impassavel) nunca sobe: fica na agua, rebaixado com ela.
-  const waterBehaviors = new Set<number>();
+  const waterBehaviors = new Set<number>(WATER_BEHAVIORS);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -2644,13 +2704,69 @@ export function buildMapVolume(
 
   const buildingIds =
     style === 'outdoor'
-      ? findBuildings(width, height, mask, natural, warps)
+      ? findBuildings(
+          width,
+          height,
+          mask,
+          natural,
+          warps,
+          (index) => blockAt(index % width, Math.floor(index / width))?.secondary === true,
+          (index) => blockAt(index % width, Math.floor(index / width))?.solidModel === true,
+        )
       : new Int32Array(width * height);
 
   const masses =
     style === 'outdoor'
       ? findRockMasses(width, height, mask, buildingIds, blockAt, provisional)
       : new Uint8Array(width * height);
+
+  // Pedacos de casa na borda do mapa (findRockMasses marca com 2) viram
+  // predio, medidos como a outra metade da casa no mapa vizinho.
+  {
+    let nextId = 0;
+
+    for (const id of buildingIds) {
+      nextId = Math.max(nextId, id);
+    }
+
+    const seen = new Uint8Array(width * height);
+
+    for (let start = 0; start < masses.length; start++) {
+      if (masses[start] !== 2 || seen[start]) {
+        continue;
+      }
+
+      nextId++;
+
+      const stack = [start];
+      seen[start] = 1;
+
+      while (stack.length > 0) {
+        const cell = stack.pop() as number;
+        const x = cell % width;
+        const y = (cell - x) / width;
+
+        buildingIds[cell] = nextId;
+        masses[cell] = 0;
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+            continue;
+          }
+
+          const next = ny * width + nx;
+
+          if (masses[next] === 2 && !seen[next]) {
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+    }
+  }
 
   // ---- o que cada bloco vira ----
   const kinds = new Uint8Array(width * height);
@@ -3047,6 +3163,15 @@ function keepBackedRuns(
 // Agua fica abaixo do chao, com barranco nas margens (como no Faithful).
 export const WATER_DEPTH = 0.3;
 
+/**
+ * Comportamentos de agua (MB_*), com os mesmos numeros no RSE e no FRLG:
+ * lagoa (10), agua semifunda/funda (11, 12) e mar (15). O mar fundo das
+ * Ilhas Sevii, de Navel Rock e da Birth Island tem colisao e elevacao 0
+ * (nao da para surfar ali) e sem esta lista subia como um bloco de mar com
+ * paredes de agua.
+ */
+export const WATER_BEHAVIORS: ReadonlySet<number> = new Set([0x10, 0x11, 0x12, 0x15]);
+
 const SHADE_BANK = 0.72;
 
 /**
@@ -3431,6 +3556,10 @@ function findBuildings(
   mask: Uint8Array,
   natural: Uint8Array,
   warps: ReadonlyArray<{ x: number; y: number }>,
+  // O bloco e do tileset SECUNDARIO (o da cidade, onde ficam as casas).
+  isSecondary: (index: number) => boolean = () => false,
+  // O bloco virou chao de um modelo 3D solido (cerca): nao e chao aberto.
+  isSolidModel: (index: number) => boolean = () => false,
 ): Int32Array {
   const ids = new Int32Array(width * height);
 
@@ -3494,7 +3623,7 @@ function findBuildings(
             ny < 0 ||
             nx >= width ||
             ny >= height ||
-            mask[ny * width + nx] === 0
+            (mask[ny * width + nx] === 0 && !isSolidModel(ny * width + nx))
           ) {
             open++;
           }
@@ -3537,52 +3666,133 @@ function findBuildings(
     }
 
     const id = nextId++;
-    const stack = [seed[1] * width + seed[0]];
-    const cells: number[] = [];
+    const seedIndex = seed[1] * width + seed[0];
+    const seedSecondary = isSecondary(seedIndex);
+    let cells: number[] = [];
     let minX = width;
     let maxX = -1;
     let minY = height;
     let maxY = -1;
 
-    ids[stack[0]] = id;
+    // Cresce o predio a partir da porta. Contido: so blocos do tileset da
+    // porta, e sem subir de um beiral (camada de cima, passavel) para um
+    // bloco solido - o telhado acaba no beiral.
+    const grow = (contained: boolean): void => {
+      cells = [];
+      minX = width;
+      maxX = -1;
+      minY = height;
+      maxY = -1;
 
-    while (stack.length > 0) {
-      const cell = stack.pop() as number;
-      const x = cell % width;
-      const y = (cell - x) / width;
+      const stack = [seedIndex];
 
-      cells.push(cell);
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
+      ids[seedIndex] = id;
 
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = x + dx;
-        const ny = y + dy;
+      while (stack.length > 0) {
+        const cell = stack.pop() as number;
+        const x = cell % width;
+        const y = (cell - x) / width;
 
-        if (!candidate(nx, ny)) {
-          continue;
+        cells.push(cell);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+
+          if (!candidate(nx, ny)) {
+            continue;
+          }
+
+          const next = ny * width + nx;
+
+          if (
+            contained &&
+            (isSecondary(next) !== seedSecondary ||
+              (dy === -1 && mask[cell] === FOLD_OVERHANG && mask[next] === FOLD_SOLID))
+          ) {
+            continue;
+          }
+
+          if (ids[next] === 0) {
+            ids[next] = id;
+            stack.push(next);
+          }
+        }
+      }
+    };
+
+    const tooBig = (): boolean =>
+      maxX - minX + 1 > MAX_BUILDING_SPAN_X ||
+      maxY - minY + 1 > MAX_BUILDING_SPAN_Y;
+
+    // Resultado contido aceito: tamanho de casa (3x3 ate o maximo de
+    // predio) com a porta na linha de baixo.
+    const houseShaped = (): boolean =>
+      maxY === seed[1] &&
+      maxX - minX + 1 >= 3 &&
+      maxY - minY + 1 >= 3 &&
+      maxX - minX + 1 <= MAX_BUILDING_WIDTH &&
+      maxY - minY + 1 <= MAX_BUILDING_HEIGHT;
+
+    grow(false);
+
+    // Predio maior que uma casa, ou que engoliu arvores, saindo de uma
+    // porta do tileset da cidade: a casa cresceu pela mata, pela cerca e
+    // pelo morro em volta (Three Island: casa + arvores + morro num predio
+    // so; duas casas e as arvores entre elas). Tenta a versao contida e
+    // fica com ela se for uma casa com a porta embaixo.
+    if (
+      !tooBig() &&
+      seedSecondary &&
+      (maxX - minX + 1 > MAX_BUILDING_WIDTH ||
+        maxY - minY + 1 > MAX_BUILDING_HEIGHT ||
+        cells.some((cell) => natural[cell] === NATURE_BY_COLOR))
+    ) {
+      const wide = cells;
+
+      for (const cell of wide) {
+        ids[cell] = 0;
+      }
+
+      grow(true);
+
+      if (!houseShaped()) {
+        for (const cell of cells) {
+          ids[cell] = 0;
         }
 
-        const next = ny * width + nx;
-
-        if (ids[next] === 0) {
-          ids[next] = id;
-          stack.push(next);
-        }
+        grow(false);
       }
     }
 
-    if (
-      maxX - minX + 1 > MAX_BUILDING_SPAN_X ||
-      maxY - minY + 1 > MAX_BUILDING_SPAN_Y
-    ) {
+    if (tooBig()) {
       for (const cell of cells) {
         ids[cell] = 0;
       }
 
-      continue;
+      if (!seedSecondary) {
+        continue;
+      }
+
+      // Segunda tentativa, contida, so para CASAS (porta do tileset da
+      // cidade na linha de baixo, tamanho de casa): a casa encostada no
+      // penhasco e na beira do mar (Cape Brink) crescia pelo penhasco
+      // inteiro, passava do tamanho maximo e virava objeto em pe. Saidas
+      // de area (Safari) tambem sao warps, com a mata acima ou abaixo -
+      // essas continuam sem predio.
+      grow(true);
+
+      if (!houseShaped()) {
+        for (const cell of cells) {
+          ids[cell] = 0;
+        }
+
+        continue;
+      }
     }
 
     const removed = new Set<number>();
@@ -3684,6 +3894,44 @@ function findBuildings(
         maxX = Math.max(maxX, x);
         minY = Math.min(minY, y);
         maxY = Math.max(maxY, y);
+      }
+    }
+
+    // Linhas de cima so com blocos do tileset PRIMARIO (arvore, grama com
+    // colisao, beira de penhasco) num predio feito do tileset da cidade
+    // nao sao do predio: em Five Island a arvore encostada no telhado
+    // entrava na casa e a casa subia como uma torre. Predios de penhasco
+    // (cavernas, ruinas de Tanoby) sao quase todos primarios e ficam como
+    // estao.
+    {
+      let secondaryCells = 0;
+      let primaryCells = 0;
+
+      for (const cell of cells) {
+        if (ids[cell] === id) {
+          if (isSecondary(cell)) {
+            secondaryCells++;
+          } else {
+            primaryCells++;
+          }
+        }
+      }
+
+      if (secondaryCells > primaryCells) {
+        for (let y = minY; y <= maxY; y++) {
+          const row = cells.filter((cell) => ids[cell] === id && Math.floor(cell / width) === y);
+
+          if (row.length === 0 || row.some((cell) => isSecondary(cell))) {
+            break;
+          }
+
+          for (const cell of row) {
+            ids[cell] = 0;
+            removed.add(cell);
+          }
+
+          minY = y + 1;
+        }
       }
     }
 
