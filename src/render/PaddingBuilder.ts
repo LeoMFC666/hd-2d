@@ -54,6 +54,22 @@ export interface PaddingMapInput {
 
   // Altura da agua (negativa) usada quando lowered.
   waterLevel?: number;
+
+  // Arvores da borda em cartoes com silhueta, como as matas do mapa
+  // (textura de bakeBorderCard: uma arvore inteira, recortada no contorno
+  // da copa da frente). Sem isto, o cartao mostra a ultima linha do padrao
+  // e as de cima.
+  cards?: BorderCardLayout;
+}
+
+export interface BorderCardLayout {
+  // Linha de base das arvores no padrao da borda (pixels a partir do topo
+  // da linha 0 do padrao), repetida a cada spanPx.
+  linePx: number;
+  spanPx: number;
+
+  // Altura da textura do cartao (pixels): periodo + maior ponta de copa.
+  heightPx: number;
 }
 
 export interface PaddingMeshData {
@@ -302,6 +318,54 @@ export function buildPadding(
           target.floorIndices.push(base, base + 1, base + 2, base, base + 2, base + 3);
         }
 
+        // Cartoes com silhueta: cada linha de celulas mostra os pedacos das
+        // arvores que caem nela, cada pedaco em pe na linha de base da sua
+        // arvore (como os cartoes das matas do mapa). Pedaco por linha de
+        // celulas: nenhum pixel sai duas vezes, e a ponta da arvore cuja
+        // base ja esta dentro do mapa (acima da borda de cima dele) aparece.
+        if (map.cards) {
+          const { linePx, spanPx, heightPx } = map.cards;
+
+          // Linhas de base no mundo (pixels): congruentes a esta.
+          const lineWorld =
+            (((linePx + 16 * map.z - 128) % spanPx) + spanPx) % spanPx;
+
+          const rowTop = north * 16;
+          let base =
+            rowTop + 1 + ((((lineWorld - rowTop - 1) % spanPx) + spanPx) % spanPx);
+
+          for (; base < rowTop + 16 + heightPx; base += spanPx) {
+            // Alturas (pixels acima da base) dos pixels desta linha.
+            const low = Math.max(0, base - rowTop - 16);
+            const high = Math.min(heightPx, base - rowTop);
+
+            if (high <= low) {
+              continue;
+            }
+
+            const cardZ = base / 16 - 1 + CARD_Z;
+
+            quad(
+              target,
+              [
+                [left, low / 16, cardZ],
+                [right, low / 16, cardZ],
+                [right, high / 16, cardZ],
+                [left, high / 16, cardZ],
+              ],
+              [
+                [uOf(left), low / heightPx],
+                [uOf(right), low / heightPx],
+                [uOf(right), high / heightPx],
+                [uOf(left), high / heightPx],
+              ],
+            );
+          }
+
+          gx = end + 1;
+          continue;
+        }
+
         // Uma arvore por bloco de borda: cartao so na ULTIMA linha do
         // padrao (o tronco), com a altura do bloco. Cartao em toda linha
         // repetia a copa, que aparecia pelos furos do recorte.
@@ -403,4 +467,148 @@ export function isBorderRaised(
   }
 
   return occurrences > 0 && folded * 2 >= occurrences;
+}
+
+/**
+ * Forma das arvores da borda, tirada das matas do proprio mapa: as pilhas
+ * com silhueta (VoxelFolding.buildPropGeometry) cujos blocos sao os da
+ * borda dao a linha de base no padrao e o contorno de cada coluna. Assim as
+ * arvores do padding continuam as do mapa com o mesmo corte. Sem pilha
+ * medida que case com a borda, null (fica o cartao antigo).
+ */
+export function findBorderCardShape(
+  shapes: readonly {
+    x: number;
+    y0: number;
+    y1: number;
+    period: number;
+    phase: number;
+    offsets: Uint8Array;
+    quality: number;
+  }[],
+  metatileAt: (x: number, y: number) => number,
+  borderIds: readonly number[],
+  borderWidth: number,
+  borderHeight: number,
+): { linePx: number; spanPx: number; offsets: Uint8Array } | null {
+  const span = borderHeight * 16;
+  const lineVotes = new Map<number, number>();
+  const samples: { column: number; line: number; quality: number; offsets: Uint8Array }[] = [];
+
+  for (const shape of shapes) {
+    if (shape.period !== borderHeight || shape.quality === 0) {
+      continue;
+    }
+
+    // Coluna do padrao e deslocamento vertical que casam com os blocos da
+    // pilha (a cabeca da mata, ponta sobre o chao, nao casa: maioria).
+    let best = { column: -1, shift: 0, matches: 0 };
+
+    for (let column = 0; column < borderWidth; column++) {
+      for (let shift = 0; shift < borderHeight; shift++) {
+        let matches = 0;
+
+        for (let y = shape.y0; y <= shape.y1; y++) {
+          const row = (y + shift) % borderHeight;
+
+          if (metatileAt(shape.x, y) === borderIds[row * borderWidth + column]) {
+            matches++;
+          }
+        }
+
+        if (matches > best.matches) {
+          best = { column, shift, matches };
+        }
+      }
+    }
+
+    const rows = shape.y1 - shape.y0 + 1;
+
+    if (best.matches < 2 * borderHeight || best.matches * 10 < rows * 6) {
+      continue;
+    }
+
+    const line = (((shape.phase + 16 * best.shift) % span) + span) % span;
+
+    lineVotes.set(line, (lineVotes.get(line) ?? 0) + (shape.quality >= 2 ? 3 : 1));
+    samples.push({ column: best.column, line, quality: shape.quality, offsets: shape.offsets });
+  }
+
+  if (lineVotes.size === 0) {
+    return null;
+  }
+
+  const line =
+    [...lineVotes.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0];
+
+  const offsets = new Uint8Array(borderWidth * 16);
+
+  for (let column = 0; column < borderWidth; column++) {
+    const own = samples.filter((sample) => sample.column === column && sample.line === line);
+
+    if (own.length === 0) {
+      continue;
+    }
+
+    // As medidas na propria pilha valem mais; entre elas, a mediana.
+    const top = Math.max(...own.map((sample) => sample.quality));
+    const chosen = own.filter((sample) => sample.quality === top);
+
+    for (let pixel = 0; pixel < 16; pixel++) {
+      const values = chosen.map((sample) => sample.offsets[pixel]).sort((a, b) => a - b);
+
+      offsets[column * 16 + pixel] = values[(values.length - 1) >> 1];
+    }
+  }
+
+  return { linePx: line, spanPx: span, offsets };
+}
+
+/**
+ * Textura do cartao das arvores da borda: uma arvore inteira por coluna,
+ * de baixo (linha 0 = linha de base) para cima. A coluna de pixel c mostra
+ * as linhas do padrao entre (base - periodo - ponta[c]) e (base - ponta[c]),
+ * o mesmo recorte dos cartoes das matas do mapa. `artAt` devolve o pixel do
+ * padrao (RGBA empacotado, 0 = transparente), com o chao ja recortado.
+ */
+export function bakeBorderCard(
+  shape: { linePx: number; spanPx: number; offsets: Uint8Array },
+  borderWidth: number,
+  artAt: (px: number, py: number) => number,
+): { pixels: Uint8ClampedArray; width: number; height: number } {
+  const width = borderWidth * 16;
+  const { linePx, spanPx, offsets } = shape;
+  let maxOffset = 0;
+
+  for (let column = 0; column < width; column++) {
+    maxOffset = Math.max(maxOffset, offsets[column]);
+  }
+
+  const height = spanPx + maxOffset;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+
+  for (let t = 0; t < height; t++) {
+    const patternRow = (((linePx - 1 - t) % spanPx) + spanPx) % spanPx;
+
+    for (let column = 0; column < width; column++) {
+      if (t < offsets[column] || t >= offsets[column] + spanPx) {
+        continue;
+      }
+
+      const color = artAt(column, patternRow);
+
+      if (color === 0) {
+        continue;
+      }
+
+      const offset = (t * width + column) * 4;
+
+      pixels[offset] = (color >>> 24) & 0xff;
+      pixels[offset + 1] = (color >>> 16) & 0xff;
+      pixels[offset + 2] = (color >>> 8) & 0xff;
+      pixels[offset + 3] = 0xff;
+    }
+  }
+
+  return { pixels, width, height };
 }

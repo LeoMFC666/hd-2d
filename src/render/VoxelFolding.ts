@@ -27,6 +27,7 @@
  */
 
 import { chooseGroundSources } from './GroundSubstitution';
+import { KNOWN_STACKS } from './KnownStacks';
 
 export interface FoldBlock {
   collision: number;
@@ -422,6 +423,18 @@ export interface FoldOptions {
   // Linhas de fachada de um trecho de predio (colunas x0..x1, linhas
   // y0..y1). Sem isto vale maxWallRows.
   facadeRowsFor?: (x0: number, x1: number, y0: number, y1: number) => number;
+
+  // Montanhas: trecho de fachada "de dentro" (paredao sem quina) que as
+  // laterais da caixa (colunas x0..x1, base y1) repetem, ida e volta.
+  // Sem isto a lateral repete a coluna da quina.
+  sideStripFor?: (x0: number, x1: number, y1: number) => SideStrip | null;
+}
+
+// Trecho de fachada usado nas laterais: colunas x0..x1, base na linha y1.
+export interface SideStrip {
+  x0: number;
+  x1: number;
+  y1: number;
 }
 
 // Brilho de cada face. Topo pleno; fachada (voltada para a camera) um
@@ -854,7 +867,42 @@ export function buildFoldGeometry(
 
     const sideNorthZ = northZ + (firstSolidRoofRow - run.y0);
 
+    // Montanha: as laterais continuam o paredao (um trecho de fachada sem
+    // quina, ida e volta, sem emenda). Repetir a coluna da quina fazia
+    // listras e, na quina arredondada com mar ou areia no desenho,
+    // "dentes" pontudos ao longo da lateral.
+    const strip =
+      options.boxes && !building ? options.sideStripFor?.(run.x0, run.x1, run.y1) ?? null : null;
+
+    const stripLength = strip ? strip.x1 - strip.x0 + 1 : 0;
+    const stripBottomV = strip ? vSouth(strip.y1) : facadeBottomV;
+    const stripTopV = strip ? vNorth(strip.y1 - wall + 1) : facadeTopV;
+
+    // Coluna do trecho no segmento k (0 = na quina) e o sentido: na ida a
+    // borda sul do segmento e a esquerda da coluna; na volta, a direita.
+    const stripColumn = (k: number): [number, number] => {
+      const t = k % (2 * stripLength);
+
+      if (t < stripLength) {
+        const column = (strip as SideStrip).x0 + t;
+
+        return [u(column), u(column + 1)];
+      }
+
+      const column = (strip as SideStrip).x1 - (t - stripLength);
+
+      return [u(column + 1), u(column)];
+    };
+
     for (let z = sideNorthZ; z < southZ; z++) {
+      const [westSouthU, westNorthU] = strip
+        ? stripColumn(southZ - 1 - z)
+        : [u(sideWest), u(sideWest + 1)];
+
+      const [eastSouthU, eastNorthU] = strip
+        ? stripColumn(southZ - 1 - z)
+        : [u(sideEast), u(sideEast + 1)];
+
       quad(
         [
           [left, 0, z],
@@ -863,10 +911,10 @@ export function buildFoldGeometry(
           [left, wall, z],
         ],
         [
-          [u(sideWest + 1), facadeBottomV],
-          [u(sideWest), facadeBottomV],
-          [u(sideWest), facadeTopV],
-          [u(sideWest + 1), facadeTopV],
+          [westNorthU, stripBottomV],
+          [westSouthU, stripBottomV],
+          [westSouthU, stripTopV],
+          [westNorthU, stripTopV],
         ],
         SHADE_WEST,
       );
@@ -879,10 +927,10 @@ export function buildFoldGeometry(
           [right, wall, z + 1],
         ],
         [
-          [u(sideEast + 1), facadeBottomV],
-          [u(sideEast), facadeBottomV],
-          [u(sideEast), facadeTopV],
-          [u(sideEast + 1), facadeTopV],
+          [eastSouthU, stripBottomV],
+          [eastNorthU, stripBottomV],
+          [eastNorthU, stripTopV],
+          [eastSouthU, stripTopV],
         ],
         SHADE_EAST,
       );
@@ -1589,6 +1637,124 @@ const rgbKey = (pixels: Uint8ClampedArray, offset: number): number =>
  * placas tambem nao sao verdes, mas sao finas: continuam objetos em pe.
  * Os topos (so camada de cima) logo acima entram junto.
  */
+/**
+ * Trecho de paredao de cada montanha para as laterais: a sequencia mais
+ * longa de colunas da fachada (linha de baixo de uma coluna da massa, com
+ * a linha de cima tambem na massa) sem quina - massa dos dois lados nas
+ * linhas da fachada. Na falta, a mais longa de qualquer montanha do mapa
+ * com o mesmo desenho, ou nenhuma (fica a coluna da quina).
+ */
+function massSideStrips(
+  width: number,
+  height: number,
+  masses: Uint8Array,
+  wallRows: number,
+  metatileAt: (x: number, y: number) => number,
+): (x0: number, x1: number, y1: number) => SideStrip | null {
+  const solid = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < width && y < height && masses[y * width + x] === 1;
+
+  // Montanha de cada bloco.
+  const component = new Int32Array(width * height).fill(-1);
+  let count = 0;
+
+  for (let start = 0; start < masses.length; start++) {
+    if (masses[start] !== 1 || component[start] >= 0) {
+      continue;
+    }
+
+    const stack = [start];
+    component[start] = count;
+
+    while (stack.length > 0) {
+      const cell = stack.pop() as number;
+      const x = cell % width;
+      const y = (cell - x) / width;
+
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+
+        if (solid(nx, ny) && component[ny * width + nx] < 0) {
+          component[ny * width + nx] = count;
+          stack.push(ny * width + nx);
+        }
+      }
+    }
+
+    count++;
+  }
+
+  // Coluna x com fachada "de dentro" na linha y (base da coluna). Na borda
+  // de baixo do mapa a montanha continua no vizinho: ali nao ha fachada (o
+  // trecho seria o topo da pedra).
+  const interior = (x: number, y: number): boolean => {
+    if (y >= height - 1 || !solid(x, y) || solid(x, y + 1)) {
+      return false;
+    }
+
+    for (let row = y - wallRows + 1; row <= y; row++) {
+      if (!solid(x - 1, row) || !solid(x, row) || !solid(x + 1, row)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const best: Array<SideStrip | null> = new Array(count).fill(null);
+
+  for (let y = 0; y < height; y++) {
+    let x = 0;
+
+    while (x < width) {
+      if (!interior(x, y)) {
+        x++;
+        continue;
+      }
+
+      const x0 = x;
+
+      while (x < width && interior(x, y) && component[y * width + x] === component[y * width + x0]) {
+        x++;
+      }
+
+      const strip: SideStrip = { x0, x1: x - 1, y1: y };
+      const id = component[y * width + x0];
+      const current = best[id];
+
+      if (!current || strip.x1 - strip.x0 > current.x1 - current.x0) {
+        best[id] = strip;
+      }
+    }
+  }
+
+  // Montanha sem paredao proprio (rochedo pequeno): o de outra montanha
+  // com o mesmo metatile na base.
+  const byMetatile = new Map<number, SideStrip>();
+
+  for (const strip of best) {
+    if (strip) {
+      const id = metatileAt(strip.x0, strip.y1);
+      const known = byMetatile.get(id);
+
+      if (!known || strip.x1 - strip.x0 > known.x1 - known.x0) {
+        byMetatile.set(id, strip);
+      }
+    }
+  }
+
+  return (x0, _x1, y1) => {
+    const id = component[y1 * width + x0];
+
+    if (id < 0) {
+      return null;
+    }
+
+    return best[id] ?? byMetatile.get(metatileAt(x0, y1)) ?? null;
+  };
+}
+
 function findRockMasses(
   width: number,
   height: number,
@@ -1664,9 +1830,16 @@ function findRockMasses(
 
       object++;
 
+      const red = pixels[offset];
+      const greenChannel = pixels[offset + 1];
+      const blue = pixels[offset + 2];
+
+      // Folhagem: verde, ou amarelo-esverdeado (as arvores de outono da
+      // Berry Forest viravam uma montanha). Areia e pedra sao mais
+      // alaranjadas (G bem abaixo de R).
       if (
-        pixels[offset + 1] > pixels[offset] + 16 &&
-        pixels[offset + 1] >= pixels[offset + 2]
+        (greenChannel > red + 16 && greenChannel >= blue) ||
+        (greenChannel >= red - 10 && greenChannel >= blue + 40 && red >= blue + 40)
       ) {
         green++;
       }
@@ -2046,6 +2219,45 @@ interface PropUnit {
   z: number;
 }
 
+/**
+ * Pilha de mata com silhueta: coluna x, linhas y0..y1, periodo (linhas),
+ * fase das linhas de base (pixels) e quanto a fronteira sobe acima de cada
+ * linha, por coluna de pixel. Serve para as arvores da borda (padding).
+ */
+export interface StackShape {
+  x: number;
+  y0: number;
+  y1: number;
+  period: number;
+  phase: number;
+  offsets: Uint8Array;
+
+  // 3 = contorno medido na propria pilha, 2 = conhecido pelo desenho
+  // (KnownStacks), 1 = casado com uma medida, 0 = corte reto (so a fase).
+  quality: number;
+
+  // Desenho de um periodo do miolo da pilha (periodArtKey, a partir da
+  // linha artRow) e a linha de base contada do topo dele - o que o
+  // registro de contornos guarda.
+  artKey?: string;
+  artRow?: number;
+  lineRel?: number;
+}
+
+// Cartao de uma coluna de mata cujo topo e base seguem o contorno das
+// copas, pixel a pixel.
+interface StairCard {
+  x: number;
+
+  // Por coluna de pixel do bloco (16): linhas de pixel do mapa, topo
+  // inclusive, base exclusive.
+  top: Int32Array;
+  bottom: Int32Array;
+
+  // Linha de pixel que fica no chao (a profundidade do cartao).
+  basePx: number;
+}
+
 interface ObjectRun {
   x: number;
   y0: number;
@@ -2067,6 +2279,75 @@ interface ObjectRun {
 
 // Menor pedaco (pixels) que vira cartao proprio num corte de mata.
 const MIN_UNIT_PX = 6;
+
+/**
+ * Contorno das arvores ja conhecido, pelo DESENHO de um periodo da pilha:
+ * o mesmo desenho tem o mesmo contorno em qualquer mapa (e em outra ROM com
+ * a mesma arte). Serve as matas sem cabeca nem frente no proprio mapa - em
+ * Pallet e na Rota 5 a mata atravessa o mapa de ponta a ponta e nada ali
+ * mostra onde uma copa acaba. Semeado com as medidas de todos os mapas das
+ * ROMs (KnownStacks.ts, tools/known-stacks.mts) e completado na sessao com
+ * as medidas dos mapas montados.
+ */
+interface KnownStack {
+  // Linha de base, em pixels a partir do topo do primeiro bloco do periodo.
+  line: number;
+
+  // Ponta da copa da frente acima da linha, por coluna de pixel.
+  offsets: Uint8Array;
+}
+
+const knownStacks = new Map<string, KnownStack>();
+let knownSeeded = false;
+
+function knownStackTable(): Map<string, KnownStack> {
+  if (!knownSeeded) {
+    knownSeeded = true;
+
+    // Cada valor: linha e 16 pontas, dois digitos hex cada.
+    for (const [key, packed] of Object.entries(KNOWN_STACKS)) {
+      const offsets = new Uint8Array(16);
+
+      for (let column = 0; column < 16; column++) {
+        offsets[column] = parseInt(packed.slice(2 + column * 2, 4 + column * 2), 16);
+      }
+
+      knownStacks.set(key, { line: parseInt(packed.slice(0, 2), 16), offsets });
+    }
+  }
+
+  return knownStacks;
+}
+
+/** Esvazia o registro (o gerador da semente mede sem ele). */
+export function clearKnownStacks(): void {
+  knownSeeded = true;
+  knownStacks.clear();
+}
+
+/** Chave do desenho de `period` blocos (de cima para baixo): FNV-1a. */
+export function periodArtKey(
+  blockAt: (x: number, y: number) => VolumeBlock | undefined,
+  x: number,
+  row: number,
+  period: number,
+): string | null {
+  let hash = 0x811c9dc5;
+
+  for (let k = 0; k < period; k++) {
+    const pixels = blockAt(x, row + k)?.pixels;
+
+    if (!pixels) {
+      return null;
+    }
+
+    for (let index = 0; index < pixels.length; index++) {
+      hash = Math.imul(hash ^ pixels[index], 0x01000193);
+    }
+  }
+
+  return period + ':' + (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 /**
  * Cartoes dos objetos em pe (arvores, cercas, placas, pedras, grama alta,
@@ -2094,6 +2375,11 @@ export function buildPropGeometry(
   // Ha pixel opaco na coluna x, linha de pixel `row` do mapa, na textura
   // dos modelos?
   rowOpaque: (x: number, row: number) => boolean,
+  // Pixel da textura dos modelos (RGBA empacotado, 0 = transparente), em
+  // pixels do mapa. Sem ele, os cortes das matas sao retos.
+  pixelAt?: (px: number, py: number) => number,
+  // Recebe as pilhas com silhueta (para as arvores da borda).
+  shapesOut?: StackShape[],
 ): FoldGeometryData {
   const isObject = (x: number, y: number): boolean => {
     const kind = kinds[y * width + x];
@@ -2353,6 +2639,632 @@ export function buildPropGeometry(
     }
   }
 
+  // ---- silhueta das arvores ----
+  // Numa mata a copa de baixo cobre o pe da de cima, e o contorno da copa
+  // nao e reto: cortar numa linha reta deixava pedaco de uma arvore no
+  // cartao da outra (copas achatadas, galhos soltos boiando na frente), e o
+  // corte pelo topo do desenho caia no meio das copas quando havia outra
+  // coisa por cima da mata (a cerca do Safari). Cada arvore fica com um
+  // cartao que vai de uma linha de base a outra (multiplos do periodo), e a
+  // fronteira com a arvore da frente sobe, coluna de pixel por coluna, ate
+  // onde a copa da frente comeca no desenho.
+  //
+  // O contorno sai do proprio desenho:
+  // - topo da pilha: a primeira arvore, sobre o chao, mostra o contorno
+  //   inteiro da copa (o primeiro pixel de cada coluna), desde que o resto
+  //   dela seja igual as de baixo;
+  // - frente da pilha (so num grupo sem topo medido): o ultimo periodo
+  //   (sem arvore na frente) contra o anterior - o que muda e a ponta da
+  //   copa da frente.
+  // As linhas de base de um grupo seguem a fase mais votada entre as pilhas
+  // medidas. As outras pilhas (mata que atravessa o mapa) procuram, em
+  // qualquer grupo, um periodo medido com o mesmo desenho e usam o
+  // alinhamento e o contorno dele (coluna em duvida segue a vizinha); sem
+  // nenhum, o corte e reto na primeira linha em que o desenho passa a se
+  // repetir (abaixo da cabeca da mata).
+  interface RunShape {
+    // Linhas de base: multiplos do periodo a partir desta fase (pixels).
+    phase: number;
+
+    // Por coluna de pixel: quanto a fronteira sobe acima da linha (a ponta
+    // da copa da frente), 0..periodo.
+    offsets: Uint8Array;
+
+    // 3 = medida na propria pilha, 2 = contorno conhecido pelo desenho,
+    // 1 = desenho casado com uma medida, 0 = so a fase (corte reto).
+    quality: number;
+  }
+
+  const runShapes = new Map<ObjectRun, RunShape>();
+
+  const firstSolidRow = (run: ObjectRun): number => {
+    let first = run.y0;
+
+    while (first <= run.y1 && kinds[first * width + run.x] === CELL_PROP_TOP) {
+      first++;
+    }
+
+    return first;
+  };
+
+  // Primeira linha de um periodo do miolo da pilha (o periodo seguinte tem
+  // os mesmos blocos): o desenho da mata sem a cabeca nem a frente.
+  const interiorRow = (run: ObjectRun): number => {
+    for (let row = run.y0; row + 2 * run.period <= run.trimmedFrom; row++) {
+      let same = true;
+
+      for (let k = 0; k < run.period && same; k++) {
+        same =
+          blockAt(run.x, row + k)?.metatileId ===
+          blockAt(run.x, row + k + run.period)?.metatileId;
+      }
+
+      if (same) {
+        return row;
+      }
+    }
+
+    return -1;
+  };
+
+  if (pixelAt) {
+    const weakVotes = new Map<string, Map<number, number>>();
+    const measured = new Map<ObjectRun, { line: number; offsets: Uint8Array }>();
+
+    const vote = (run: ObjectRun, phase: number): void => {
+      const key = run.group + ':' + run.period;
+      const counts = weakVotes.get(key) ?? new Map<number, number>();
+
+      counts.set(phase, (counts.get(phase) ?? 0) + 1);
+      weakVotes.set(key, counts);
+    };
+
+    // Fracao dos pixels opacos (de `a`, ou de qualquer um) iguais nos dois
+    // trechos de `rows` linhas de pixel das colunas xa e xb.
+    const equalFraction = (
+      xa: number,
+      a: number,
+      xb: number,
+      b: number,
+      rows: number,
+      basis: 'a' | 'either',
+    ): number => {
+      let equal = 0;
+      let total = 0;
+
+      for (let column = 0; column < 16; column++) {
+        for (let row = 0; row < rows; row++) {
+          const pa = pixelAt(xa * 16 + column, a + row);
+          const pb = pixelAt(xb * 16 + column, b + row);
+
+          if (pa === 0 && (basis === 'a' || pb === 0)) {
+            continue;
+          }
+
+          total++;
+
+          if (pa === pb) {
+            equal++;
+          }
+        }
+      }
+
+      return total < 8 ? 0 : equal / total;
+    };
+
+    // Fronteiras medidas (linha de pixel em cada coluna de pixel, de uma
+    // fronteira qualquer da pilha).
+    const boundaries = new Map<ObjectRun, Int32Array>();
+    const resolvedColumns = new Map<ObjectRun, Uint8Array>();
+    const headGroups = new Set<string>();
+    const fromFront = new Set<ObjectRun>();
+
+    for (const run of runs) {
+      if (run.period === 0) {
+        continue;
+      }
+
+      const span = run.period * 16;
+      const topPx = run.y0 * 16;
+      const end = run.trimmedFrom * 16;
+      const atBottomEdge = run.trimmedFrom > run.y1 && run.y1 === height - 1;
+      const above = run.y0 > 0 ? kinds[(run.y0 - 1) * width + run.x] : -1;
+      let boundary: Int32Array | null = null;
+      let resolved: Uint8Array | null = null;
+      let fromHead = false;
+
+      // Topo valido: chao em cima, a primeira linha de pixel quase toda
+      // transparente (a copa comeca dentro do bloco, nao veio de cima) e o
+      // resto da primeira arvore igual ao periodo seguinte.
+      let openTop = above === 0;
+
+      if (openTop) {
+        let opaque = 0;
+
+        for (let px = run.x * 16; px < run.x * 16 + 16; px++) {
+          if (pixelAt(px, topPx) !== 0) {
+            opaque++;
+          }
+        }
+
+        openTop = opaque <= 8;
+      }
+
+      if (
+        openTop &&
+        topPx + 2 * span <= end &&
+        equalFraction(run.x, topPx, run.x, topPx + span, span, 'a') >= 0.8
+      ) {
+        // Fronteira no segundo periodo: logo abaixo do ultimo pixel da
+        // arvore de cima que fica acima do contorno da copa (o primeiro
+        // pixel opaco da coluna no primeiro periodo). Coluna sem nada da
+        // arvore de cima ali fica livre e copia a vizinha.
+        const rows = new Int32Array(16).fill(-1);
+        const limit = new Int32Array(16).fill(span);
+
+        for (let column = 0; column < 16; column++) {
+          const px = run.x * 16 + column;
+          let first = span;
+
+          for (let row = 0; row < span; row++) {
+            if (pixelAt(px, topPx + row) !== 0) {
+              first = row;
+              break;
+            }
+          }
+
+          limit[column] = first;
+
+          for (let row = first - 1; row >= 0; row--) {
+            if (pixelAt(px, topPx + span + row) !== 0) {
+              rows[column] = row + 1;
+              break;
+            }
+          }
+        }
+
+        if (rows.some((row) => row >= 0)) {
+          fromHead = true;
+          boundary = new Int32Array(16);
+          resolved = new Uint8Array(16);
+
+          for (let column = 0; column < 16; column++) {
+            let row = rows[column];
+
+            resolved[column] = row >= 0 ? 1 : 0;
+
+            for (let distance = 1; row < 0 && distance < 16; distance++) {
+              row = Math.max(rows[column - distance] ?? -1, rows[column + distance] ?? -1);
+            }
+
+            boundary[column] = topPx + span + Math.min(Math.max(row, 0), limit[column]);
+          }
+        }
+      }
+
+      // Frente valida: o ultimo periodo parecido com o anterior, mas nao
+      // igual (igual e a mata que continua, cortada por outra coisa).
+      const frontLikeness =
+        !boundary && !atBottomEdge && end - 2 * span >= firstSolidRow(run) * 16
+          ? equalFraction(run.x, end - span, run.x, end - 2 * span, span, 'either')
+          : 0;
+
+      if (frontLikeness >= 0.5 && frontLikeness < 0.995) {
+        // Frente: de baixo para cima no periodo anterior ao ultimo, o que
+        // difere do ultimo (ou e transparente) e da arvore da frente.
+        boundary = new Int32Array(16);
+        resolved = new Uint8Array(16);
+
+        const rows = new Int32Array(16).fill(-1);
+
+        for (let column = 0; column < 16; column++) {
+          const px = run.x * 16 + column;
+          let row = span - 1;
+          let seen = false;
+
+          for (; row >= 0; row--) {
+            const pixel = pixelAt(px, end - 2 * span + row);
+
+            seen ||= pixel !== 0;
+
+            if (pixel !== 0 && pixel === pixelAt(px, end - span + row)) {
+              break;
+            }
+          }
+
+          // Coluna toda transparente: livre.
+          if (seen) {
+            rows[column] = row + 1;
+          }
+        }
+
+        for (let column = 0; column < 16; column++) {
+          let row = rows[column];
+
+          resolved[column] = row >= 0 ? 1 : 0;
+
+          for (let distance = 1; row < 0 && distance < 16; distance++) {
+            row = Math.max(rows[column - distance] ?? -1, rows[column + distance] ?? -1);
+          }
+
+          boundary[column] = end - 2 * span + Math.max(row, 0);
+        }
+      }
+
+      if (boundary && resolved && resolved.some((value) => value === 1)) {
+        boundaries.set(run, boundary);
+        resolvedColumns.set(run, resolved);
+
+        if (fromHead) {
+          headGroups.add(run.group + ':' + run.period);
+        } else {
+          fromFront.add(run);
+        }
+
+        continue;
+      }
+
+      // Primeira linha a partir da qual o desenho se repete (abaixo da
+      // cabeca da mata, desenhada diferente).
+      if (run.y0 > 0) {
+        for (let row = firstSolidRow(run); row + run.period <= run.trimmedFrom - 1; row++) {
+          let repeats = true;
+
+          for (let other = row; other + run.period < run.trimmedFrom && repeats; other++) {
+            repeats = similarity(run.x, other, other + run.period) >= SIMILAR_ART;
+          }
+
+          if (repeats) {
+            vote(run, (row * 16) % span);
+            break;
+          }
+        }
+      }
+    }
+
+    // Num grupo com topo medido, a medida pela frente (mais sujeita a
+    // engano: tronco e sombra da arvore da frente) cede lugar a comparacao
+    // com os topos.
+    for (const run of fromFront) {
+      if (headGroups.has(run.group + ':' + run.period)) {
+        boundaries.delete(run);
+        resolvedColumns.delete(run);
+      }
+    }
+
+    // Pilhas sem medida aqui: contorno conhecido pelo desenho (medido em
+    // outro mapa). Num grupo com medida propria, so entram na conta das
+    // linhas de base se o grupo nao tiver voto proprio.
+    const fromKnown = new Set<ObjectRun>();
+    const table = knownStackTable();
+    const ownGroups = new Set<string>();
+
+    for (const run of boundaries.keys()) {
+      ownGroups.add(run.group + ':' + run.period);
+    }
+
+    if (table.size > 0) {
+      for (const run of runs) {
+        if (run.period === 0 || boundaries.has(run)) {
+          continue;
+        }
+
+        const row = interiorRow(run);
+
+        if (row < 0) {
+          continue;
+        }
+
+        // Qualquer rotacao do periodo: o registro guarda uma so.
+        for (let k = 0; k < run.period; k++) {
+          const key = periodArtKey(blockAt, run.x, row + k, run.period);
+          const known = key ? table.get(key) : undefined;
+
+          if (!known) {
+            continue;
+          }
+
+          const line = (row + k) * 16 + known.line;
+          const boundary = new Int32Array(16);
+
+          for (let column = 0; column < 16; column++) {
+            boundary[column] = line - known.offsets[column];
+          }
+
+          boundaries.set(run, boundary);
+          resolvedColumns.set(run, new Uint8Array(16).fill(1));
+          fromKnown.add(run);
+          break;
+        }
+      }
+    }
+
+    // Fase das linhas de base por grupo: cada pilha medida vota na linha
+    // logo abaixo da sua fronteira mais baixa; vale a mais votada. Assim as
+    // colunas de uma mesma arvore ficam na mesma profundidade. A fronteira
+    // de cada pilha e medida a partir da linha da fase logo abaixo da
+    // mediana dela (coluna que passa da linha fica na linha).
+    const phaseVotes = new Map<string, Map<number, number>>();
+
+    for (const [run, boundary] of boundaries) {
+      if (fromKnown.has(run) && ownGroups.has(run.group + ':' + run.period)) {
+        continue;
+      }
+
+      const span = run.period * 16;
+      const resolved = resolvedColumns.get(run) as Uint8Array;
+      let lowest = -Infinity;
+
+      boundary.forEach((row, column) => {
+        if (resolved[column]) {
+          lowest = Math.max(lowest, row);
+        }
+      });
+
+      const key = run.group + ':' + run.period;
+      const counts = phaseVotes.get(key) ?? new Map<number, number>();
+      const phase = (Math.ceil(lowest / 16) * 16) % span;
+
+      counts.set(phase, (counts.get(phase) ?? 0) + 1);
+      phaseVotes.set(key, counts);
+    }
+
+    for (const [run, boundary] of boundaries) {
+      const span = run.period * 16;
+      const resolved = resolvedColumns.get(run) as Uint8Array;
+      const counts = phaseVotes.get(run.group + ':' + run.period) as Map<number, number>;
+      let phase = 0;
+      let best = 0;
+
+      for (const [value, count] of counts) {
+        if (count > best || (count === best && value < phase)) {
+          phase = value;
+          best = count;
+        }
+      }
+
+      const rows = Array.from(boundary).filter((_, column) => resolved[column] === 1).sort((a, b) => a - b);
+      const median = rows[Math.floor(rows.length / 2)];
+      const line = median + ((((phase - median) % span) + span) % span);
+      const offsets = new Uint8Array(16);
+
+      for (let column = 0; column < 16; column++) {
+        offsets[column] = Math.min(span, Math.max(0, line - boundary[column]));
+      }
+
+      measured.set(run, { line, offsets });
+    }
+
+    // O que este mapa mediu fica conhecido para os proximos (desenho que a
+    // semente nao tem: outra ROM, hack).
+    for (const [run, shape] of measured) {
+      if (fromKnown.has(run)) {
+        continue;
+      }
+
+      const row = interiorRow(run);
+      const key = row < 0 ? null : periodArtKey(blockAt, run.x, row, run.period);
+
+      if (key && !table.has(key)) {
+        const span = run.period * 16;
+
+        table.set(key, {
+          line: (((shape.line - row * 16) % span) + span) % span,
+          offsets: shape.offsets,
+        });
+      }
+    }
+
+    // Periodos medidos, sem repeticao (mesmo desenho), por periodo (de
+    // qualquer grupo: a mesma arvore aparece em matas separadas).
+    const references = new Map<string, Array<{ x: number; line: number; offsets: Uint8Array }>>();
+
+    for (const [run, measuredShape] of measured) {
+      const key = String(run.period);
+      const list = references.get(key) ?? [];
+      const span = run.period * 16;
+
+      // Periodo de referencia dentro da pilha (o desenho regular da mata).
+      let referenceLine = measuredShape.line;
+
+      while (referenceLine > run.trimmedFrom * 16) {
+        referenceLine -= span;
+      }
+
+      while (referenceLine - span < run.y0 * 16 && referenceLine + span <= run.trimmedFrom * 16) {
+        referenceLine += span;
+      }
+
+      if (referenceLine - span < run.y0 * 16 || referenceLine > run.trimmedFrom * 16) {
+        continue;
+      }
+
+      const shape = { line: referenceLine, offsets: measuredShape.offsets };
+
+      if (
+        !list.some(
+          (other) =>
+            equalFraction(run.x, shape.line - span, other.x, other.line - span, span, 'either') ===
+              1 && other.offsets.every((offset, column) => offset === shape.offsets[column]),
+        )
+      ) {
+        list.push({ x: run.x, line: shape.line, offsets: shape.offsets });
+      }
+
+      references.set(key, list);
+    }
+
+    // Pilhas sem medida: o melhor periodo de referencia em cada fase. Uma
+    // fase so vale sozinha quando ganha das outras com folga; as colunas
+    // em duvida (o meio da copa, parecido nas duas fases) seguem a fase do
+    // grupo - sem isso a coluna do meio de uma arvore ficava numa
+    // profundidade e as do lado em outra.
+    const matches = new Map<ObjectRun, Map<number, { offsets: Uint8Array; score: number }>>();
+    const decisiveVotes = new Map<string, Map<number, number>>();
+
+    for (const run of runs) {
+      if (run.period === 0) {
+        continue;
+      }
+
+      const span = run.period * 16;
+      const own = measured.get(run);
+
+      if (own) {
+        runShapes.set(run, {
+          phase: own.line % span,
+          offsets: own.offsets,
+          quality: fromKnown.has(run) ? 2 : 3,
+        });
+        continue;
+      }
+
+      // Cada linha de bloco da pilha (ate 4 por fase, espalhadas) contra
+      // cada periodo de referencia.
+      const topPx = run.y0 * 16;
+      const end = run.trimmedFrom * 16;
+      const byPhase = new Map<number, { offsets: Uint8Array; score: number }>();
+
+      for (let shift = 0; shift < run.period; shift++) {
+        const lines: number[] = [];
+
+        for (let line = topPx + span + shift * 16; line <= end; line += span) {
+          lines.push(line);
+        }
+
+        const step = Math.max(1, Math.ceil(lines.length / 4));
+
+        for (let index = lines.length - 1; index >= 0; index -= step) {
+          const line = lines[index];
+          const phase = line % span;
+
+          for (const reference of references.get(String(run.period)) ?? []) {
+            const score = equalFraction(reference.x, reference.line - span, run.x, line - span, span, 'a');
+            const known = byPhase.get(phase);
+
+            if (!known || score > known.score) {
+              byPhase.set(phase, { offsets: reference.offsets, score });
+            }
+          }
+        }
+      }
+
+      matches.set(run, byPhase);
+
+      const ranked = [...byPhase.entries()].sort((a, b) => b[1].score - a[1].score);
+
+      if (
+        ranked.length > 0 &&
+        ranked[0][1].score >= 0.8 &&
+        (ranked.length === 1 || ranked[0][1].score - ranked[1][1].score >= 0.05)
+      ) {
+        const key = run.group + ':' + run.period;
+        const counts = decisiveVotes.get(key) ?? new Map<number, number>();
+
+        counts.set(ranked[0][0], (counts.get(ranked[0][0]) ?? 0) + 1);
+        decisiveVotes.set(key, counts);
+      }
+    }
+
+    const majorityOf = (counts: Map<number, number> | undefined): number | null => {
+      if (!counts) {
+        return null;
+      }
+
+      let best: number | null = null;
+      let total = 0;
+
+      for (const [value, count] of counts) {
+        if (count > total) {
+          best = value;
+          total = count;
+        }
+      }
+
+      return best;
+    };
+
+    const isDecisive = (byPhase: Map<number, { offsets: Uint8Array; score: number }>): boolean => {
+      const ranked = [...byPhase.values()].sort((a, b) => b.score - a.score);
+
+      return (
+        ranked.length > 0 &&
+        ranked[0].score >= 0.8 &&
+        (ranked.length === 1 || ranked[0].score - ranked[1].score >= 0.05)
+      );
+    };
+
+    const settle = (run: ObjectRun, phase: number): void => {
+      const match = matches.get(run)?.get(phase);
+
+      const matched = !!match && match.score >= 0.8;
+
+      runShapes.set(run, {
+        phase,
+        offsets: matched ? match.offsets : new Uint8Array(16),
+        quality: matched ? 1 : 0,
+      });
+    };
+
+    // Decididas primeiro; as em duvida seguem a coluna vizinha da mesma
+    // pilha (sobreposta na vertical) que ja tem fase, e so depois a fase do
+    // grupo.
+    const pending: ObjectRun[] = [];
+
+    for (const [run, byPhase] of matches) {
+      if (isDecisive(byPhase)) {
+        const best = [...byPhase.entries()].sort((a, b) => b[1].score - a[1].score)[0];
+
+        settle(run, best[0]);
+      } else {
+        pending.push(run);
+      }
+    }
+
+    for (let pass = 0; pass < 4 && pending.length > 0; pass++) {
+      for (let index = pending.length - 1; index >= 0; index--) {
+        const run = pending[index];
+        let phase: number | null = null;
+
+        for (const dx of [-1, 1]) {
+          for (const other of runsByColumn[run.x + dx] ?? []) {
+            const shape = runShapes.get(other);
+
+            if (
+              shape &&
+              other.group === run.group &&
+              other.period === run.period &&
+              other.y0 <= run.y1 &&
+              run.y0 <= other.y1
+            ) {
+              phase = shape.phase;
+            }
+          }
+        }
+
+        if (phase !== null) {
+          settle(run, phase);
+          pending.splice(index, 1);
+        }
+      }
+    }
+
+    for (const run of pending) {
+      const key = run.group + ':' + run.period;
+      const byPhase = matches.get(run) as Map<number, { offsets: Uint8Array; score: number }>;
+      const ranked = [...byPhase.entries()].sort((a, b) => b[1].score - a[1].score);
+      const phase =
+        majorityOf(phaseVotes.get(key)) ??
+        majorityOf(decisiveVotes.get(key)) ??
+        (ranked.length > 0 && ranked[0][1].score >= 0.8 ? ranked[0][0] : null) ??
+        majorityOf(weakVotes.get(key));
+
+      if (phase !== null) {
+        settle(run, phase);
+      }
+    }
+  }
+
   // ---- fase do corte (pixel em que as copas comecam), por grupo ----
   // Votos do grupo: fase (topo mod periodo) de cada coluna com topo.
   const groupVotes = new Map<string, Map<number, number>>();
@@ -2431,17 +3343,182 @@ export function buildPropGeometry(
     columnUnits.push([]);
   }
 
+  const stairCards: StairCard[] = [];
+
+  if (shapesOut) {
+    for (const [run, shape] of runShapes) {
+      const row = interiorRow(run);
+      const span = run.period * 16;
+
+      shapesOut.push({
+        x: run.x,
+        y0: run.y0,
+        y1: run.y1,
+        period: run.period,
+        phase: shape.phase,
+        offsets: shape.offsets,
+        quality: shape.quality,
+        artKey:
+          row < 0 ? undefined : periodArtKey(blockAt, run.x, row, run.period) ?? undefined,
+        artRow: row < 0 ? undefined : row,
+        lineRel:
+          row < 0 ? undefined : (((shape.phase - row * 16) % span) + span) % span,
+      });
+    }
+  }
+
+  // Linhas de base de cada pilha com silhueta, de baixo para cima: a da
+  // frente deixa pelo menos um periodo embaixo (menos na borda do mapa,
+  // onde a mata continua); a de cima deixa pelo menos meio periodo em cima
+  // (o que estiver por cima da mata, como a cerca do Safari, fica num
+  // cartao proprio).
+  const runLines = new Map<ObjectRun, number[]>();
+
+  const endOf = (run: ObjectRun): number =>
+    runShapes.has(run) && run.period > 0 && run.y1 + 1 - run.trimmedFrom <= run.period
+      ? (run.y1 + 1) * 16
+      : run.trimmedFrom * 16;
+
+  for (const run of runs) {
+    const shape = runShapes.get(run);
+
+    if (!shape || run.period === 0) {
+      continue;
+    }
+
+    const span = run.period * 16;
+    const topPx = run.y0 * 16;
+    const endPx = endOf(run);
+    const atBottomEdge = run.y1 === height - 1;
+    const lines: number[] = [];
+
+    for (
+      let line = endPx - 1 - ((endPx - 1 - shape.phase) % span + span) % span;
+      line > topPx;
+      line -= span
+    ) {
+      if (line > endPx - span && !atBottomEdge) {
+        continue;
+      }
+
+      if (line - topPx < span / 2) {
+        break;
+      }
+
+      lines.push(line);
+    }
+
+    runLines.set(run, lines);
+  }
+
+  // A linha de cima com menos de um periodo em cima so vale se uma coluna
+  // vizinha da mesma pilha tambem corta ali: a coluna do meio de uma arvore
+  // solta, um bloco mais alta (o topo da copa), cortava a copa sozinha.
+  for (const [run, lines] of runLines) {
+    const top = lines[lines.length - 1];
+
+    if (top === undefined || top - run.y0 * 16 >= run.period * 16) {
+      continue;
+    }
+
+    let neighbors = 0;
+    let agree = 0;
+
+    for (const dx of [-1, 1]) {
+      for (const other of runsByColumn[run.x + dx] ?? []) {
+        const otherLines = runLines.get(other);
+
+        if (
+          otherLines &&
+          other.group === run.group &&
+          other.period === run.period &&
+          other.y0 <= run.y1 &&
+          run.y0 <= other.y1
+        ) {
+          neighbors++;
+
+          if (otherLines.includes(top)) {
+            agree++;
+          }
+        }
+      }
+    }
+
+    if (neighbors > 0 && agree === 0) {
+      lines.pop();
+    }
+  }
+
   for (const run of runs) {
     const pieces = columnUnits[run.x];
     const topPx = run.y0 * 16;
-    const endPx = run.trimmedFrom * 16;
 
-    if (run.trimmedFrom <= run.y1) {
+    // Com silhueta, a base diferente da arvore da frente (ate um periodo)
+    // fica no cartao dela: cortada, uma coluna da arvore acabava numa
+    // profundidade e a vizinha (base parecida, sem corte) em outra.
+    const endPx = endOf(run);
+
+    if (endPx < (run.y1 + 1) * 16) {
       pieces.push([endPx, (run.y1 + 1) * 16]);
     }
 
     if (run.period === 0) {
       pieces.push([topPx, endPx]);
+      continue;
+    }
+
+    const shape = runShapes.get(run);
+
+    if (shape) {
+      const span = run.period * 16;
+      const lines = (runLines.get(run) ?? []).map((line) => {
+        const edge = new Int32Array(16);
+
+        for (let column = 0; column < 16; column++) {
+          edge[column] = Math.max(topPx, line - shape.offsets[column]);
+        }
+
+        return { line, edge };
+      });
+
+      if (lines.length === 0) {
+        pieces.push([topPx, endPx]);
+        continue;
+      }
+
+      // Cartao da frente ate um periodo abaixo da ultima linha: a coluna
+      // que desce mais (tronco ou sombra da arvore da frente so nela) fica
+      // na mesma profundidade das vizinhas, e o que sobra embaixo vira um
+      // cartao proprio.
+      const frontBase = Math.min(endPx, lines[0].line + span);
+
+      stairCards.push({
+        x: run.x,
+        top: lines[0].edge,
+        bottom: new Int32Array(16).fill(frontBase),
+        basePx: frontBase,
+      });
+
+      if (frontBase < endPx) {
+        pieces.push([frontBase, endPx]);
+      }
+
+      for (let index = 0; index + 1 < lines.length; index++) {
+        stairCards.push({
+          x: run.x,
+          top: lines[index + 1].edge,
+          bottom: lines[index].edge,
+          basePx: lines[index].line,
+        });
+      }
+
+      stairCards.push({
+        x: run.x,
+        top: new Int32Array(16).fill(topPx),
+        bottom: lines[lines.length - 1].edge,
+        basePx: lines[lines.length - 1].line,
+      });
+
       continue;
     }
 
@@ -2593,6 +3670,67 @@ export function buildPropGeometry(
     }
 
     indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+
+  // Cartoes com o contorno da copa da frente: uma faixa por trecho de
+  // colunas de pixel com o mesmo topo e a mesma base.
+  for (const card of stairCards) {
+    const z = card.basePx / 16 - 1 + PROP_OBJECT_Z;
+    let column = 0;
+
+    while (column < 16) {
+      const top = card.top[column];
+      const bottom = card.bottom[column];
+      let next = column + 1;
+
+      while (next < 16 && card.top[next] === top && card.bottom[next] === bottom) {
+        next++;
+      }
+
+      let visible = false;
+
+      if (top < bottom && pixelAt) {
+        for (let px = card.x * 16 + column; px < card.x * 16 + next && !visible; px++) {
+          for (let row = top; row < bottom && !visible; row++) {
+            visible = pixelAt(px, row) !== 0;
+          }
+        }
+      }
+
+      if (visible) {
+        const left = card.x + column / 16;
+        const right = card.x + next / 16;
+        const vBottom = (textureRows - bottom) / textureRows + insetV;
+        const vTop = (textureRows - top) / textureRows - insetV;
+        const uLeft = left / width + insetU;
+        const uRight = right / width - insetU;
+        const yBottom = (card.basePx - bottom) / 16;
+        const yTop = (card.basePx - top) / 16;
+        const base = positions.length / 3;
+
+        positions.push(
+          left, yBottom, z,
+          right, yBottom, z,
+          right, yTop, z,
+          left, yTop, z,
+        );
+
+        uvs.push(
+          uLeft, vBottom,
+          uRight, vBottom,
+          uRight, vTop,
+          uLeft, vTop,
+        );
+
+        for (let corner = 0; corner < 4; corner++) {
+          colors.push(1, 1, 1);
+        }
+
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+
+      column = next;
+    }
   }
 
   return {
@@ -3019,7 +4157,12 @@ export function buildMapVolume(
         height,
         (x, y) => masses[y * width + x] === 1,
         maxWallRows,
-        { style, overlayOnly, boxes: true },
+        {
+          style,
+          overlayOnly,
+          boxes: true,
+          sideStripFor: massSideStrips(width, height, masses, maxWallRows, metatileAt),
+        },
       ),
     );
   }

@@ -178,7 +178,10 @@ import {
   buildGroundGeometry,
   buildMapVolume,
   buildPropGeometry,
+  CELL_PROP,
+  CELL_PROP_TOP,
   mergeFoldGeometries,
+  type StackShape,
   type VolumeBlock,
   findGroundCell,
   markRocksInWater,
@@ -192,6 +195,7 @@ import {
   animationLayers,
   composeMapTextures,
   cutoutTile,
+  modelPixelAt,
   modelRowOpaque,
   RECIPE_BASE,
   RECIPE_OVERLAY,
@@ -209,8 +213,11 @@ const WATER_ELEVATION =
   1;
 
 import {
+  bakeBorderCard,
   buildPadding,
+  findBorderCardShape,
   isBorderRaised,
+  type BorderCardLayout,
   type PaddingMapInput,
 } from './PaddingBuilder';
 
@@ -451,6 +458,11 @@ export class PlayerRenderer {
   // das arvores em cartao.
   private readonly groundTileTextures =
     new Map<string, THREE.DataTexture>();
+
+  // Arvores da borda com silhueta (o mesmo corte das matas do mapa):
+  // textura do cartao e onde ficam as linhas de base.
+  private readonly borderCards =
+    new Map<string, { texture: THREE.DataTexture; layout: BorderCardLayout }>();
 
   // O padding de cada mapa sobe com a dobra? (ver isBorderRaised)
   // Mapas cuja borda e agua: o padding fica na altura da agua.
@@ -1038,6 +1050,8 @@ export class PlayerRenderer {
       this.borderTextures.delete(key);
       this.groundTileTextures.get(key)?.dispose();
       this.groundTileTextures.delete(key);
+      this.borderCards.get(key)?.texture.dispose();
+      this.borderCards.delete(key);
       this.paddingDirty = true;
     }
 
@@ -1298,6 +1312,10 @@ export class PlayerRenderer {
         raised: this.paddingRaised.get(key) ?? false,
         lowered: this.paddingLowered.get(key) ?? false,
         waterLevel: -WATER_DEPTH,
+        cards:
+          this.paddingRaised.get(key)
+            ? this.borderCards.get(key)?.layout
+            : undefined,
       });
     }
 
@@ -1325,6 +1343,12 @@ export class PlayerRenderer {
         continue;
       }
 
+      // Arvores com silhueta: o cartao usa a textura propria.
+      const cardTexture =
+        this.paddingRaised.get(data.key)
+          ? this.borderCards.get(data.key)?.texture
+          : undefined;
+
       const geometry =
         new THREE.BufferGeometry();
 
@@ -1351,7 +1375,7 @@ export class PlayerRenderer {
         new THREE.Mesh(
           geometry,
           new THREE.MeshBasicMaterial({
-            map: texture,
+            map: cardTexture ?? texture,
             side: THREE.DoubleSide,
             vertexColors: true,
             // Arvores recortadas: o fundo transparente nao desenha.
@@ -1574,6 +1598,205 @@ export class PlayerRenderer {
       // O padding foi montado antes deste mapa existir: refaz.
       this.paddingDirty = true;
     }
+  }
+
+  /**
+   * Cartao das arvores da borda com o mesmo corte das matas do mapa (ver
+   * PaddingBuilder.findBorderCardShape). O desenho vem da textura dos
+   * modelos do mapa (o mesmo recorte do chao das arvores de dentro); bloco
+   * que nao aparece como objeto no mapa usa a textura da borda.
+   */
+  private buildBorderCards(
+    map: MapDefinition,
+    metatileIds: Uint16Array,
+    kinds: Uint8Array,
+    modelPixel: (px: number, py: number) => number,
+    shapes: readonly StackShape[],
+    // Chao debaixo de um bloco de objeto do mapa (o mesmo da textura de
+    // chao debaixo das matas), 16x16 RGBA de cima para baixo.
+    groundUnder: (cell: number) => Uint8ClampedArray | undefined,
+  ): void {
+    const key =
+      this.createMapKey(map.mapGroup, map.mapNumber);
+
+    if (
+      this.borderCards.has(key) ||
+      !(this.paddingRaised.get(key) ?? false)
+    ) {
+      return;
+    }
+
+    const borderIds =
+      this.readBorderMetatileIds(map);
+
+    const borderWidth = Math.max(1, map.borderWidth);
+    const borderHeight = Math.max(1, map.borderHeight);
+
+    if (borderIds.length < borderWidth * borderHeight) {
+      return;
+    }
+
+    const shape =
+      findBorderCardShape(
+        shapes,
+        (x, y) => metatileIds[y * map.width + x],
+        borderIds,
+        borderWidth,
+        borderHeight,
+      );
+
+    if (!shape) {
+      return;
+    }
+
+    // Uma celula do mapa com cada bloco da borda, como objeto em pe.
+    const cellOf = new Map<number, number>();
+
+    for (let index = 0; index < metatileIds.length; index++) {
+      const id = metatileIds[index];
+      const kind = kinds[index];
+
+      if (kind === CELL_PROP && !cellOf.has(id)) {
+        cellOf.set(id, index);
+      }
+    }
+
+    for (let index = 0; index < metatileIds.length; index++) {
+      const id = metatileIds[index];
+
+      if (kinds[index] === CELL_PROP_TOP && !cellOf.has(id)) {
+        cellOf.set(id, index);
+      }
+    }
+
+    const fallback =
+      this.borderTextures.get(key)?.image.data as Uint8Array | undefined;
+
+    const patternHeight = borderHeight * GBA_METATILE_PIXELS;
+    const patternWidth = borderWidth * GBA_METATILE_PIXELS;
+
+    const artAt = (px: number, py: number): number => {
+      const tileX = px >> 4;
+      const tileY = py >> 4;
+      const cell = cellOf.get(borderIds[tileY * borderWidth + tileX]);
+
+      if (cell !== undefined) {
+        const x = cell % map.width;
+        const y = (cell - x) / map.width;
+
+        return modelPixel(x * 16 + (px & 15), y * 16 + (py & 15));
+      }
+
+      if (!fallback) {
+        return 0;
+      }
+
+      const offset =
+        ((patternHeight - 1 - py) * patternWidth + px) * 4;
+
+      return fallback[offset + 3] >= 128
+        ? ((fallback[offset] << 24) |
+            (fallback[offset + 1] << 16) |
+            (fallback[offset + 2] << 8) |
+            0xff) >>> 0
+        : 0;
+    };
+
+    // Chao do padding debaixo dessas arvores: o mesmo chao que o mapa poe
+    // debaixo da mata (o tile de chao "mais comum" do mapa pode ser o
+    // calcamento da cidade). Vale o mais frequente debaixo dos blocos da
+    // borda; tile com faixa (beira de caminho, sombra) repetido vira
+    // listras, entao fica so a cor dominante dele.
+    const borderSet = new Set(borderIds);
+    const groundVotes = new Map<Uint8ClampedArray, number>();
+
+    for (let index = 0; index < metatileIds.length; index++) {
+      if (kinds[index] !== CELL_PROP || !borderSet.has(metatileIds[index])) {
+        continue;
+      }
+
+      const ground = groundUnder(index);
+
+      if (ground) {
+        groundVotes.set(ground, (groundVotes.get(ground) ?? 0) + 1);
+      }
+    }
+
+    const ground =
+      [...groundVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+
+    if (ground) {
+      const colorCounts = new Map<number, number>();
+      let opaque = 0;
+
+      for (let offset = 0; offset < ground.length; offset += 4) {
+        if (ground[offset + 3] < 128) {
+          continue;
+        }
+
+        const color =
+          (ground[offset] << 16) | (ground[offset + 1] << 8) | ground[offset + 2];
+
+        colorCounts.set(color, (colorCounts.get(color) ?? 0) + 1);
+        opaque++;
+      }
+
+      const [dominant, count] =
+        [...colorCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? [0, 0];
+
+      const flipped =
+        new Uint8ClampedArray(ground.length);
+
+      if (opaque > 0 && count / opaque >= 0.75) {
+        for (let row = 0; row < GBA_METATILE_PIXELS; row++) {
+          flipped.set(
+            ground.subarray(
+              row * GBA_METATILE_PIXELS * 4,
+              (row + 1) * GBA_METATILE_PIXELS * 4,
+            ),
+            (GBA_METATILE_PIXELS - 1 - row) * GBA_METATILE_PIXELS * 4,
+          );
+        }
+      } else {
+        for (let offset = 0; offset < flipped.length; offset += 4) {
+          flipped[offset] = (dominant >> 16) & 0xff;
+          flipped[offset + 1] = (dominant >> 8) & 0xff;
+          flipped[offset + 2] = dominant & 0xff;
+          flipped[offset + 3] = 0xff;
+        }
+      }
+
+      const floor =
+        this.createMapTexture(flipped, GBA_METATILE_PIXELS, GBA_METATILE_PIXELS);
+
+      floor.wrapS = THREE.RepeatWrapping;
+      floor.wrapT = THREE.RepeatWrapping;
+      floor.needsUpdate = true;
+
+      this.groundTileTextures.get(key)?.dispose();
+      this.groundTileTextures.set(key, floor);
+    }
+
+    const baked =
+      bakeBorderCard(shape, borderWidth, artAt);
+
+    const texture =
+      this.createMapTexture(baked.pixels, baked.width, baked.height);
+
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+
+    this.borderCards.set(key, {
+      texture,
+      layout: {
+        linePx: shape.linePx,
+        spanPx: shape.spanPx,
+        heightPx: baked.height,
+      },
+    });
+
+    this.paddingDirty = true;
   }
 
   private disposeWorldBorder(): void {
@@ -3329,6 +3552,9 @@ export class PlayerRenderer {
 
     // Objetos em pe: os cortes das matas saem da textura dos modelos (onde
     // cada copa comeca no desenho).
+    const stackShapes: StackShape[] = [];
+    const modelPixel = modelPixelAt(composed.model, map.width, map.height);
+
     const propGeometry =
       volume
         ? buildPropGeometry(
@@ -3337,8 +3563,26 @@ export class PlayerRenderer {
             volume.kinds,
             (x, y) => volumeBlockAt?.(x, y),
             modelRowOpaque(composed.model, map.width, map.height),
+            modelPixel,
+            stackShapes,
           )
         : undefined;
+
+    if (volume) {
+      this.buildBorderCards(
+        map,
+        metatileIds,
+        volume.kinds,
+        modelPixel,
+        stackShapes,
+        (cell) => {
+          const source = volume.groundSources[cell];
+          const id = source >= 0 ? data.blocks[source]?.metatileId : undefined;
+
+          return id === undefined ? undefined : data.graphics.get(id)?.basePixels;
+        },
+      );
+    }
 
     const voxel =
       volume && modelTexture
@@ -4140,12 +4384,14 @@ export class PlayerRenderer {
     for (const texture of [
       ...this.borderTextures.values(),
       ...this.groundTileTextures.values(),
+      ...[...this.borderCards.values()].map((card) => card.texture),
     ]) {
       texture.dispose();
     }
 
     this.borderTextures.clear();
     this.groundTileTextures.clear();
+    this.borderCards.clear();
     this.paddingRaised.clear();
     this.paddingLowered.clear();
 

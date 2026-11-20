@@ -843,6 +843,39 @@ export function animationLayers(
  * pixel opaco na coluna de blocos x, na linha de pixel `row` do mapa
  * (0 = topo do mapa)?
  */
+/**
+ * Pixel da textura dos modelos (linha 0 = topo do mapa): RGBA empacotado,
+ * 0 quando transparente.
+ */
+export function modelPixelAt(
+  model: Uint8ClampedArray,
+  width: number,
+  height: number,
+): (px: number, py: number) => number {
+  const textureWidth = width * TILE;
+  const textureRows = height * TILE;
+
+  return (px, py) => {
+    if (px < 0 || px >= textureWidth || py < 0 || py >= textureRows) {
+      return 0;
+    }
+
+    const offset = ((textureRows - 1 - py) * textureWidth + px) * 4;
+
+    if (model[offset + 3] < 128) {
+      return 0;
+    }
+
+    return (
+      ((model[offset] << 24) |
+        (model[offset + 1] << 16) |
+        (model[offset + 2] << 8) |
+        0xff) >>>
+      0
+    );
+  };
+}
+
 export function modelRowOpaque(
   model: Uint8ClampedArray,
   width: number,
