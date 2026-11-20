@@ -133,11 +133,17 @@ export interface AnimatedTarget {
   texture: THREE.DataTexture;
   metatileIds: Int32Array;
   recipes: Uint8Array;
+  // Grade da textura em celulas (padrao: a do mapa). Um modelo (a fonte de
+  // Celadon) registra a propria textura, so com as celulas dele.
+  columns?: number;
+  rows?: number;
 }
 
 interface TargetState {
   texture: THREE.DataTexture;
   pixels: Uint8Array | null;
+  columns: number;
+  rows: number;
 }
 
 export class TileAnimator {
@@ -258,6 +264,8 @@ export class TileAnimator {
         texture: target.texture,
         pixels:
           (target.texture.image as { data?: Uint8Array }).data ?? null,
+        columns: target.columns ?? map.width,
+        rows: target.rows ?? map.height,
       }));
 
     this.mapWidth = map.width;
@@ -690,7 +698,7 @@ export class TileAnimator {
     const quadrantY =
       Math.floor(recipe.quadrant / 2) * TILE_PIXELS;
 
-    this.copyToBlocks(cell, TILE_PIXELS, quadrantX, quadrantY, recipe.blocks, target);
+    this.copyToBlocks(cell, TILE_PIXELS, quadrantX, quadrantY, recipe.blocks, target, this.targets[recipe.target]);
 
     return true;
   }
@@ -716,7 +724,7 @@ export class TileAnimator {
 
     cutTopAgainstBottom(top, bottom);
 
-    this.copyToBlocks(top, METATILE_PIXELS, 0, 0, recipe.blocks, target);
+    this.copyToBlocks(top, METATILE_PIXELS, 0, 0, recipe.blocks, target, this.targets[recipe.target]);
 
     return true;
   }
@@ -793,18 +801,19 @@ export class TileAnimator {
     offsetY: number,
     blocks: number[],
     target: Uint8Array,
+    grid: { columns: number; rows: number } = { columns: this.mapWidth, rows: this.mapHeight },
   ): void {
     const textureWidth =
-      this.mapWidth * METATILE_PIXELS;
+      grid.columns * METATILE_PIXELS;
 
     for (
       const blockIndex of blocks
     ) {
       const blockX =
-        blockIndex % this.mapWidth;
+        blockIndex % grid.columns;
 
       const blockY =
-        Math.floor(blockIndex / this.mapWidth);
+        Math.floor(blockIndex / grid.columns);
 
       for (
         let y = 0;
@@ -818,7 +827,7 @@ export class TileAnimator {
           offsetY + y;
 
         const textureY =
-          (this.mapHeight - 1 - blockY) * METATILE_PIXELS +
+          (grid.rows - 1 - blockY) * METATILE_PIXELS +
           METATILE_PIXELS - 1 - metatileY;
 
         const rowStart =

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { type MoldCell, buildHouse, findMold } from './HouseModel';
-import { type Art, PX, artBlock, artRoof, doorPlane, plain, polygons, stripe, textured, wall } from './ModelKit';
+import { type Art, PX, artBlock, artRoof, box, doorPlane, invisible, plain, polygons, stripe, textured, wall } from './ModelKit';
 
 /**
  * Construcoes unicas de Kanto (laboratorio do Oak, museu, torre, Silph...).
@@ -25,6 +25,16 @@ export interface Landmark {
   // Retangulos (px do molde) que voltam com a arte original depois de
   // tirar o chao: a grama que aparece por dentro de uma floreira e planta.
   keep?: ReadonlyArray<readonly [number, number, number, number]>;
+  // Celulas de fora que ficam no mapa com OUTRO metatile [de, para]: a
+  // arvore colada no telhado (os Condominios de Celadon) volta a ser so
+  // arvore, sem a quina do telhado desenhada no chao.
+  swap?: ReadonlyArray<readonly [number, number]>;
+  // Celulas cujo chao e o da celula de cima (o caminho que continua ate a
+  // construcao).
+  floorAbove?: (col: number, row: number) => boolean;
+  // Celulas com o chao de um metatile dado (a grama atras de um predio
+  // alto, que pela dobra fica descoberta).
+  floorTile?: { id: number; cells: (col: number, row: number) => boolean };
   // null: so tira as celulas do mapa (a parte de cima de uma construcao
   // cujo modelo e feito pelo mapa vizinho).
   build: (art: Art) => THREE.Group | null;
@@ -147,6 +157,11 @@ const LANDMARKS: Landmark[] = [
       [0x2f8, 0x2fd, 0x30c, 0x03d, 0x30d, 0x2fe, 0x2fc],
     ],
     outside: (col, row) => row === 0 && (col < 2 || col > 4),
+    swap: [[0x318, 0x01e], [0x319, 0x01f], [0x31d, 0x01e], [0x31e, 0x01f]],
+    floorAbove: (col, row) => row === 0 && col >= 2 && col <= 4,
+    // Atras do predio (o fundo dele cai na linha 4,8): grama lisa (011),
+    // a mesma das arvores em volta - sem isso um lado saia calcada.
+    floorTile: { id: 0x011, cells: (_col, row) => row >= 1 && row <= 4 },
     build: buildCondominiums,
   },
   {
@@ -581,6 +596,8 @@ function buildPewterMuseum(art: Art): THREE.Group {
   return root;
 }
 
+const BIKE_SHOP_RAISE = 18;
+
 /**
  * Loja de bicicletas de Cerulean (4x6, origem em (12,23)): laje com a
  * claraboia azul quadriculada e a moldura cinza clara (px 8-56), parede
@@ -595,15 +612,19 @@ function buildBikeShop(art: Art): THREE.Group {
   root.name = 'bike-shop';
 
   const wallFront = 5.5;
-  const wallTop = wallFront - 56 / PX;
+  // Mais alta que a dobra (2 tiles, a altura do jogador): a faixa lisa da
+  // parede acima das janelas (px 56-64) sobe BIKE_SHOP_RAISE px; janelas,
+  // toldo e entrada ficam onde estavam.
+  const raise = BIKE_SHOP_RAISE;
+  const wallTop = wallFront - 56 / PX + raise / PX;
   // Atras do toldo: a entrada escura (o vao debaixo dele), ate o chao. Na
   // arte, o escuro do vao esta na camada de baixo das portas, que sai com o
   // chao (as portas sao andaveis): pinta com o escuro da moldura das
   // janelas (px 20, 70), senao a frente ficava vazada e a loja parecia uma
   // mesa sobre os postes.
-  const facade = art.clone().fill(3, 72, 61, 88, 20, 70);
+  const facade = art.clone().fill(3, 72, 61, 88, 20, 70).stretchRows(56, 64, raise);
 
-  root.add(artBlock(facade, { x: [0, 64], z: [wallFront - 48 / PX, wallFront], y: [0, wallTop], front: [56, 88] }));
+  root.add(artBlock(facade, { x: [0, 64], z: [wallFront - 48 / PX, wallFront], y: [0, wallTop], front: [56, 88 + raise] }));
   root.add(artRoof(art, {
     px: [0, 64], rows: [8, 56], kind: 'flat', rise: 0, y: wallTop + 0.002,
     bounds: { x0: 0, x1: 4, z0: wallFront - 48 / PX, z1: wallFront },
@@ -642,6 +663,14 @@ export function landmarkExtraMetatiles(): number[] {
       for (const id of row) {
         ids.add(id);
       }
+    }
+
+    for (const [, id] of landmark.swap ?? []) {
+      ids.add(id);
+    }
+
+    if (landmark.floorTile) {
+      ids.add(landmark.floorTile.id);
     }
   }
 
@@ -856,11 +885,35 @@ function buildCondominiums(art: Art): THREE.Group {
   });
   const { back } = house.userData.measures as { back: number };
 
-  // Porta dos fundos: marquise clara e a abertura iluminada, viradas para o norte.
-  house.add(artBlock(art, {
-    x: [34, 78], z: [back - 0.45, back], y: [1.05, 1.17], lid: [4, 8], sides: plain(art.color(36, 2), 0.85),
-  }));
-  house.add(wall(72 / PX, back - 0.004, 40 / PX, back - 0.004, 0, 1.05, plain(art.color(56, 2), 1)));
+  // Porta dos fundos. Pela dobra o predio (4 andares) fica na metade de
+  // baixo do bloco e o fundo dele cai a ~4,8 tiles do caminho de areia,
+  // onde o jogo poe a porta (linha 0): entre os dois, um corredor coberto
+  // de um andar liga o caminho ao predio, com a marquise clara e a
+  // abertura iluminada na ponta do caminho.
+  // Comeca onde termina a areia (4,5 px dentro da linha 0); laje e
+  // mureta nas cores da laje do predio (oliva com a borda clara, linhas
+  // 9-10 da arte) e a marquise cinza-azulada da porta (linhas 5-7 de
+  // x 38-74). Cores fixas: na arte preparada esses pixels podem ter saido
+  // com o chao.
+  const annexFront = 4.5 / PX;
+  // Baixo (1 andar na escala da dobra): mais alto, a laje tapava o
+  // caminho de areia atras dele.
+  const annexHeight = 1.0;
+  const roofOlive = new THREE.Color().setRGB(214 / 255, 222 / 255, 165 / 255, THREE.SRGBColorSpace);
+  const roofEdge = new THREE.Color().setRGB(247 / 255, 247 / 255, 255 / 255, THREE.SRGBColorSpace);
+  const canopyLight = new THREE.Color().setRGB(173 / 255, 189 / 255, 206 / 255, THREE.SRGBColorSpace);
+  const doorLight = new THREE.Color().setRGB(239 / 255, 231 / 255, 140 / 255, THREE.SRGBColorSpace);
+  const annexWall = textured(stripe(art, art.plainestColumn(2, 30, 62, 78, true), 62, 78), 0.8);
+
+  house.add(box(36 / PX, 76 / PX, 0, annexHeight, annexFront, back + 0.02, [
+    annexWall, annexWall, plain(roofOlive, 0.92), invisible(), invisible(), plain(doorLight, 0.9),
+  ]));
+  house.add(box(36 / PX - 0.04, 76 / PX + 0.04, annexHeight, annexHeight + 0.06, annexFront - 0.04, back + 0.02, [
+    plain(roofEdge, 0.9), plain(roofEdge, 0.9), invisible(), invisible(), plain(roofEdge, 0.9), plain(roofEdge, 0.9),
+  ]));
+  house.add(box(36 / PX + 0.03, 76 / PX - 0.03, annexHeight + 0.004, annexHeight + 0.01, annexFront + 0.03, back, plain(roofOlive, 0.88)));
+  // Marquise sobre a porta, virada para o caminho.
+  house.add(box(38 / PX, 74 / PX, 0.78, 0.85, annexFront - 0.22, annexFront, plain(canopyLight, 0.92)));
 
   return house;
 }
@@ -1046,6 +1099,8 @@ function buildSilphCo(art: Art): THREE.Group {
  * o eixo no chao em z = 2,32. A superficie e mapeada pela dobra (linha =
  * z - y), espelhando a metade de tras.
  */
+const CINNABAR_LAB_RAISE = 1.6;
+
 function buildCinnabarLab(art: Art): THREE.Group {
   const root = new THREE.Group();
   root.name = 'cinnabar-lab';
@@ -1068,6 +1123,13 @@ function buildCinnabarLab(art: Art): THREE.Group {
     position.setY(i, Math.max(-0.02, position.getY(i)));
   }
   artUv(capsule, skin, (_x, y, z) => ((z >= cz ? z : 2 * cz - z) - Math.max(0, y)) * PX);
+
+  // Mais alta que a dobra: a secao vira meia elipse (a textura continua a
+  // da capsula redonda, so esticada na altura).
+  for (let i = 0; i < position.count; i++) {
+    position.setY(i, position.getY(i) * (position.getY(i) > 0 ? CINNABAR_LAB_RAISE : 1));
+  }
+  capsule.computeVertexNormals();
   root.add(new THREE.Mesh(capsule, material));
 
   // Entrada: o vao da porta de vidro na base da capsula.

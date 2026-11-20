@@ -10,7 +10,7 @@ import * as THREE from 'three';
 // Com 12 o horizonte ficava escuro. A repeticao e feita pela GPU
 // (RepeatWrapping), entao alcance maior quase nao custa.
 const MAP_PADDING_METATILES =
-  40;
+  56;
 
 // Sobra em volta do plano de cada mapa, em tiles (ver buildMapVisual).
 const MAP_SEAM_MARGIN =
@@ -367,6 +367,11 @@ interface MapVisual {
   // Receitas do animador para chao, camada de cima do chao e modelos.
   animation:
     AnimationLayer[];
+
+  // Texturas animadas dos modelos de construcao (a fonte de Celadon): o
+  // animador recompoe as celulas deles como as do mapa.
+  modelTargets:
+    AnimatedTarget[];
 
   mapDataAddress:
     number;
@@ -1621,6 +1626,8 @@ export class PlayerRenderer {
         targets.push({ texture, ...layer });
       }
     });
+
+    targets.push(...visual.modelTargets);
 
     this.tileAnimator.setActiveMap(
       mapKey,
@@ -2951,6 +2958,8 @@ export class PlayerRenderer {
         graphics: substituted.graphics,
       };
 
+    const modelTargets: AnimatedTarget[] = [];
+
     // Volume (ver VoxelFolding): o que cada bloco vira - estrutura 3D,
     // objeto em pe, ledge, grama alta, flor ou chao. Calculado ANTES das
     // texturas: chao e modelos sao compostos a partir dele.
@@ -3353,6 +3362,10 @@ export class PlayerRenderer {
       for (const building of substituted.buildings) {
         voxelGroup.add(building.model);
 
+        if (building.model.userData.animated) {
+          modelTargets.push(building.model.userData.animated as AnimatedTarget);
+        }
+
         building.model.traverse(object => {
           const mesh = object as THREE.Mesh;
 
@@ -3419,6 +3432,7 @@ export class PlayerRenderer {
         propMeshes:
           voxel?.propMeshes ?? [],
         animation,
+        modelTargets,
         mapDataAddress:
           map.mapDataAddress,
       };

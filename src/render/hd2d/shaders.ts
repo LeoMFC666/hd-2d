@@ -322,7 +322,8 @@ float linearDepth(float d) {
 float circleOfConfusion(vec2 uv) {
   float z = linearDepth(texture2D(tDepth, uv).r);
   float depthBlur = smoothstep(uFocusRange, uFocusRange * 4.0, abs(z - uFocusDepth));
-  float tilt = max(smoothstep(0.4, 0.0, uv.y), smoothstep(0.62, 1.0, uv.y));
+  // Faixa nitida maior em cima: o fundo da cena (mais longe) fica visivel.
+  float tilt = max(smoothstep(0.4, 0.0, uv.y), smoothstep(0.72, 1.08, uv.y));
   return clamp(max(depthBlur, tilt * 0.85), 0.0, 1.0) * uDof;
 }
 

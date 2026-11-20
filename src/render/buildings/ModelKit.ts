@@ -136,6 +136,25 @@ export class Art {
     return this;
   }
 
+  /**
+   * Arte mais alta: as linhas [y0, y1) esticadas em mais `extra` linhas
+   * (vizinho mais proximo); o que esta abaixo desce junto. Para subir uma
+   * parede lisa sem esticar as janelas e a porta.
+   */
+  stretchRows(y0: number, y1: number, extra: number): Art {
+    const height = this.height + extra;
+    const out = new Uint8Array(this.width * height * 4);
+    const span = y1 - y0;
+
+    for (let y = 0; y < height; y++) {
+      const source = y < y0 ? y : y < y1 + extra ? y0 + Math.min(span - 1, Math.floor(((y - y0) * span) / (span + extra))) : y - extra;
+
+      out.set(this.rgba.subarray(source * this.width * 4, (source + 1) * this.width * 4), y * this.width * 4);
+    }
+
+    return new Art(out, this.width, height);
+  }
+
   /** Recorte em textura (DataTexture guarda as linhas de baixo para cima). */
   texture(x: number, y: number, w: number, h: number): THREE.DataTexture {
     return dataTexture(this.cut(x, y, w, h), w, h);

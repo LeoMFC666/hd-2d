@@ -2,9 +2,10 @@ import * as THREE from 'three';
 
 import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 
-import { buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
+import { type FoundGatehouse, buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
 import { buildCityHouse, findCityHouses } from './CityHouseModels';
+import { FOUNTAIN_HEIGHT, FOUNTAIN_WIDTH, buildFountainModel, findFountains } from './FountainModel';
 import { findLandmarks } from './LandmarkModels';
 
 export { landmarkExtraMetatiles } from './LandmarkModels';
@@ -621,6 +622,35 @@ export function substituteBuildings<T extends Block>(
     return behavior !== undefined && isWaterBehavior(behavior);
   }
 
+  // Metatile so com a camada de baixo de outro (chao de uma celula).
+  function groundOnly(metatileId: number): number | undefined {
+    const source = graphics.get(metatileId);
+
+    if (!source) {
+      return undefined;
+    }
+
+    const id = GROUND_ONLY_BASE + metatileId;
+
+    if (!resultGraphics.has(id)) {
+      const empty = new Uint8ClampedArray(source.topPixels.length);
+
+      resultGraphics.set(id, {
+        ...source,
+        metatileId: id,
+        layerType: 0,
+        behavior: 0,
+        pixels: source.bottomPixels,
+        basePixels: source.bottomPixels,
+        foregroundPixels: empty,
+        topPixels: empty,
+        topTileIds: [],
+      });
+    }
+
+    return id;
+  }
+
   // Enchimento: tile que nao e agua, com desenho na camada de cima e agua
   // (azul) na de baixo. E a beirada andavel dos predios de Saffron e
   // Celadon (o topo do telhado): a camada de baixo dela nao e chao, e
@@ -712,14 +742,20 @@ export function substituteBuildings<T extends Block>(
 
   linkStackedGatehouses(gates);
 
-  for (const gate of gates) {
+  // As da frente primeiro: a parte de tras sem fachada (Rota 16) usa a
+  // arte da da frente nas paredes.
+  const gateArts = new Map<FoundGatehouse, Art>();
+
+  for (const gate of [...gates.filter((g) => !g.facadeless), ...gates.filter((g) => g.facadeless)]) {
     if (gate.facadeless && gate.facadeless.wallHeight === 0) {
       continue;
     }
 
-    const art = prepare(gate.x, gate.y, gate.width, gate.height, gate.mask, true);
-    const model = buildGatehouseModel(Art.ofTiles(art, gate.width, gate.height), gate);
+    const art = Art.ofTiles(prepare(gate.x, gate.y, gate.width, gate.height, gate.mask, true), gate.width, gate.height);
+    const below = gate.facadeless?.below;
+    const model = buildGatehouseModel(art, gate, below ? gateArts.get(below) : undefined);
 
+    gateArts.set(gate, art);
     model.position.set(gate.x, 0, gate.y);
     buildings.push({ kind: gate.kind, x: gate.x, y: gate.y, model });
   }
@@ -777,6 +813,28 @@ export function substituteBuildings<T extends Block>(
     }
   }
 
+  // Fonte de Celadon: bacia redonda e jato em 3D, animados pelo animador
+  // de tiles (a textura do modelo e uma grade com as celulas dela).
+  for (const fountain of findFountains(width, height, metatileAt)) {
+    const full = blockArt(width, fountain.x, fountain.y, FOUNTAIN_WIDTH, FOUNTAIN_HEIGHT, blocks, graphics);
+    const ids: number[] = [];
+
+    for (let row = 0; row < FOUNTAIN_HEIGHT; row++) {
+      for (let col = 0; col < FOUNTAIN_WIDTH; col++) {
+        ids.push(metatileAt(fountain.x + col, fountain.y + row));
+        taken.add((fountain.y + row) * width + fountain.x + col);
+      }
+    }
+
+    // Chao: a camada de baixo dos proprios tiles (grama em todos eles).
+    groundFromOwnBottom(fountain.x, fountain.y, FOUNTAIN_WIDTH, FOUNTAIN_HEIGHT);
+
+    const model = buildFountainModel(Art.ofTiles(full, FOUNTAIN_WIDTH, FOUNTAIN_HEIGHT), ids);
+
+    model.position.set(fountain.x, 0, fountain.y);
+    buildings.push({ kind: 'celadon-fountain', x: fountain.x, y: fountain.y, model });
+  }
+
   // Construcoes unicas (laboratorio, museu, torre...): molde exato.
   for (const found of findLandmarks(width, height, metatileAt)) {
     const { landmark } = found;
@@ -824,6 +882,42 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(found.x, 0, found.y - extension.length);
     buildings.push({ kind: landmark.kind, x: found.x, y: found.y, model });
+
+    for (let row = 0; row < found.height; row++) {
+      for (let col = 0; col < found.width; col++) {
+        const x = found.x + col;
+        const y = found.y + row;
+        const original = blocks[y * width + x];
+
+        if (!original) {
+          continue;
+        }
+
+        const swap = !inside(col, row) ? landmark.swap?.find(([from]) => from === original.metatileId) : undefined;
+
+        if (swap && graphics.get(swap[1])) {
+          result[y * width + x] = { ...original, metatileId: swap[1] } as T;
+        }
+
+        const above = y > 0 ? blocks[(y - 1) * width + x] : undefined;
+
+        if (inside(col, row) && above && landmark.floorAbove?.(col, row)) {
+          const id = groundOnly(above.metatileId);
+
+          if (id !== undefined) {
+            result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
+          }
+        }
+
+        if (inside(col, row) && landmark.floorTile?.cells(col, row)) {
+          const id = groundOnly(landmark.floorTile.id);
+
+          if (id !== undefined) {
+            result[y * width + x] = { ...original, metatileId: id, collision: 0 } as T;
+          }
+        }
+      }
+    }
   }
 
   for (const house of findCityHouses(width, height, metatileAt)) {

@@ -68,7 +68,7 @@ export interface FoundGatehouse {
   // Parte de tras sem fachada (Rota 16: duas portarias coladas, a de tras
   // escondida atras da da frente). Altura da parede e frente vem da de
   // baixo (ver linkStackedGatehouses).
-  facadeless?: { wallHeight: number; front: number };
+  facadeless?: { wallHeight: number; front: number; below?: FoundGatehouse };
   vestibules: { west: boolean; east: boolean };
   // Colunas das portas animadas (entrada do subterraneo: 03D).
   doors: number[];
@@ -296,14 +296,40 @@ export function linkStackedGatehouses(gates: FoundGatehouse[]): void {
     gate.facadeless.wallHeight = wallHeight;
     // Fundo da de baixo, no espaco do bloco desta.
     gate.facadeless.front = below.y - gate.y + below.baseRow + 1 - belowRoofRows;
+    gate.facadeless.below = below;
   }
+}
+
+/** Fachada da portaria da frente: coluna lisa e linhas (px) dela. */
+function facadeOf(art: Art, gate: FoundGatehouse | undefined): { column: number; top: number; bottom: number; bodyPx: number } | null {
+  if (!gate) {
+    return null;
+  }
+
+  const bodyPx = gate.bodyX0 * PX;
+  const top = gate.facadeTopPx ?? (gate.eaveRow + 1) * PX;
+  const [, bottom] = art.rows(bodyPx, bodyPx + PX, top);
+
+  if (bottom <= top) {
+    return null;
+  }
+
+  const sideX1 = gate.porch ? gate.porch[0] * PX : gate.bodyX1 * PX - 10;
+  const column = art.plainestColumn(bodyPx + 10, Math.max(bodyPx + 11, sideX1), top, bottom + 1);
+
+  return { column, top, bottom, bodyPx };
 }
 
 const ROOF_RISE = 0.32;
 const ROOF_OVERHANG = 0.1;
 
-/** Monta a portaria (origem no canto noroeste do bloco). */
-export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group {
+/**
+ * Monta a portaria (origem no canto noroeste do bloco). `belowArt`: a arte
+ * da portaria da frente, para a parte de tras sem fachada (Rota 16) - as
+ * paredes dela continuam as da frente (sem isso a faixa da parede saia
+ * vazia, e o galpao de tras ficava so com o telhado no ar).
+ */
+export function buildGatehouseModel(art: Art, gate: FoundGatehouse, belowArt?: Art): THREE.Group {
   const root = new THREE.Group();
   root.name = gate.kind;
 
@@ -335,7 +361,10 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
   // entrada (o escuro da abertura nao pode virar parede).
   const sideX1 = gate.porch ? gate.porch[0] * PX : pxBody1 - 10;
   const facadeColumn = art.plainestColumn(pxBody0 + 10, Math.max(pxBody0 + 11, sideX1), facadeTop, facadeBottom + 1);
-  const side = stripe(art, facadeColumn, facadeTop, facadeBottom + 1);
+  const belowFacade = facadeless && belowArt ? facadeOf(belowArt, facadeless.below) : null;
+  const side = belowFacade
+    ? stripe(belowArt!, belowFacade.column, belowFacade.top, belowFacade.bottom + 1)
+    : stripe(art, facadeColumn, facadeTop, facadeBottom + 1);
   const roofGrey = art.color(pxBody0 + PX + 4, roofTop + PX);
   const shadow = art.color(pxBody0 + PX + 4, facadeTop - 1);
 
@@ -407,7 +436,7 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
       }
     }
 
-    buildVestibules(root, art, gate, front, wallHeight);
+    buildVestibules(root, art, gate, front, wallHeight, belowFacade ? belowArt!.color(belowFacade.bodyPx + 3, belowFacade.top + 8) : undefined);
   } else if (gate.kind === 'gate-ns') {
     buildPorches(root, entrance, art, gate, front, back, wallHeight);
   }
@@ -426,7 +455,16 @@ export function buildGatehouseModel(art: Art, gate: FoundGatehouse): THREE.Group
 const FLAP_WIDTH_PX = 7;
 const POSTS_WIDTH_PX = 8;
 
-function buildVestibules(root: THREE.Group, art: Art, gate: FoundGatehouse, front: number, wallHeight: number): void {
+function buildVestibules(
+  root: THREE.Group,
+  art: Art,
+  gate: FoundGatehouse,
+  front: number,
+  wallHeight: number,
+  // Cor dos pilares quando a arte nao tem fachada (parte de tras da Rota
+  // 16): a de baixo da linha do beiral cai fora da arte e saia preta.
+  pillarColor?: THREE.Color,
+): void {
   const baseRowPx = gate.baseRow * PX;
   const postsTop = baseRowPx - PX;
   const postsBottom = baseRowPx + 7;
@@ -436,7 +474,7 @@ function buildVestibules(root: THREE.Group, art: Art, gate: FoundGatehouse, fron
   const postHeight = (postsBottom + 1 - postsTop) / PX;
   const flapDepth = (flapBottom + 1 - flapTop) / PX;
   const bodyPx = gate.bodyX0 * PX;
-  const postColor = art.color(bodyPx + 3, (gate.eaveRow + 1) * PX + 8);
+  const postColor = pillarColor ?? art.color(bodyPx + 3, (gate.eaveRow + 1) * PX + 8);
   const edgeColor = art.color(bodyPx + 20, (gate.eaveRow + 1) * PX - 3);
   const darkColor = art.color(bodyPx + 20, (gate.eaveRow + 1) * PX - 1);
 

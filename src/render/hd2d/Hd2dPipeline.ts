@@ -261,8 +261,10 @@ export class Hd2dPipeline {
       uLightRadius: { value: 4.5 },
       uFogColor: { value: new THREE.Color() },
       uFogAmount: { value: 0 },
-      uFogNear: { value: 16 },
-      uFogFar: { value: 42 },
+      // Alcance da neblina de distancia: comeca depois da tela (o topo da
+      // tela fica a ~32 da camera) e so fecha bem alem dela.
+      uFogNear: { value: 26 },
+      uFogFar: { value: 70 },
       uDebug: { value: 0 },
     });
 
@@ -460,7 +462,7 @@ export class Hd2dPipeline {
     composite.uNear.value = camera.near;
     composite.uFar.value = camera.far;
     composite.uFocusDepth.value = focusDepth;
-    composite.uFocusRange.value = Math.max(1.5, focusDistance * 0.16);
+    composite.uFocusRange.value = Math.max(1.5, focusDistance * 0.22);
     composite.uDof.value = settings.depthOfField;
     composite.uMaxBlur.value = 6 * (height / 330);
     composite.uBloom.value = bloomOn ? settings.bloom : 0;
