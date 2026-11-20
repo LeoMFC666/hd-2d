@@ -2735,6 +2735,7 @@ export class PlayerRenderer {
         interior ? 'interior' : 'outdoor',
         VOXEL_MAX_WALL_ROWS,
         new Set(this.readBorderMetatileIds(map)),
+        { rockDoorsAsMountains: this.stateAdapter.getFamily() === 'FRLG' },
       );
 
     // A borda deste mapa sobe junto? Os metatiles da borda aparecem dentro

@@ -1745,11 +1745,51 @@ function findRockMasses(
     // continua na Five Isle Meadow, onde nao tem porta e virava objeto em pe
     // (uma torre roxa). Os blocos do tileset da cidade do grupo, encostados
     // na borda, com 2+ colunas e 3+ linhas, viram predio (marcados com 2).
-    const city = component.filter(
-      (cell) => blockAt(cell % width, Math.floor(cell / width))?.secondary === true,
+    const isCity = new Set(
+      component.filter(
+        (cell) => blockAt(cell % width, Math.floor(cell / width))?.secondary === true,
+      ),
     );
 
-    if (city.length >= 6) {
+    // Cada pedaco conexo dos blocos da cidade, compacto (enche 3/4 do seu
+    // retangulo): postes soltos ligados por cerca nao contam.
+    const seenCity = new Set<number>();
+
+    for (const first of isCity) {
+      if (seenCity.has(first)) {
+        continue;
+      }
+
+      const city: number[] = [];
+      const queue = [first];
+      seenCity.add(first);
+
+      while (queue.length > 0) {
+        const cell = queue.pop() as number;
+        const cx = cell % width;
+
+        city.push(cell);
+
+        for (const next of [cell - 1, cell + 1, cell - width, cell + width]) {
+          const nx = next % width;
+
+          if (
+            next >= 0 &&
+            next < mass.length &&
+            Math.abs(nx - cx) <= 1 &&
+            isCity.has(next) &&
+            !seenCity.has(next)
+          ) {
+            seenCity.add(next);
+            queue.push(next);
+          }
+        }
+      }
+
+      if (city.length < 6) {
+        continue;
+      }
+
       let x0 = width;
       let x1 = -1;
       let y0 = height;
@@ -1766,8 +1806,9 @@ function findRockMasses(
       }
 
       const atEdge = x0 === 0 || y0 === 0 || x1 === width - 1 || y1 === height - 1;
+      const compact = city.length * 4 >= (x1 - x0 + 1) * (y1 - y0 + 1) * 3;
 
-      if (atEdge && x1 - x0 + 1 >= 2 && y1 - y0 + 1 >= 3) {
+      if (atEdge && compact && x1 - x0 + 1 >= 2 && y1 - y0 + 1 >= 3) {
         // 2 = pedaco de casa: buildMapVolume transforma em predio.
         for (const cell of city) {
           mass[cell] = 2;
@@ -2578,6 +2619,12 @@ export function buildMapVolume(
   // Metatiles que sao natureza com certeza (os do bloco de borda do mapa:
   // a mata em volta da cidade).
   natureMetatiles: ReadonlySet<number> = new Set(),
+  options: {
+    // Predio sem nenhum bloco do tileset da cidade (rochedo com caverna:
+    // Ilhas Seafoam, Caverna Celeste) vira montanha. No FRLG as casas sao
+    // todas do tileset secundario; no RSE nao foi conferido.
+    rockDoorsAsMountains?: boolean;
+  } = {},
 ): MapVolume {
   // Cada bloco e consultado muitas vezes: guarda a primeira resposta.
   const rawBlockAt = blockAt;
@@ -2714,6 +2761,29 @@ export function buildMapVolume(
           (index) => blockAt(index % width, Math.floor(index / width))?.solidModel === true,
         )
       : new Int32Array(width * height);
+
+  // Rochedo com porta de caverna: como predio ele ganhava telhado de duas
+  // aguas e fachadas por coluna (as Ilhas Seafoam viravam cristais
+  // pontudos); sem nenhum bloco da cidade, vira montanha como os outros.
+  if (style === 'outdoor' && options.rockDoorsAsMountains) {
+    const city = new Map<number, number>();
+
+    for (let index = 0; index < buildingIds.length; index++) {
+      const id = buildingIds[index];
+
+      if (id !== 0) {
+        const secondary = blockAt(index % width, Math.floor(index / width))?.secondary === true;
+
+        city.set(id, (city.get(id) ?? 0) + (secondary ? 1 : 0));
+      }
+    }
+
+    for (let index = 0; index < buildingIds.length; index++) {
+      if (buildingIds[index] !== 0 && city.get(buildingIds[index]) === 0) {
+        buildingIds[index] = 0;
+      }
+    }
+  }
 
   const masses =
     style === 'outdoor'
