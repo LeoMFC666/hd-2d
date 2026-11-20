@@ -5,10 +5,21 @@ import type { Gen3MetatileGraphics } from '../../gen3/Gen3StateAdapter';
 import { type FoundGatehouse, buildGatehouseModel, findGatehouses, linkStackedGatehouses } from './GatehouseModel';
 import { buildGymModel, findGyms } from './GymModel';
 import { buildCityHouse, findCityHouses } from './CityHouseModels';
+import {
+  FERRY_TERMINAL_HEIGHT,
+  FERRY_TERMINAL_WIDTH,
+  ONE_ISLAND_BELOW,
+  buildFerryTerminal,
+  ferryTerminalExtraMetatiles,
+  findFerryTerminals,
+} from './FerryTerminalModel';
 import { FOUNTAIN_HEIGHT, FOUNTAIN_WIDTH, buildFountainModel, findFountains } from './FountainModel';
-import { findLandmarks } from './LandmarkModels';
+import { findLandmarks, landmarkExtraMetatiles as landmarkMetatiles } from './LandmarkModels';
 
-export { landmarkExtraMetatiles } from './LandmarkModels';
+/** Metatiles de fora do mapa usados pelos modelos (pedidos ao montar o mapa). */
+export function landmarkExtraMetatiles(): number[] {
+  return [...new Set([...landmarkMetatiles(), ...ferryTerminalExtraMetatiles()])];
+}
 import { ROUTE_HOUSE_MOLD, buildRouteHouse, findBlueRoofHouses, findMold } from './HouseModel';
 import { Art } from './ModelKit';
 
@@ -117,7 +128,16 @@ function withExtension(
   rows: readonly (readonly number[])[],
   graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
 ): Uint8Array {
-  const top = new Uint8Array(w * PX * rows.length * PX * 4);
+  return concatRows(composeTiles(rows, graphics, w), art, w);
+}
+
+/** Arte (RGBA, w tiles de largura) montada de uma grade de metatiles. */
+function composeTiles(
+  rows: readonly (readonly number[])[],
+  graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+  w = rows[0]?.length ?? 0,
+): Uint8Array {
+  const out = new Uint8Array(w * PX * rows.length * PX * 4);
 
   rows.forEach((row, ty) => {
     row.forEach((id, tx) => {
@@ -128,15 +148,20 @@ function withExtension(
       }
 
       for (let sy = 0; sy < PX; sy++) {
-        top.set(pixels.subarray(sy * PX * 4, (sy + 1) * PX * 4), ((ty * PX + sy) * w * PX + tx * PX) * 4);
+        out.set(pixels.subarray(sy * PX * 4, (sy + 1) * PX * 4), ((ty * PX + sy) * w * PX + tx * PX) * 4);
       }
     });
   });
 
-  const full = new Uint8Array(top.length + art.length);
+  return out;
+}
+
+/** Junta duas artes da mesma largura, uma embaixo da outra. */
+function concatRows(top: Uint8Array, bottom: Uint8Array, _w: number): Uint8Array {
+  const full = new Uint8Array(top.length + bottom.length);
 
   full.set(top, 0);
-  full.set(art, top.length);
+  full.set(bottom, top.length);
 
   return full;
 }
@@ -622,6 +647,39 @@ export function substituteBuildings<T extends Block>(
     return behavior !== undefined && isWaterBehavior(behavior);
   }
 
+  // Bloco de agua mais comum em volta de um retangulo (para devolver a agua
+  // debaixo de uma construcao sobre o mar).
+  function nearbyWater(x0: number, y0: number, w: number, h: number): Block | undefined {
+    const counts = new Map<number, { block: Block; count: number }>();
+
+    for (let y = y0 - 1; y <= y0 + h; y++) {
+      for (let x = x0 - 1; x <= x0 + w; x++) {
+        if (x < 0 || y < 0 || x >= width || y >= height || (x >= x0 && x < x0 + w && y >= y0 && y < y0 + h)) {
+          continue;
+        }
+
+        const block = blocks[y * width + x];
+
+        if (block && isWaterId(block.metatileId)) {
+          const entry = counts.get(block.metatileId) ?? { block, count: 0 };
+
+          entry.count++;
+          counts.set(block.metatileId, entry);
+        }
+      }
+    }
+
+    let best: { block: Block; count: number } | undefined;
+
+    for (const entry of counts.values()) {
+      if (!best || entry.count > best.count) {
+        best = entry;
+      }
+    }
+
+    return best?.block;
+  }
+
   // Metatile so com a camada de baixo de outro (chao de uma celula).
   function groundOnly(metatileId: number): number | undefined {
     const source = graphics.get(metatileId);
@@ -811,6 +869,50 @@ export function substituteBuildings<T extends Block>(
         taken.add(y * width + x);
       }
     }
+  }
+
+  // Terminais das balsas (Ilhas Sevii): predio e torres de amarracao saem
+  // do mapa - a agua volta debaixo deles - e voltam como modelo; a linha
+  // do fim do pier fica como esta.
+  for (const terminal of findFerryTerminals(width, height, metatileAt)) {
+    const w = FERRY_TERMINAL_WIDTH;
+    const h = FERRY_TERMINAL_HEIGHT;
+    // Linhas do bloco que estao neste mapa.
+    const rows = terminal.part === 'top' ? 2 : h;
+    const firstRow = terminal.part === 'bottom' ? 2 : 0;
+    const water = nearbyWater(terminal.x, terminal.y + firstRow, w, rows - firstRow);
+
+    for (let row = Math.max(1, firstRow); row < rows; row++) {
+      for (let col = 0; col < w; col++) {
+        const index = (terminal.y + row) * width + terminal.x + col;
+
+        taken.add(index);
+
+        if (water && result[index]) {
+          result[index] = { ...water } as T;
+        }
+      }
+    }
+
+    if (terminal.part === 'bottom') {
+      continue;
+    }
+
+    let raw = blockArt(width, terminal.x, terminal.y, w, rows, blocks, graphics);
+    let art = prepare(terminal.x, terminal.y, w, rows, (_col, row) => row > 0, true);
+
+    if (terminal.part === 'top') {
+      // As 4 linhas de baixo, montadas dos metatiles (estao no mapa de baixo).
+      const below = composeTiles(ONE_ISLAND_BELOW, graphics);
+
+      raw = concatRows(raw, below, w);
+      art = concatRows(art, below, w);
+    }
+
+    const model = buildFerryTerminal(Art.ofTiles(art, w, h), Art.ofTiles(raw, w, h));
+
+    model.position.set(terminal.x, 0, terminal.y);
+    buildings.push({ kind: 'ferry-terminal', x: terminal.x, y: terminal.y, model });
   }
 
   // Fonte de Celadon: bacia redonda e jato em 3D, animados pelo animador

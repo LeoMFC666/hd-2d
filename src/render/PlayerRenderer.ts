@@ -378,6 +378,9 @@ interface MapVisual {
 }
 
 export class PlayerRenderer {
+  // Ver updateCamera: so para depuracao e capturas.
+  debugCameraOffset: { x: number; z: number } | null = null;
+
   private readonly container:
     HTMLElement;
 
@@ -3812,11 +3815,13 @@ export class PlayerRenderer {
       z: number;
     },
   ): void {
+    // Deslocamento de depuracao (pelo console: __gen3.scene.debugCameraOffset
+    // = { x: 10, z: -8 }): olha outro ponto do mapa sem mover o jogador.
     const targetX =
-      position.x;
+      position.x + (this.debugCameraOffset?.x ?? 0);
 
     const targetZ =
-      position.z;
+      position.z + (this.debugCameraOffset?.z ?? 0);
 
     const cameraTargetX =
       targetX;
