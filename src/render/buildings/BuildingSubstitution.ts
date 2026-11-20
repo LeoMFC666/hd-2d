@@ -14,6 +14,9 @@ import {
   findFerryTerminals,
 } from './FerryTerminalModel';
 import { FOUNTAIN_HEIGHT, FOUNTAIN_WIDTH, buildFountainModel, findFountains } from './FountainModel';
+import { buildFenceRun, findNorthSouthFences } from './FenceModel';
+import { buildMarketProp, findMarketProps } from './MarketPropsModel';
+import { buildPen, findPens, penCells } from './PenModel';
 import { findLandmarks, landmarkExtraMetatiles as landmarkMetatiles } from './LandmarkModels';
 
 /** Metatiles de fora do mapa usados pelos modelos (pedidos ao montar o mapa). */
@@ -301,6 +304,8 @@ export function substituteBuildings<T extends Block>(
   height: number,
   blocks: readonly (T | undefined)[],
   graphics: ReadonlyMap<number, Gen3MetatileGraphics | null>,
+  // Interior (casas, predios): sem cercas e objetos de rua.
+  options: { interior?: boolean } = {},
 ): {
   blocks: (T | undefined)[];
   graphics: Map<number, Gen3MetatileGraphics | null>;
@@ -915,6 +920,53 @@ export function substituteBuildings<T extends Block>(
     buildings.push({ kind: 'ferry-terminal', x: terminal.x, y: terminal.y, model });
   }
 
+  // Feira de Two Island: caixotes, maquinas, vasos e cestas em volume.
+  for (const prop of findMarketProps(width, height, metatileAt, graphics)) {
+    const art = blockArt(width, prop.x, prop.y, 1, prop.cells.length, blocks, graphics, true);
+
+    for (const [x, y] of prop.cells) {
+      const index = y * width + x;
+      const original = result[index];
+      const id = original ? groundOnly(original.metatileId) : undefined;
+
+      taken.add(index);
+
+      if (original && id !== undefined) {
+        result[index] = { ...original, metatileId: id } as T;
+      }
+    }
+
+    const model = buildMarketProp(prop, Art.ofTiles(art, 1, prop.cells.length));
+
+    model.position.set(prop.x, 0, prop.y);
+    buildings.push({ kind: `market-${prop.kind}`, x: prop.x, y: prop.y, model });
+  }
+
+  // Cercados de Fuchsia: a mureta em U vira caixas baixas (a dobra fazia
+  // laminas verdes enormes em pe); a cerca de pedra da frente fica.
+  for (const pen of findPens(width, height, metatileAt)) {
+    const w = pen.right - pen.x + 1;
+    const h = Math.max(pen.leftEnd, pen.rightEnd) - pen.y + 1;
+    const raw = blockArt(width, pen.x, pen.y, w, h, blocks, graphics);
+
+    for (const [x, y] of penCells(pen)) {
+      const index = y * width + x;
+      const original = result[index];
+      const id = original ? groundOnly(original.metatileId) : undefined;
+
+      taken.add(index);
+
+      if (original && id !== undefined) {
+        result[index] = { ...original, metatileId: id } as T;
+      }
+    }
+
+    const model = buildPen(Art.ofTiles(raw, w, h), pen);
+
+    model.position.set(pen.x, 0, pen.y);
+    buildings.push({ kind: 'fuchsia-pen', x: pen.x, y: pen.y, model });
+  }
+
   // Fonte de Celadon: bacia redonda e jato em 3D, animados pelo animador
   // de tiles (a textura do modelo e uma grade com as celulas dela).
   for (const fountain of findFountains(width, height, metatileAt)) {
@@ -1046,6 +1098,31 @@ export function substituteBuildings<T extends Block>(
 
     model.position.set(house.x, 0, house.y);
     buildings.push({ kind: house.kind, x: house.x, y: house.y, model });
+  }
+
+  // Cercas norte-sul: cartao em pe ao longo da coluna (ver FenceModel).
+  if (!options.interior) {
+    for (const run of findNorthSouthFences(width, height, result, resultGraphics, taken)) {
+      const source = graphics.get(run.metatileId);
+
+      if (!source) {
+        continue;
+      }
+
+      for (let y = run.y0; y <= run.y1; y++) {
+        const index = y * width + run.x;
+        const original = result[index];
+        const id = groundOnly(run.metatileId);
+
+        taken.add(index);
+
+        if (original && id !== undefined) {
+          result[index] = { ...original, metatileId: id } as T;
+        }
+      }
+
+      buildings.push({ kind: 'fence-ns', x: run.x, y: run.y0, model: buildFenceRun(run, source) });
+    }
   }
 
   return { blocks: result, graphics: resultGraphics, buildings };

@@ -2952,6 +2952,11 @@ export class PlayerRenderer {
         map.height,
         renderData.blocks,
         renderData.graphics,
+        {
+          interior:
+            map.mapType === INDOOR_MAP_TYPE ||
+            map.mapType === SECRET_BASE_MAP_TYPE,
+        },
       );
 
     const data =
@@ -2962,6 +2967,7 @@ export class PlayerRenderer {
       };
 
     const modelTargets: AnimatedTarget[] = [];
+    const uprightMeshes: THREE.Mesh[] = [];
 
     // Volume (ver VoxelFolding): o que cada bloco vira - estrutura 3D,
     // objeto em pe, ledge, grama alta, flor ou chao. Calculado ANTES das
@@ -3369,6 +3375,11 @@ export class PlayerRenderer {
           modelTargets.push(building.model.userData.animated as AnimatedTarget);
         }
 
+        // Cartoes de modelo esticados como os objetos em pe (cercas).
+        for (const mesh of (building.model.userData.upright ?? []) as THREE.Mesh[]) {
+          uprightMeshes.push(mesh);
+        }
+
         building.model.traverse(object => {
           const mesh = object as THREE.Mesh;
 
@@ -3433,7 +3444,7 @@ export class PlayerRenderer {
         voxelGroup,
         modelTexture,
         propMeshes:
-          voxel?.propMeshes ?? [],
+          [...(voxel?.propMeshes ?? []), ...uprightMeshes],
         animation,
         modelTargets,
         mapDataAddress:
