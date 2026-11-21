@@ -3486,21 +3486,50 @@ export function buildPropGeometry(
         continue;
       }
 
-      // Cartao da frente ate um periodo abaixo da ultima linha: a coluna
-      // que desce mais (tronco ou sombra da arvore da frente so nela) fica
-      // na mesma profundidade das vizinhas, e o que sobra embaixo vira um
-      // cartao proprio.
-      const frontBase = Math.min(endPx, lines[0].line + span);
+      if (run.y1 === height - 1 && endPx === height * 16) {
+        // A mata continua no mapa de baixo: o que fica abaixo da ultima
+        // linha e de arvores com base FORA do mapa. Cada pedaco fica em pe
+        // na base da sua arvore (a mesma do mapa vizinho, que desenha o
+        // resto dela); em pe na borda daqui, a ponta e o corpo ficavam em
+        // profundidades diferentes e se separavam na emenda dos mapas.
+        let maxOffset = 0;
 
-      stairCards.push({
-        x: run.x,
-        top: lines[0].edge,
-        bottom: new Int32Array(16).fill(frontBase),
-        basePx: frontBase,
-      });
+        for (let column = 0; column < 16; column++) {
+          maxOffset = Math.max(maxOffset, shape.offsets[column]);
+        }
 
-      if (frontBase < endPx) {
-        pieces.push([frontBase, endPx]);
+        for (
+          let base = lines[0].line + span;
+          base - span - maxOffset < endPx;
+          base += span
+        ) {
+          const top = new Int32Array(16);
+          const bottom = new Int32Array(16);
+
+          for (let column = 0; column < 16; column++) {
+            top[column] = Math.max(topPx, base - span - shape.offsets[column]);
+            bottom[column] = Math.max(top[column], Math.min(endPx, base - shape.offsets[column]));
+          }
+
+          stairCards.push({ x: run.x, top, bottom, basePx: base });
+        }
+      } else {
+        // Cartao da frente ate um periodo abaixo da ultima linha: a coluna
+        // que desce mais (tronco ou sombra da arvore da frente so nela)
+        // fica na mesma profundidade das vizinhas, e o que sobra embaixo
+        // vira um cartao proprio.
+        const frontBase = Math.min(endPx, lines[0].line + span);
+
+        stairCards.push({
+          x: run.x,
+          top: lines[0].edge,
+          bottom: new Int32Array(16).fill(frontBase),
+          basePx: frontBase,
+        });
+
+        if (frontBase < endPx) {
+          pieces.push([frontBase, endPx]);
+        }
       }
 
       for (let index = 0; index + 1 < lines.length; index++) {

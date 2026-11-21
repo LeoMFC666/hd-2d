@@ -1707,11 +1707,20 @@ export class PlayerRenderer {
     // calcamento da cidade). Vale o mais frequente debaixo dos blocos da
     // borda; tile com faixa (beira de caminho, sombra) repetido vira
     // listras, entao fica so a cor dominante dele.
+    // So as arvores rente a borda do mapa: sao elas que continuam no
+    // padding (as do meio da cidade podem estar no calcamento).
     const borderSet = new Set(borderIds);
     const groundVotes = new Map<Uint8ClampedArray, number>();
 
     for (let index = 0; index < metatileIds.length; index++) {
-      if (kinds[index] !== CELL_PROP || !borderSet.has(metatileIds[index])) {
+      const x = index % map.width;
+      const y = (index - x) / map.width;
+
+      if (
+        kinds[index] !== CELL_PROP ||
+        !borderSet.has(metatileIds[index]) ||
+        (x >= 2 && y >= 2 && x < map.width - 2 && y < map.height - 2)
+      ) {
         continue;
       }
 
