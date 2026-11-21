@@ -894,46 +894,83 @@ export function buildFoldGeometry(
       return [u(column + 1), u(column)];
     };
 
+    // Montanha arredondada (ilhas de Seafoam): onde a coluna vizinha da
+    // massa so comeca mais ao sul, o trecho NORTE da lateral fica exposto
+    // e virava um dente pontudo em pe na areia ou no mar. Na dobra esse
+    // trecho nao aparece (a quina arredondada do desenho fecha o volume);
+    // sem ele, de lado se ve so um fio do chao debaixo do teto.
+    const massSide = style === 'outdoor' && !!options.boxes && !building;
+
+    const northExposed = (neighbor: number, row: number): boolean => {
+      if (!massSide || neighbor < 0 || neighbor >= width) {
+        return false;
+      }
+
+      let below = false;
+
+      for (const other of columns[neighbor]) {
+        if (other.y1 < run.y0 || other.y0 > run.y1) {
+          continue;
+        }
+
+        if (other.y0 <= row) {
+          return false;
+        }
+
+        below = true;
+      }
+
+      return below;
+    };
+
     for (let z = sideNorthZ; z < southZ; z++) {
       const [westSouthU, westNorthU] = strip
         ? stripColumn(southZ - 1 - z)
         : [u(sideWest), u(sideWest + 1)];
 
+      const roofRow = z - wall;
+      const skipWest = northExposed(run.x0 - 1, roofRow);
+      const skipEast = northExposed(run.x1 + 1, roofRow);
+
       const [eastSouthU, eastNorthU] = strip
         ? stripColumn(southZ - 1 - z)
         : [u(sideEast), u(sideEast + 1)];
 
-      quad(
-        [
-          [left, 0, z],
-          [left, 0, z + 1],
-          [left, wall, z + 1],
-          [left, wall, z],
-        ],
-        [
-          [westNorthU, stripBottomV],
-          [westSouthU, stripBottomV],
-          [westSouthU, stripTopV],
-          [westNorthU, stripTopV],
-        ],
-        SHADE_WEST,
-      );
+      if (!skipWest) {
+        quad(
+          [
+            [left, 0, z],
+            [left, 0, z + 1],
+            [left, wall, z + 1],
+            [left, wall, z],
+          ],
+          [
+            [westNorthU, stripBottomV],
+            [westSouthU, stripBottomV],
+            [westSouthU, stripTopV],
+            [westNorthU, stripTopV],
+          ],
+          SHADE_WEST,
+        );
+      }
 
-      quad(
-        [
-          [right, 0, z + 1],
-          [right, 0, z],
-          [right, wall, z],
-          [right, wall, z + 1],
-        ],
-        [
-          [eastSouthU, stripBottomV],
-          [eastNorthU, stripBottomV],
-          [eastNorthU, stripTopV],
-          [eastSouthU, stripTopV],
-        ],
-        SHADE_EAST,
-      );
+      if (!skipEast) {
+        quad(
+          [
+            [right, 0, z + 1],
+            [right, 0, z],
+            [right, wall, z],
+            [right, wall, z + 1],
+          ],
+          [
+            [eastSouthU, stripBottomV],
+            [eastNorthU, stripBottomV],
+            [eastNorthU, stripTopV],
+            [eastSouthU, stripTopV],
+          ],
+          SHADE_EAST,
+        );
+      }
 
       if (!pitched) {
         continue;

@@ -221,6 +221,77 @@ export function buildPadding(
     return owner[cell] === index && mapCells[cell] === 0;
   };
 
+  // Celula do padding de OUTRO mapa cuja borda nao tem arvores em cartao
+  // (pedra, agua): pode receber o resto de uma arvore vizinha.
+  const isForeignOpen = (gx: number, gz: number, index: number): boolean => {
+    if (gx < 0 || gz < 0 || gx >= gridWidth || gz >= gridHeight) {
+      return false;
+    }
+
+    const cell = gz * gridWidth + gx;
+    const other = owner[cell];
+
+    return (
+      other >= 0 &&
+      other !== index &&
+      mapCells[cell] === 0 &&
+      !maps[other].cards
+    );
+  };
+
+  const emitCardPieces = (
+    target: (typeof builders)[number],
+    map: PaddingMapInput,
+    layout: BorderCardLayout,
+    left: number,
+    right: number,
+    north: number,
+    minBase: number,
+    uOf: (worldX: number) => number,
+  ): void => {
+    const { linePx, spanPx, heightPx } = layout;
+
+    // Linhas de base no mundo (pixels): congruentes a esta.
+    const lineWorld =
+      (((linePx + 16 * map.z - 128) % spanPx) + spanPx) % spanPx;
+
+    const rowTop = north * 16;
+    let base =
+      rowTop + 1 + ((((lineWorld - rowTop - 1) % spanPx) + spanPx) % spanPx);
+
+    for (; base < rowTop + 16 + heightPx; base += spanPx) {
+      if (base <= minBase) {
+        continue;
+      }
+
+      // Alturas (pixels acima da base) dos pixels desta linha.
+      const low = Math.max(0, base - rowTop - 16);
+      const high = Math.min(heightPx, base - rowTop);
+
+      if (high <= low) {
+        continue;
+      }
+
+      const cardZ = base / 16 - 1 + CARD_Z;
+
+      quad(
+        target,
+        [
+          [left, low / 16, cardZ],
+          [right, low / 16, cardZ],
+          [right, high / 16, cardZ],
+          [left, high / 16, cardZ],
+        ],
+        [
+          [uOf(left), low / heightPx],
+          [uOf(right), low / heightPx],
+          [uOf(right), high / heightPx],
+          [uOf(left), high / heightPx],
+        ],
+      );
+    }
+  };
+
   const quad = (
     target: (typeof builders)[number],
     corners: number[][],
@@ -324,42 +395,43 @@ export function buildPadding(
         // celulas: nenhum pixel sai duas vezes, e a ponta da arvore cuja
         // base ja esta dentro do mapa (acima da borda de cima dele) aparece.
         if (map.cards) {
-          const { linePx, spanPx, heightPx } = map.cards;
+          const layout = map.cards;
 
-          // Linhas de base no mundo (pixels): congruentes a esta.
-          const lineWorld =
-            (((linePx + 16 * map.z - 128) % spanPx) + spanPx) % spanPx;
+          emitCardPieces(target, map, layout, left, right, north, -Infinity, uOf);
 
-          const rowTop = north * 16;
-          let base =
-            rowTop + 1 + ((((lineWorld - rowTop - 1) % spanPx) + spanPx) % spanPx);
+          // Arvore cuja copa sobe para o padding de outro mapa sem arvores
+          // (pedra, agua): o resto dela sai aqui mesmo, por cima da outra
+          // borda, em vez de ficar cortada reta na divisa.
+          const reach = Math.ceil(layout.heightPx / 16);
+          let segmentStart = -1;
 
-          for (; base < rowTop + 16 + heightPx; base += spanPx) {
-            // Alturas (pixels acima da base) dos pixels desta linha.
-            const low = Math.max(0, base - rowTop - 16);
-            const high = Math.min(heightPx, base - rowTop);
+          for (let rise = 1; rise <= reach; rise++) {
+            for (let x = gx; x <= end + 1; x++) {
+              let open = x <= end;
 
-            if (high <= low) {
-              continue;
+              for (let step = 1; open && step <= rise; step++) {
+                open = isForeignOpen(x, gz - step, index);
+              }
+
+              if (open && segmentStart < 0) {
+                segmentStart = x;
+              }
+
+              if (!open && segmentStart >= 0) {
+                emitCardPieces(
+                  target,
+                  map,
+                  layout,
+                  originX + segmentStart,
+                  originX + x,
+                  north - rise,
+                  north * 16,
+                  uOf,
+                );
+
+                segmentStart = -1;
+              }
             }
-
-            const cardZ = base / 16 - 1 + CARD_Z;
-
-            quad(
-              target,
-              [
-                [left, low / 16, cardZ],
-                [right, low / 16, cardZ],
-                [right, high / 16, cardZ],
-                [left, high / 16, cardZ],
-              ],
-              [
-                [uOf(left), low / heightPx],
-                [uOf(right), low / heightPx],
-                [uOf(right), high / heightPx],
-                [uOf(left), high / heightPx],
-              ],
-            );
           }
 
           gx = end + 1;
